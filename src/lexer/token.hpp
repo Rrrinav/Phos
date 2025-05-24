@@ -7,14 +7,16 @@
 
 namespace lex
 {
+  using Literal_obj = std::variant<std::monostate, double, std::string>;
+
   struct Token
   {
     lex::Token_type type;
     std::string lexeme;
-    std::variant<std::monostate, double, std::string> literal;
-    int line;
+    Literal_obj literal;
+    std::size_t line;
 
-    Token(lex::Token_type type, std::string lexeme, std::variant<std::monostate, double, std::string> literal, int line)
+    Token(lex::Token_type type, std::string lexeme, std::variant<std::monostate, double, std::string> literal, std::size_t line)
         : type(type), lexeme(std::move(lexeme)), literal(std::move(literal)), line(line)
     {}
 

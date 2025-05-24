@@ -15,9 +15,9 @@ class Scanner
   std::vector<lex::Token> tokens;
   std::unordered_map<std::string, lex::Token_type> keywords;
 
-  int start   = 0;
-  int current = 0;
-  int line    = 1;
+  std::size_t start   = 0;
+  std::size_t current = 0;
+  std::size_t line    = 1;
 
 public:
   Scanner(std::string source) : source(source) { keywords = lex::make_keywords(); }
