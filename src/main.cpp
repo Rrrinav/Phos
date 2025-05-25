@@ -15,7 +15,7 @@
 
 void run(std::string code)
 {
-  Scanner scanner(code);
+  lex::Scanner scanner(code);
   auto tokens = scanner.scan_tokens();
   for (const auto &token : tokens)
   {
