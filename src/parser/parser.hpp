@@ -1,21 +1,24 @@
 #pragma once
 
 #include "../lexer/token.hpp"
-#include "expr.hpp"
+#include "./expr.hpp"
+#include "../misc/error_reporting.hpp"
 
 #include <algorithm>
-#include <span>
+#include <cstdlib>
+#include <initializer_list>
+#include <vector>
 #include <memory>
 
 namespace pars
 {
   class Parser
   {
-    std::span<const lex::Token> tokens;
+    std::vector<lex::Token> tokens;
     std::size_t current = 0;
 
   public:
-    Parser(std::span<const lex::Token> tokens) : tokens(tokens) {}
+    Parser(std::vector<lex::Token> tokens_) : tokens(tokens_) {}
 
     Expr parse()
     {
@@ -25,7 +28,7 @@ namespace pars
   private:
     Expr expression() { return equality(); }
 
-    Expr equality()
+    inline Expr equality()
     {
       Expr expr = comparison();
 
@@ -39,7 +42,7 @@ namespace pars
       return expr;
     }
 
-    Expr comparison()
+    inline Expr comparison()
     {
       Expr expr = term();
 
@@ -59,7 +62,7 @@ namespace pars
       return expr;
     }
 
-    Expr term()
+    inline Expr term()
     {
       Expr expr = factor();
 
@@ -73,7 +76,7 @@ namespace pars
       return expr;
     }
 
-    Expr factor()
+    inline Expr factor()
     {
       Expr expr = unary();
 
@@ -87,7 +90,7 @@ namespace pars
       return expr;
     }
 
-    Expr unary()
+    inline Expr unary()
     {
       if (match({lex::Token_type::BANG, lex::Token_type::MINUS}))
       {
@@ -99,7 +102,7 @@ namespace pars
       return primary();
     }
 
-    Expr primary()
+    inline Expr primary()
     {
       if (match({lex::Token_type::FALSE}))
         return Expr{Literal_expr{lex::Literal_obj{false}}};
@@ -123,7 +126,7 @@ namespace pars
       return Expr{Literal_expr{}};  // Placeholder fallback
     }
 
-    bool match(std::initializer_list<lex::Token_type> types)
+    inline bool match(std::initializer_list<lex::Token_type> types)
     {
       return std::ranges::any_of(types, [this](lex::Token_type type)
       {
@@ -136,34 +139,66 @@ namespace pars
       });
     }
 
-    const lex::Token& consume(lex::Token_type type, const std::string& message)
+    inline const lex::Token& consume(lex::Token_type type, const std::string& message)
     {
       if (check(type))
         return advance();
 
-      // Real error handling would go here.
-      return tokens[current];  // Placeholder fallback
+      this->report(peek(), message);
+      exit(EXIT_FAILURE);
     }
 
-    bool check(lex::Token_type type) const
+    inline bool check(lex::Token_type type) const
     {
       return !is_at_end() && peek().type == type;
     }
 
-    const lex::Token& advance()
+    inline const lex::Token& advance()
     {
       if (!is_at_end()) ++current;
       return previous();
     }
 
-    bool is_at_end() const
+    inline bool is_at_end() const
     {
       return peek().type == lex::Token_type::END_OF_FILE;
     }
 
-    const lex::Token& peek() const { return tokens[current]; }
+    inline const lex::Token& peek() const { return tokens[current]; }
 
-    const lex::Token& previous() const { return tokens[current - 1]; }
+    inline const lex::Token& previous() const { return tokens[current - 1]; }
+
+    inline void report(lex::Token token, std::string message)
+    {
+      if (token.type == lex::Token_type::END_OF_FILE)
+        err::report(token.line, " at end ", message);
+      else
+        err::report(token.line, std::format( " at '{}'", token.lexeme), message);
+    }
+
+    void synchronize()
+    {
+      advance();
+
+      while (!is_at_end())
+      {
+        if (previous().type == lex::Token_type::SEMICOLON) return;
+        switch (peek().type)
+        {
+          case lex::Token_type::CLASS:
+          case lex::Token_type::FUN:
+          case lex::Token_type::VAR:
+          case lex::Token_type::FOR:
+          case lex::Token_type::IF:
+          case lex::Token_type::WHILE:
+          case lex::Token_type::PRINT:
+          case lex::Token_type::RETURN:
+            return;
+          default:
+            break;
+        }
+        advance();
+      };
+    }
   };
 }  // namespace pars
-

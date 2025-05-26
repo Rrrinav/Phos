@@ -76,7 +76,7 @@ namespace lex
           else if (std::isalpha(c)) scan_identifier();
           else if (c == '_') scan_identifier();
           else if (is_at_end()) break;
-          else report(line, "Unexpected character");
+          else err::report(line, "Unexpected character");
       }
     }
 
@@ -136,12 +136,12 @@ namespace lex
 
       if (is_at_end())
       {
-        report(line, "Unterminated string");
+        err::report(line, "Unterminated string");
         return;
       }
 
       advance();
-      std::string value = source.substr(start + 1, current - start - 1);
+      std::string value = source.substr(start + 1, current - start - 2);
       add_token(lex::Token_type::STRING, value);
     }
 

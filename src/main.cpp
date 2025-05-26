@@ -1,9 +1,9 @@
 #include <cstdlib>
 #include <print>
-#include <fstream>
 #include <string_view>
 
 #include "./misc/error_reporting.hpp"
+#include "./misc/utls.hpp"
 #include "./lexer/scanner.hpp"
 #include "lexer/token_type.hpp"
 
@@ -31,31 +31,20 @@ void run(std::string code)
     std::println("{:<15} | lexeme: {:<10} | literal: {}", lex::token_type_to_string(token.type),
                  token.lexeme.empty() ? "\"\"" : token.lexeme, literal_str);
   }
-  if (HAD_ERROR)
+  if (err::HAD_ERROR)
     exit(EXIT_FAILURE);
 }
 
 void run_file(std::string_view path)
 {
-  std::ifstream file(path.data());
-  if (!file.is_open())
+  auto bytes = utl::read_entire_file(path);
+  if (bytes)
+  run(bytes.value());
+  else
   {
-    std::println("Could not open file: {}", path);
-    return;
+    std::println(stderr, "error: could not read file '{}'", path);
+    exit(EXIT_FAILURE);
   }
-  int size = 0;
-  file.seekg(0, std::ios::end);
-  size = file.tellg();
-  if (size == 0)
-  {
-    std::println("File is empty: {}", path);
-    return;
-  }
-  file.seekg(0, std::ios::beg);
-
-  std::string bytes(size, ' ');
-  file.read(&bytes[0], size);
-  run(bytes);
 }
 
 void run_prompt()

@@ -2,6 +2,9 @@
 
 #include <string>
 #include <variant>
+#include <span>
+#include <format>
+#include <print>
 
 #include "./token_type.hpp"
 
@@ -31,6 +34,24 @@ namespace lex
         lit_str = "null";
 
       return token_type_to_string(type) + " " + lexeme + " " + lit_str;
+    }
+
+    static void print_tokens(std::span<Token> tokens_)
+    {
+      for (const auto &token : tokens_)
+      {
+        std::string literal_str;
+
+        if (std::holds_alternative<double>(token.literal))
+          literal_str = std::format("{}", std::get<double>(token.literal));
+        else if (std::holds_alternative<std::string>(token.literal))
+          literal_str = std::format("\"{}\"", std::get<std::string>(token.literal));
+        else
+          literal_str = "null";
+
+        std::println("{:<15} | lexeme: {:<10} | literal: {}", lex::token_type_to_string(token.type),
+                     token.lexeme.empty() ? "\"\"" : token.lexeme, literal_str);
+      }
     }
   };
 }
