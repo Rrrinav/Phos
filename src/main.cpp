@@ -1,11 +1,14 @@
 #include <cstdlib>
+#include <iostream>
 #include <print>
 #include <string_view>
 
-#include "./misc/error_reporting.hpp"
-#include "./misc/utls.hpp"
 #include "./lexer/scanner.hpp"
-#include "lexer/token_type.hpp"
+#include "./parser/parser.hpp"
+#include "./misc/file_utls.hpp"
+#include "./interpreter/evaluator.hpp"
+#include "lexer/token.hpp"
+#include "parser/expr.hpp"
 
 #define _todo_ \
   do { \
@@ -17,20 +20,12 @@ void run(std::string code)
 {
   lex::Scanner scanner(code);
   auto tokens = scanner.scan_tokens();
-  for (const auto &token : tokens)
-  {
-    std::string literal_str;
+  pars::Expr ast = pars::Parser(tokens).parse();
+  interp::Evaluator evaluator;
+  lex::Literal_obj lit = evaluator.evaluate(ast);
+  std::string output = pars::stringify_literal(lit);
+  std::println("{}", output);
 
-    if (std::holds_alternative<double>(token.literal))
-      literal_str = std::format("{}", std::get<double>(token.literal));
-    else if (std::holds_alternative<std::string>(token.literal))
-      literal_str = std::format("\"{}\"", std::get<std::string>(token.literal));
-    else
-      literal_str = "null";
-
-    std::println("{:<15} | lexeme: {:<10} | literal: {}", lex::token_type_to_string(token.type),
-                 token.lexeme.empty() ? "\"\"" : token.lexeme, literal_str);
-  }
   if (err::HAD_ERROR)
     exit(EXIT_FAILURE);
 }
@@ -49,7 +44,18 @@ void run_file(std::string_view path)
 
 void run_prompt()
 {
-  throw std::runtime_error("Prompt mode is not implemented yet.");
+  std::println("Welcome to the phos REPL!");
+  std::println("Type '.exit' to quit.\n");
+  std::string line;
+
+  while(true)
+  {
+    std::print("> ");
+    std::getline(std::cin, line);
+    if (line == ".exit")
+      break;
+    run(line);
+  }
 }
 
 int main(int argc, char *argv[])

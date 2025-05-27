@@ -4,6 +4,7 @@
 #include "../src/parser/parser.hpp"
 #include "../src/lexer/scanner.hpp"
 #include "../src/misc/file_utls.hpp"
+#include "../src/interpreter/evaluator.hpp"
 
 int main()
 {
@@ -20,4 +21,5 @@ int main()
   pars::Expr ast = pars::Parser(tokens).parse();
   pars::Ast_printer printer;
   std::cout << printer.print(ast) << '\n';
+  interp::interpret(ast);
 };

@@ -77,4 +77,18 @@ namespace pars
       return "(" + name + " " + print(a) + " " + print(b) + ")";
     }
   };
+
+  std::string stringify_literal(lex::Literal_obj _l)
+  {
+    if (auto str = std::get_if<std::string>(&_l))
+      return *str;
+    else if (auto num = std::get_if<double>(&_l))
+      return std::to_string(*num);
+    else if (auto b = std::get_if<bool>(&_l))
+      return *b ? "true" : "false";
+    else if (_l.valueless_by_exception())
+      return "nil";
+    else
+      return "invalid literal";
+  };
 }  // namespace pars
