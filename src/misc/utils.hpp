@@ -1,10 +1,8 @@
 #pragma once
 
-#include <format>
-#include <stdexcept>
 #include <variant>
 #include <string>
-#include "../lexer/scanner.hpp"
+#include "../lexer/token.hpp"
 
 namespace utl
 {
@@ -12,20 +10,24 @@ namespace utl
   template <typename Op>
   constexpr std::string_view get_operator_symbol()
   {
-    if constexpr (std::is_same_v<Op, std::plus<>>) return "+";
-    else if constexpr (std::is_same_v<Op, std::minus<>>) return "-";
-    else if constexpr (std::is_same_v<Op, std::multiplies<>>) return "*";
-    else if constexpr (std::is_same_v<Op, std::divides<>>) return "/";
-    else if constexpr (std::is_same_v<Op, std::greater<>>) return ">";
+    if constexpr (std::is_same_v<Op, std::plus<>>)               return "+";
+    else if constexpr (std::is_same_v<Op, std::minus<>>)         return "-";
+    else if constexpr (std::is_same_v<Op, std::multiplies<>>)    return "*";
+    else if constexpr (std::is_same_v<Op, std::divides<>>)       return "/";
+    else if constexpr (std::is_same_v<Op, std::greater<>>)       return ">";
     else if constexpr (std::is_same_v<Op, std::greater_equal<>>) return ">=";
-    else if constexpr (std::is_same_v<Op, std::less<>>) return "<";
-    else if constexpr (std::is_same_v<Op, std::less_equal<>>) return "<=";
+    else if constexpr (std::is_same_v<Op, std::less<>>)          return "<";
+    else if constexpr (std::is_same_v<Op, std::less_equal<>>)    return "<=";
     else return "<unknown-op>";
   }
 
+  template <typename T>
+  concept Convertible_to_bool_or_double =
+      std::convertible_to<T, double> || std::convertible_to<T, bool>;
+
   template <typename F>
   concept Binary_number_op = requires(F f, double a, double b) {
-    { f(a, b) } -> std::convertible_to<double>;
+      requires Convertible_to_bool_or_double<decltype(f(a, b))>;
   };
 
   template <Binary_number_op Op>
@@ -39,7 +41,7 @@ namespace utl
       exit(EXIT_FAILURE);
     }
 
-    return static_cast<double>(op(*lv, *rv));
+    return op(*lv, *rv);
   }
 
   bool is_equal(const lex::Literal_obj& x, lex::Literal_obj& y)

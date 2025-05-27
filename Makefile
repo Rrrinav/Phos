@@ -5,7 +5,7 @@ SOURCE_FOLDER := src
 
 SOURCES := $(wildcard $(SOURCE_FOLDER)/*.cpp)
 OBJECTS := $(patsubst $(SOURCE_FOLDER)/%.cpp, $(BUILD_FOLDER)/%.o, $(SOURCES))
-TARGET := $(BUILD_FOLDER)/main
+TARGET := $(BUILD_FOLDER)/phos
 
 # Default target
 all: $(TARGET)

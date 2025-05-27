@@ -48,14 +48,15 @@ void run_prompt()
   std::println("Type '.exit' to quit.\n");
   std::string line;
 
-  while(true)
+  while (true)
   {
     std::print("> ");
-    std::getline(std::cin, line);
-    if (line == ".exit")
-      break;
+    if (!std::getline(std::cin, line)) break;
+    if (line == ".exit") break;
     run(line);
   }
+
+  std::println("\nGoodbye.");
 }
 
 int main(int argc, char *argv[])
