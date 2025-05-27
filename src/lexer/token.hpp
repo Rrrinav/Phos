@@ -11,6 +11,15 @@
 namespace lex
 {
   using Literal_obj = std::variant<std::monostate, double, std::string, bool>;
+  
+  std::string literalobj_type_to_string(std::size_t index)
+  {
+    if (index == 0) return "NULL";
+    if (index == 1) return "NUMBER";
+    if (index == 2) return "STRING";
+    if (index == 3) return "BOOLEAN";
+    return "UNKNOWN";
+  }
 
   struct Token
   {

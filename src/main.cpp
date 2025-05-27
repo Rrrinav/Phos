@@ -7,27 +7,32 @@
 #include "./parser/parser.hpp"
 #include "./misc/file_utls.hpp"
 #include "./interpreter/evaluator.hpp"
-#include "lexer/token.hpp"
+#include "misc/error_reporting.hpp"
 #include "parser/expr.hpp"
 
-#define _todo_ \
+#define $__todo__primary__(x) \
   do { \
-    std::println(stderr, "error: {}:{} todo",__FILE_NAME__, __LINE__);\
+    std::println(stderr, "TODO: {}:{} {}",__FILE_NAME__, __LINE__, x);\
     abort(); \
   } while(false)
 
+#define $todo_   $__todo__primary__("")
+#define $todo(x) $__todo__primary__(x)
+
 void run(std::string code)
 {
-  lex::Scanner scanner(code);
-  auto tokens = scanner.scan_tokens();
-  pars::Expr ast = pars::Parser(tokens).parse();
-  interp::Evaluator evaluator;
-  lex::Literal_obj lit = evaluator.evaluate(ast);
-  std::string output = pars::stringify_literal(lit);
+  // A little trolling my friend
+  std::string output = pars::stringify_literal(interp::Evaluator().evaluate(pars::Parser(lex::Lexer(code).scan_tokens()).parse()));
   std::println("{}", output);
 
-  if (err::HAD_ERROR)
-    exit(EXIT_FAILURE);
+  {
+    using err::Exit_code;
+
+    if (err::HAD_ERROR)
+      exit(Exit_code::_EXIT_CODE_ERROR_);
+    if (err::HAD_RUNTIME_ERROR)
+      exit(Exit_code::_EXIT_CODE_RUNTIME_ERROR_);
+  }
 }
 
 void run_file(std::string_view path)

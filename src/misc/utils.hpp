@@ -1,12 +1,12 @@
 #pragma once
 
+#include <expected>
 #include <variant>
 #include <string>
 #include "../lexer/token.hpp"
 
 namespace utl
 {
-
   template <typename Op>
   constexpr std::string_view get_operator_symbol()
   {
@@ -22,8 +22,7 @@ namespace utl
   }
 
   template <typename T>
-  concept Convertible_to_bool_or_double =
-      std::convertible_to<T, double> || std::convertible_to<T, bool>;
+  concept Convertible_to_bool_or_double = std::convertible_to<T, double> || std::convertible_to<T, bool>;
 
   template <typename F>
   concept Binary_number_op = requires(F f, double a, double b) {
@@ -31,23 +30,36 @@ namespace utl
   };
 
   template <Binary_number_op Op>
-  lex::Literal_obj binary_number_op(const lex::Literal_obj &l, const lex::Literal_obj &r, Op op)
+  [[nodiscard]]
+  std::expected<lex::Literal_obj, std::string> binary_number_op(const lex::Literal_obj &l, const lex::Literal_obj &r, Op op)
   {
     auto lv = std::get_if<double>(&l);
     auto rv = std::get_if<double>(&r);
     if (!lv || !rv)
     {
-      std::println(stderr, "Error: Invalid operands for operation ' {} '. Expected numbers.\n", utl::get_operator_symbol<Op>());
-      exit(EXIT_FAILURE);
+      std::string err = std::format("Invalid operands for operation ' {} '. Expected numbers, got {}, {}.\n",
+        utl::get_operator_symbol<Op>(),
+        lex::literalobj_type_to_string(l.index()),
+        lex::literalobj_type_to_string(r.index())
+      );
+      return std::unexpected(err);
     }
 
     return op(*lv, *rv);
   }
 
-  bool is_equal(const lex::Literal_obj& x, lex::Literal_obj& y)
+  [[nodiscard]]
+  std::expected<lex::Literal_obj, std::string> is_equal(const lex::Literal_obj& x, lex::Literal_obj& y)
   {
     if (x.index() != y.index())
-      return false;
+    {
+      std::string err = std::format(
+        "Type mismatch in equality check: '{}' vs '{}'.",
+        lex::literalobj_type_to_string(x.index()),
+        lex::literalobj_type_to_string(y.index())
+      );
+      return std::unexpected(err);
+    }
 
     return x == y;
   };

@@ -1,3 +1,8 @@
+/*
+ * Author: Rinav rinavhansa4@gmail.com [rrinav]
+ * You must not remove this header.
+ */
+
 #pragma once
 
 #include <cctype>
@@ -13,7 +18,7 @@
 
 namespace lex
 {
-  class Scanner
+  class Lexer
   {
     std::string source;
     std::vector<lex::Token> tokens;
@@ -24,7 +29,7 @@ namespace lex
     std::size_t line    = 1;
 
   public:
-    Scanner(std::string source) : source(source) { keywords = lex::make_keywords(); }
+    Lexer(std::string source) : source(source) { this->keywords = lex::make_keywords(); }
 
     std::vector<lex::Token> scan_tokens()
     {
@@ -70,15 +75,15 @@ namespace lex
         case '/':
           scan_backslash();
           break;
-        case ' ': case '\r': case '\t': break; // ignore whitespace
-        case '\n': line++; break;
-        case '"': scan_string(); break;
+        case ' ':  case '\r': case '\t': break;
+        case '\n': line++;               break;
+        case '"':  scan_string();        break;
         default:
-          if (std::isdigit(c)) scan_number();
-          else if (std::isalpha(c)) scan_identifier();
-          else if (c == '_') scan_identifier();
-          else if (is_at_end()) break;
-          else err::report(line, "Unexpected character");
+          if       (std::isdigit(c))  scan_number();
+          else if  (std::isalpha(c))  scan_identifier();
+          else if  (c == '_')         scan_identifier();
+          else if  (is_at_end())      break;
+          else                        err::report(line, "Unexpected character");
       }
     }
 
@@ -105,12 +110,14 @@ namespace lex
       return true;
     }
 
-    char peek() {
+    char peek()
+    {
       if (is_at_end()) return '\0';
       return source[current];
     }
 
-    char peek(int x) {
+    char peek(int x)
+    {
       if (is_at_end()) return '\0';
 
       if (current + x < source.size())
