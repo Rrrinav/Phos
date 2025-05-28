@@ -27,4 +27,3 @@ clean:
 	rm -rf $(BUILD_FOLDER)/*
 
 .PHONY: all clean
-

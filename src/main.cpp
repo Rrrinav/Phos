@@ -6,9 +6,8 @@
 #include "./lexer/scanner.hpp"
 #include "./parser/parser.hpp"
 #include "./misc/file_utls.hpp"
-#include "./interpreter/evaluator.hpp"
-#include "misc/error_reporting.hpp"
-#include "parser/expr.hpp"
+#include "./interpreter/interpreter.hpp"
+#include "./misc/error_reporting.hpp"
 
 #define $__todo__primary__(x) \
   do { \
@@ -22,9 +21,7 @@
 void run(std::string code)
 {
   // A little trolling my friend
-  std::string output = pars::stringify_literal(interp::Evaluator().evaluate(pars::Parser(lex::Lexer(code).scan_tokens()).parse()));
-  std::println("{}", output);
-
+  interp::Interpreter().interpret(pars::Parser(lex::Lexer(code).scan_tokens()).parse());
   {
     using err::Exit_code;
 
@@ -49,6 +46,7 @@ void run_file(std::string_view path)
 
 void run_prompt()
 {
+  std::println("------------------ Phos ------------------");
   std::println("Welcome to the phos REPL!");
   std::println("Type '.exit' to quit.\n");
   std::string line;

@@ -1,13 +1,26 @@
-expression  ::=  equality ;
+expression      ::=  equality ;
 
-equality    ::=  comparison ( ( "!=" | "==" ) comparison )* ;
+equality        ::=  comparison ( ( "!=" | "==" ) comparison )* ;
 
-comparison  ::=  term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
+comparison      ::=  term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
 
-term        ::=  factor ( ( "-" | "+" ) factor )* ;
+term            ::=  factor ( ( "-" | "+" ) factor )* ;
 
-factor      ::=  unary ( ( "/" | "*" ) unary )* ;
+factor          ::=  unary ( ( "/" | "*" ) unary )* ;
 
-unary       ::=  ( "!" | "-" ) unary | primary ;
+unary           ::=  ( "!" | "-" ) unary | primary ;
 
-primary     ::=  NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" ;
+primary         ::=  NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" | IDENTIFIER ;
+
+program         ::=  declaration* EOF;
+
+declaration     ::=  var_declaration | statement;
+
+(* [ ] is like ?, means either once or never *)
+var_declaration ::= "var" IDENTIFIER [ "=" expression ] ";" ;
+
+statement       ::= expr_statement | print_statement ;
+
+expr_statement  ::= expression ";" ;
+
+print_statement ::= "print" expression ";" ;

@@ -1,9 +1,4 @@
-add(a, b) {
-  return a + b; 
-}
+var a = "Hello ";
+var b = "Rinav";
 
-main {
-  var a = 10
-  var b = 10 + 20
-  var c = add(a, b)
-}
+print a + b;

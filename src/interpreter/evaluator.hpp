@@ -1,3 +1,5 @@
+#pragma once
+
 #include <expected>
 #include <print>
 #include <utility>
@@ -8,11 +10,14 @@
 
 #include "../misc/utils.hpp"
 #include "../misc/error_reporting.hpp"
+#include "../runtime/environment.hpp"
 
 namespace interp
 {
   struct Evaluator
   {
+    runtime::Environment& environment_;
+
     lex::Literal_obj evaluate(const pars::Expr& expression)
     {
       return std::visit(
@@ -101,15 +106,11 @@ namespace interp
         return result.value();
       else
       {
-        err::report_runtime_error(_b.op.line, std::format("Error evaluating binary expression: {}", result.error())); 
+        err::report_runtime_error(_b.op.line, std::format("Error evaluating binary expression: {}", result.error()));
         return std::monostate();
       }
     }
-  };
 
-  void interpret(const pars::Expr& expression)
-  {
-    Evaluator evaluator;
-    auto result = evaluator.evaluate(expression);
-  }
+    lex::Literal_obj evaluate_node(const pars::Variable_expr& _v) { return environment_.get(_v.name); }
+  };
 }; // namespace interp

@@ -28,4 +28,7 @@ namespace err
     std::println(stderr, "line {} -> RUNTIME ERROR: {}", line, message);
     HAD_RUNTIME_ERROR = true;
   }
+
+  [[noreturn]]
+  void quit(Exit_code code) { std::exit(code); };
 }  // namespace err

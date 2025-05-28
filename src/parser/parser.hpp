@@ -2,11 +2,13 @@
 
 #include "../lexer/token.hpp"
 #include "./expr.hpp"
+#include "./statement.hpp"
 #include "../misc/error_reporting.hpp"
 
 #include <algorithm>
 #include <cstdlib>
 #include <initializer_list>
+#include <optional>
 #include <vector>
 #include <memory>
 
@@ -20,12 +22,71 @@ namespace pars
   public:
     Parser(std::vector<lex::Token> tokens_) : tokens(tokens_) {}
 
-    Expr parse()
+    std::vector<pars::Statement> parse()
     {
-      return expression();
+      std::vector<pars::Statement> statements;
+
+      while (!is_at_end())
+      {
+        if (auto dec_val = delcaration_statement(); dec_val)
+        {
+          statements.push_back(std::move(*dec_val));
+        }
+      };
+      return statements;
     }
 
   private:
+
+    std::optional<pars::Statement> delcaration_statement()
+    {
+      try
+      {
+        if (match({lex::Token_type::VAR}))
+          return variable_declaration();
+        return statement();
+      }
+      catch (const std::exception &e)
+      {
+        synchronize();
+        return std::nullopt;
+      }
+    }
+
+    std::optional<pars::Statement> variable_declaration()
+    {
+      lex::Token name = consume(lex::Token_type::IDENTIFIER, "Expected variable name.");
+
+      std::optional<Expr> initializer;
+      if (match({lex::Token_type::EQUAL}))
+      {
+        initializer = expression();
+      }
+
+      consume(lex::Token_type::SEMICOLON, "Expect ';' after variable declaration.");
+      return Variable_decl_stmt{name, std::move(initializer)};
+    }
+
+    pars::Statement statement()
+    {
+      if (match({lex::Token_type::PRINT})) return print_statement();
+      else return expression_statement();
+    }
+
+    pars::Statement print_statement()
+    {
+      Expr value = expression();
+      consume(lex::Token_type::SEMICOLON, "Expect ';' after value.");
+      return pars::Statement{Print_stmt{std::make_unique<Expr>(std::move(value))}};
+    };
+
+    pars::Statement expression_statement()
+    {
+      Expr value = expression();
+      consume(lex::Token_type::SEMICOLON, "Expect ';' after expression.");
+      return pars::Statement{Expression_stmt{std::make_unique<Expr>(std::move(value))}};
+    };
+
     Expr expression() { return equality(); }
 
     inline Expr equality()
@@ -115,6 +176,9 @@ namespace pars
 
       if (match({lex::Token_type::NUMBER, lex::Token_type::STRING}))
         return Expr{Literal_expr{previous().literal}};
+
+      if (match({lex::Token_type::IDENTIFIER}))
+        return Expr{Variable_expr{previous()}};
 
       if (match({lex::Token_type::LEFT_PAREN}))
       {
