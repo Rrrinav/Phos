@@ -1,4 +1,0 @@
-var a = "Hello ";
-var b = "Rinav";
-
-print a + b;

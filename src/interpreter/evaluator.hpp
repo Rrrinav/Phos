@@ -112,5 +112,19 @@ namespace interp
     }
 
     lex::Literal_obj evaluate_node(const pars::Variable_expr& _v) { return environment_.get(_v.name); }
+
+    lex::Literal_obj evaluate_node(const pars::Assign_expr& _a)
+    {
+      lex::Literal_obj value = this->evaluate(*_a.value);
+      if (this->environment_.assign(_a.name, value))
+      {
+        return value;
+      }
+      else
+      {
+        err::report_runtime_error(_a.name.line, "Variable assignment failed. Variable not found in environment.");
+        err::quit(err::Exit_code::_EXIT_CODE_RUNTIME_ERROR_);
+      }
+    }
   };
 }; // namespace interp

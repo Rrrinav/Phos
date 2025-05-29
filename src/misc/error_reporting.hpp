@@ -3,6 +3,8 @@
 #include <string_view>
 #include <print>
 
+#include "../lexer/token.hpp"
+
 namespace err
 {
   inline bool HAD_ERROR         = false;
@@ -22,6 +24,14 @@ namespace err
   }
 
   void report(int line, std::string_view message) { report(line, "", message); }
+
+  void report(lex::Token token, std::string_view message)
+  {
+    if (token.type == lex::Token_type::END_OF_FILE)
+      report(token.line, " at end ", message);
+    else
+      report(token.line, std::format(" at '{}'", token.lexeme), message);
+  }
 
   void report_runtime_error(int line, std::string_view message)
   {

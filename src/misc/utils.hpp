@@ -83,7 +83,7 @@ namespace utl
       return std::to_string(*num);
     else if (auto b = std::get_if<bool>(&_l))
       return *b ? "true" : "false";
-    else if (_l.valueless_by_exception())
+    else if (_l.valueless_by_exception() || _l.index() == 0)
       return "nil";
     else
       return "invalid literal";

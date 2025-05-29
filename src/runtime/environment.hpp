@@ -26,5 +26,15 @@ namespace runtime
       err::report_runtime_error(name.line, "Undefined variable '" + name.lexeme + "'.");
       err::quit(err::Exit_code::_EXIT_CODE_RUNTIME_ERROR_);
     }
+
+    bool assign(lex::Token name, const lex::Literal_obj& value)
+    {
+      if (auto it = values_.find(name.lexeme); it != values_.end())
+      {
+        it->second = value;
+        return true;
+      }
+      return false;
+    }
   };
 }

@@ -40,9 +40,15 @@ namespace pars
     lex::Token name;
   };
 
+  struct Assign_expr
+  {
+    lex::Token name;
+    Expr_ptr value;
+  };
+
   struct Expr
   {
-    using Expr_variant = std::variant<Binary_expr, Grouping_expr, Literal_expr, Unary_expr, Variable_expr>;
+    using Expr_variant = std::variant<Binary_expr, Grouping_expr, Literal_expr, Unary_expr, Variable_expr, Assign_expr>;
     Expr_variant node;
 
     template <typename T>
@@ -87,6 +93,11 @@ namespace pars
     std::string print_node(const Variable_expr &v) const
     {
       return v.name.lexeme;
+    }
+
+    std::string print_node(const Assign_expr &a) const
+    {
+      return parenthesize("assign", Variable_expr{a.name}, *a.value);
     }
   };
 }  // namespace pars

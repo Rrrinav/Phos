@@ -38,7 +38,7 @@ namespace pars
 
   private:
 
-    std::optional<pars::Statement> delcaration_statement()
+    inline std::optional<pars::Statement> delcaration_statement()
     {
       try
       {
@@ -53,7 +53,7 @@ namespace pars
       }
     }
 
-    std::optional<pars::Statement> variable_declaration()
+    inline std::optional<pars::Statement> variable_declaration()
     {
       lex::Token name = consume(lex::Token_type::IDENTIFIER, "Expected variable name.");
 
@@ -67,27 +67,45 @@ namespace pars
       return Variable_decl_stmt{name, std::move(initializer)};
     }
 
-    pars::Statement statement()
+    inline pars::Statement statement()
     {
       if (match({lex::Token_type::PRINT})) return print_statement();
       else return expression_statement();
     }
 
-    pars::Statement print_statement()
+    inline pars::Statement print_statement()
     {
       Expr value = expression();
       consume(lex::Token_type::SEMICOLON, "Expect ';' after value.");
       return pars::Statement{Print_stmt{std::make_unique<Expr>(std::move(value))}};
     };
 
-    pars::Statement expression_statement()
+    inline pars::Statement expression_statement()
     {
       Expr value = expression();
       consume(lex::Token_type::SEMICOLON, "Expect ';' after expression.");
       return pars::Statement{Expression_stmt{std::make_unique<Expr>(std::move(value))}};
     };
 
-    Expr expression() { return equality(); }
+    Expr expression() { return assignment(); }
+
+    Expr assignment()
+    {
+      Expr expr = equality();
+      if (match({lex::Token_type::EQUAL}))
+      {
+        lex::Token equals = previous();
+        Expr value = assignment();
+
+        if (std::holds_alternative<Variable_expr>(expr.node))
+        {
+          lex::Token name = std::get<Variable_expr>(expr.node).name;
+          return Expr{Assign_expr{name, std::make_unique<Expr>(std::move(value))}};
+        }
+        err::report(equals, "Invalid assignment target. Only variables can be assigned to.");
+      }
+      return expr;
+    }
 
     inline Expr equality()
     {
@@ -208,7 +226,7 @@ namespace pars
       if (check(type))
         return advance();
 
-      this->report(peek(), message);
+      err::report(peek(), message);
       exit(EXIT_FAILURE);
     }
 
@@ -232,15 +250,7 @@ namespace pars
 
     inline const lex::Token& previous() const { return tokens[current - 1]; }
 
-    inline void report(lex::Token token, std::string message)
-    {
-      if (token.type == lex::Token_type::END_OF_FILE)
-        err::report(token.line, " at end ", message);
-      else
-        err::report(token.line, std::format( " at '{}'", token.lexeme), message);
-    }
-
-    void synchronize()
+    inline void synchronize()
     {
       advance();
 

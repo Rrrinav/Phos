@@ -1,4 +1,19 @@
-expression      ::=  equality ;
+program         ::=  declaration* EOF;
+
+declaration     ::=  var_declaration | statement;
+
+(* [ ] is like ?, means either once or never *)
+var_declaration ::= "var" IDENTIFIER [ "=" expression ] ";" ;
+
+statement       ::= expr_statement | print_statement ;
+
+expr_statement  ::= expression ";" ;
+
+print_statement ::= "print" expression ";" ;
+
+expression      ::=  assignment;
+
+assignment      ::=  IDENTIFIER "=" expression | equality;
 
 equality        ::=  comparison ( ( "!=" | "==" ) comparison )* ;
 
@@ -12,15 +27,3 @@ unary           ::=  ( "!" | "-" ) unary | primary ;
 
 primary         ::=  NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" | IDENTIFIER ;
 
-program         ::=  declaration* EOF;
-
-declaration     ::=  var_declaration | statement;
-
-(* [ ] is like ?, means either once or never *)
-var_declaration ::= "var" IDENTIFIER [ "=" expression ] ";" ;
-
-statement       ::= expr_statement | print_statement ;
-
-expr_statement  ::= expression ";" ;
-
-print_statement ::= "print" expression ";" ;
