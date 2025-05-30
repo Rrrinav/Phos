@@ -1,31 +1,34 @@
-program         ::=  declaration* EOF;
+program          ::=  declaration* EOF;
 
-declaration     ::=  var_declaration | statement;
+declaration      ::=  var_declaration | statement;
 
 (* [ ] is like ?, means either once or never *)
-var_declaration ::= "var" IDENTIFIER [ "=" expression ] ";" ;
+var_declaration  ::= "var" IDENTIFIER [ "=" expression ] ";" ;
 
-statement       ::= expr_statement | print_statement | block_statement ;
+statement        ::= expr_statement | print_statement | block_statement
+                    if_statement ;
 
-expr_statement  ::= expression ";" ;
+expr_statement   ::= expression ";" ;
 
-print_statement ::= "print" expression ";" ;
+print_statement  ::= "print" expression ";" ;
 
 block_statement  ::= "{" declaration* "}" ;
 
-expression      ::=  assignment;
+if_statemnet     ::= if "(" expression ")" statement [ "else" statement ] ;
 
-assignment      ::=  IDENTIFIER "=" expression | equality;
+expression       ::=  assignment;
 
-equality        ::=  comparison ( ( "!=" | "==" ) comparison )* ;
+assignment       ::=  IDENTIFIER "=" expression | equality;
 
-comparison      ::=  term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
+equality         ::=  comparison ( ( "!=" | "==" ) comparison )* ;
 
-term            ::=  factor ( ( "-" | "+" ) factor )* ;
+comparison       ::=  term ( ( ">" | ">=" | "<" | "<=" ) term )* ;
 
-factor          ::=  unary ( ( "/" | "*" ) unary )* ;
+term             ::=  factor ( ( "-" | "+" ) factor )* ;
 
-unary           ::=  ( "!" | "-" ) unary | primary ;
+factor           ::=  unary ( ( "/" | "*" ) unary )* ;
 
-primary         ::=  NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" | IDENTIFIER ;
+unary            ::=  ( "!" | "-" ) unary | primary ;
+
+primary          ::=  NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")" | IDENTIFIER ;
 

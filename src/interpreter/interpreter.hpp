@@ -59,6 +59,18 @@ namespace interp
       this->execute_block(stmt.statements, block_env);
     }
 
+    void execute_node(const pars::If_stmt &stmt)
+    {
+      if (utl::is_truthy(evaluator_.evaluate(*stmt.condition)))
+      {
+        execute(*stmt.then_branch);
+      }
+      else if (stmt.else_branch.has_value())
+      {
+        execute(*stmt.else_branch.value());
+      }
+    }
+
     void execute_block(std::span<const pars::Statement> statements, runtime::Environment &environment)
     {
       runtime::Environment main_env = environment_;
@@ -68,5 +80,6 @@ namespace interp
 
       environment_ = main_env;
     }
+
   };
 }; // namespace interp

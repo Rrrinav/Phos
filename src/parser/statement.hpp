@@ -34,9 +34,16 @@ namespace pars
     std::vector<Statement> statements;
   };
 
+  struct If_stmt
+  {
+    Expr_ptr condition;
+    Stmt_ptr then_branch;
+    std::optional<Stmt_ptr> else_branch;
+  };
+
   struct Statement
   {
-    using Statement_variant = std::variant<Expression_stmt, Print_stmt, Variable_decl_stmt, Block_stmt>;
+    using Statement_variant = std::variant<Expression_stmt, Print_stmt, Variable_decl_stmt, Block_stmt, If_stmt>;
     Statement_variant node;
 
     template <typename T>

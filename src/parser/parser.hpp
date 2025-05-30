@@ -71,6 +71,7 @@ namespace pars
     {
       if (match({lex::Token_type::PRINT})) return print_statement();
       if (match({lex::Token_type::LEFT_BRACE})) return block_statement();
+      if (match({lex::Token_type::IF})) return if_statement();
       else return expression_statement();
     }
 
@@ -95,6 +96,31 @@ namespace pars
 
       consume(lex::Token_type::RIGHT_BRACE, "Expect '}' after block.");
       return pars::Statement{pars::Block_stmt{std::move(statements)}};
+    }
+
+    inline pars::Statement if_statement()
+    {
+      consume(lex::Token_type::LEFT_PAREN, "Expect '(' after 'if'.");
+      Expr condition = expression();
+      consume(lex::Token_type::RIGHT_PAREN, "Expect ')' after if condition.");
+
+      pars::Statement then_branch = statement();
+      std::optional<pars::Stmt_ptr> else_branch;
+
+      if (match({lex::Token_type::ELSE}))
+      {
+        else_branch = std::make_unique<pars::Statement>(statement());
+      }
+      else
+      {
+        else_branch = std::nullopt;
+      }
+
+    return pars::Statement{pars::If_stmt{
+      .condition    = std::make_unique<pars::Expr>(std::move(condition)),
+      .then_branch  = std::make_unique<pars::Statement>(std::move(then_branch)),
+      .else_branch  = std::move(else_branch),
+    }};
     }
 
     inline pars::Statement expression_statement()

@@ -94,7 +94,7 @@ namespace interp
         case lex::Token_type::GREATER_EQUAL:   result = utl::binary_number_op(left, right, std::greater_equal<>{});   break;
         case lex::Token_type::LESS:            result = utl::binary_number_op(left, right, std::less<>{});            break;
         case lex::Token_type::LESS_EQUAL:      result = utl::binary_number_op(left, right, std::less_equal<>{});      break;
-        case lex::Token_type::BANG_EQUAL:      result = utl::is_equal(left, right);                                   break;
+        case lex::Token_type::BANG_EQUAL:      result = utl::isnt_equal(left, right);                                  break;
         case lex::Token_type::EQUAL_EQUAL:     result = utl::is_equal(left, right);                                   break;
         default:
         err::report_runtime_error(
@@ -104,7 +104,9 @@ namespace interp
         break;
       }
       if (result.has_value())
-        return result.value();
+      {
+        return result.value(); 
+      }
       else
       {
         err::report_runtime_error(_b.op.line, std::format("Error evaluating binary expression: {}", result.error()));
