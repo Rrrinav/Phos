@@ -129,5 +129,17 @@ namespace interp
         err::quit(err::Exit_code::_EXIT_CODE_RUNTIME_ERROR_);
       }
     }
+
+    inline lex::Literal_obj evaluate_node(const pars::Logical_expr& _l)
+    {
+      lex::Literal_obj left = this->evaluate(*_l.left);
+      if (_l.op.type == lex::Token_type::OR && utl::is_truthy(left))
+        return left;
+
+      if (_l.op.type == lex::Token_type::AND && !utl::is_truthy(left))
+        return left;
+
+      return this->evaluate(*_l.right);
+    }
   };
 }; // namespace interp

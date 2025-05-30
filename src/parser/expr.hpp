@@ -46,9 +46,22 @@ namespace pars
     Expr_ptr value;
   };
 
+  struct Logical_expr
+  {
+    Expr_ptr left;
+    lex::Token op;
+    Expr_ptr right;
+  };
+
   struct Expr
   {
-    using Expr_variant = std::variant<Binary_expr, Grouping_expr, Literal_expr, Unary_expr, Variable_expr, Assign_expr>;
+    using Expr_variant = std::variant<
+      Binary_expr, Grouping_expr,
+      Literal_expr, Unary_expr,
+      Variable_expr, Assign_expr,
+      Logical_expr
+    >;
+
     Expr_variant node;
 
     template <typename T>
@@ -98,6 +111,11 @@ namespace pars
     std::string print_node(const Assign_expr &a) const
     {
       return parenthesize("assign", Variable_expr{a.name}, *a.value);
+    }
+
+    std::string print_node(const Logical_expr &l) const
+    {
+      return parenthesize(l.op.lexeme, *l.left, *l.right);
     }
   };
 }  // namespace pars

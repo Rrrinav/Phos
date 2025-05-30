@@ -134,7 +134,8 @@ namespace pars
 
     Expr assignment()
     {
-      Expr expr = equality();
+      Expr expr = or_expression();
+
       if (match({lex::Token_type::EQUAL}))
       {
         lex::Token equals = previous();
@@ -147,6 +148,34 @@ namespace pars
         }
         err::report(equals, "Invalid assignment target. Only variables can be assigned to.");
       }
+      return expr;
+    }
+
+    inline Expr or_expression()
+    {
+      Expr expr = and_expression();
+
+      while (match({lex::Token_type::OR}))
+      {
+        const auto op = previous();
+        auto right = std::make_unique<Expr>(and_expression());
+        expr = Expr{Logical_expr{std::make_unique<Expr>(std::move(expr)), op, std::move(right)}};
+      }
+
+      return expr;
+    }
+
+    inline Expr and_expression()
+    {
+      Expr expr = equality();
+
+      while (match({lex::Token_type::AND}))
+      {
+        const auto op = previous();
+        auto right = std::make_unique<Expr>(equality());
+        expr = Expr{Logical_expr{std::make_unique<Expr>(std::move(expr)), op, std::move(right)}};
+      }
+
       return expr;
     }
 
