@@ -8,7 +8,7 @@
 namespace utl
 {
   template <typename Op>
-  constexpr std::string_view get_operator_symbol()
+  inline constexpr std::string_view get_operator_symbol()
   {
     if constexpr (std::is_same_v<Op, std::plus<>>)               return "+";
     else if constexpr (std::is_same_v<Op, std::minus<>>)         return "-";
@@ -31,7 +31,7 @@ namespace utl
 
   template <Binary_number_op Op>
   [[nodiscard]]
-  std::expected<lex::Literal_obj, std::string> binary_number_op(const lex::Literal_obj &l, const lex::Literal_obj &r, Op op)
+  inline std::expected<lex::Literal_obj, std::string> binary_number_op(const lex::Literal_obj &l, const lex::Literal_obj &r, Op op)
   {
     auto lv = std::get_if<double>(&l);
     auto rv = std::get_if<double>(&r);
@@ -49,7 +49,7 @@ namespace utl
   }
 
   [[nodiscard]]
-  std::expected<lex::Literal_obj, std::string> is_equal(const lex::Literal_obj& x, lex::Literal_obj& y)
+  inline std::expected<lex::Literal_obj, std::string> is_equal(const lex::Literal_obj& x, lex::Literal_obj& y)
   {
     if (x.index() != y.index())
     {
@@ -64,7 +64,7 @@ namespace utl
     return x == y;
   };
 
-  bool is_truthy(const lex::Literal_obj& value)
+  inline bool is_truthy(const lex::Literal_obj& value)
   {
     if (std::holds_alternative<bool>(value))
       return std::get<bool>(value);
@@ -75,7 +75,7 @@ namespace utl
     return false; // For null or other types
   }
 
-  std::string stringify_literal(lex::Literal_obj _l)
+  inline std::string stringify_literal(lex::Literal_obj _l)
   {
     if (auto str = std::get_if<std::string>(&_l))
       return *str;

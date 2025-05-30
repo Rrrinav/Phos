@@ -26,19 +26,20 @@ namespace interp
         },
         expression.node
       );
-      std::println("./src/interpreter/evaluator.hpp:{} : Unreachable code reached.\n      Somehow couldn't evaluate an expressoin.", __LINE__);
+      std::println("./src/interpreter/evaluator.hpp:{} : Unreachable code reached.\n "
+                   "    Somehow couldn't evaluate an expressoin.", __LINE__);
       std::unreachable();
     };
 
   private:
 
-    lex::Literal_obj evaluate_node(const pars::Literal_expr& _l)
+    inline lex::Literal_obj evaluate_node(const pars::Literal_expr& _l)
     { return _l.value; }
  
-    lex::Literal_obj evaluate_node(const pars::Grouping_expr& _g)
+    inline lex::Literal_obj evaluate_node(const pars::Grouping_expr& _g)
     { return this->evaluate(*_g.expression); }
 
-    lex::Literal_obj evaluate_node(const pars::Unary_expr& _u)
+    inline lex::Literal_obj evaluate_node(const pars::Unary_expr& _u)
     {
       auto right = this->evaluate(*_u.right);
       switch (_u.op.type)
@@ -67,7 +68,7 @@ namespace interp
       }
     }
 
-    lex::Literal_obj evaluate_node(const pars::Binary_expr& _b)
+    inline lex::Literal_obj evaluate_node(const pars::Binary_expr& _b)
     {
       using lex::Token_type;
 
@@ -111,9 +112,9 @@ namespace interp
       }
     }
 
-    lex::Literal_obj evaluate_node(const pars::Variable_expr& _v) { return environment_.get(_v.name); }
+    inline lex::Literal_obj evaluate_node(const pars::Variable_expr& _v) { return environment_.get(_v.name); }
 
-    lex::Literal_obj evaluate_node(const pars::Assign_expr& _a)
+    inline lex::Literal_obj evaluate_node(const pars::Assign_expr& _a)
     {
       lex::Literal_obj value = this->evaluate(*_a.value);
       if (this->environment_.assign(_a.name, value))

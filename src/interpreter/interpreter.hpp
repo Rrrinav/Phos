@@ -1,5 +1,6 @@
 #pragma once
 
+#include <span>
 #include <vector>
 #include <variant>
 
@@ -25,7 +26,7 @@ namespace interp
 
   private:
     runtime::Environment environment_;
-    interp::Evaluator evaluator_;
+    interp::Evaluator    evaluator_;
 
     void execute(const pars::Statement &stmt)
     {
@@ -50,6 +51,22 @@ namespace interp
         value = evaluator_.evaluate(*stmt.initializer);
 
       environment_.define(stmt.name.lexeme, value);
+    }
+
+    void execute_node(const pars::Block_stmt &stmt)
+    {
+      runtime::Environment block_env = runtime::Environment(this->environment_);
+      this->execute_block(stmt.statements, block_env);
+    }
+
+    void execute_block(std::span<const pars::Statement> statements, runtime::Environment &environment)
+    {
+      runtime::Environment main_env = environment_;
+      environment_ = environment;
+
+      for (const auto &stmt : statements) execute(stmt);
+
+      environment_ = main_env;
     }
   };
 }; // namespace interp

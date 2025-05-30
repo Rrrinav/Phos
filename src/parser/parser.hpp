@@ -70,6 +70,7 @@ namespace pars
     inline pars::Statement statement()
     {
       if (match({lex::Token_type::PRINT})) return print_statement();
+      if (match({lex::Token_type::LEFT_BRACE})) return block_statement();
       else return expression_statement();
     }
 
@@ -79,6 +80,22 @@ namespace pars
       consume(lex::Token_type::SEMICOLON, "Expect ';' after value.");
       return pars::Statement{Print_stmt{std::make_unique<Expr>(std::move(value))}};
     };
+
+    inline pars::Statement block_statement()
+    {
+      std::vector<pars::Statement> statements;
+
+      while (!check(lex::Token_type::RIGHT_BRACE) && !is_at_end())
+      {
+        if (auto decl = delcaration_statement(); decl.has_value())
+        {
+          statements.push_back(std::move(*decl));
+        }
+      }
+
+      consume(lex::Token_type::RIGHT_BRACE, "Expect '}' after block.");
+      return pars::Statement{pars::Block_stmt{std::move(statements)}};
+    }
 
     inline pars::Statement expression_statement()
     {

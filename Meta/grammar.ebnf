@@ -5,11 +5,13 @@ declaration     ::=  var_declaration | statement;
 (* [ ] is like ?, means either once or never *)
 var_declaration ::= "var" IDENTIFIER [ "=" expression ] ";" ;
 
-statement       ::= expr_statement | print_statement ;
+statement       ::= expr_statement | print_statement | block_statement ;
 
 expr_statement  ::= expression ";" ;
 
 print_statement ::= "print" expression ";" ;
+
+block_statement  ::= "{" declaration* "}" ;
 
 expression      ::=  assignment;
 

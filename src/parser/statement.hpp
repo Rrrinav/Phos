@@ -3,6 +3,7 @@
 #include <variant>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "./expr.hpp"
 
@@ -28,13 +29,20 @@ namespace pars
     std::optional<Expr> initializer;
   };
 
+  struct Block_stmt
+  {
+    std::vector<Statement> statements;
+  };
+
   struct Statement
   {
-    std::variant<Expression_stmt, Print_stmt, Variable_decl_stmt> node;
+    using Statement_variant = std::variant<Expression_stmt, Print_stmt, Variable_decl_stmt, Block_stmt>;
+    Statement_variant node;
 
     template <typename T>
-    requires std::constructible_from<std::variant<Expression_stmt, Print_stmt, Variable_decl_stmt>, T>
+    requires std::constructible_from<Statement_variant, T>
     Statement(T val) : node(std::move(val)) {}
   };
+
 }
 
