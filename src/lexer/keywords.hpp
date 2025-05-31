@@ -3,7 +3,7 @@
 
 #include "./token_type.hpp"
 
-namespace lex 
+namespace lex
 {
   std::unordered_map<std::string, Token_type> make_keywords() {
     std::unordered_map<std::string, Token_type> m;

@@ -6,7 +6,7 @@ declaration      ::=  var_declaration | statement;
 var_declaration  ::= "var" IDENTIFIER [ "=" expression ] ";" ;
 
 statement        ::= expr_statement | print_statement | block_statement
-                    if_statement ;
+                     if_statement | while_statement | for_statement ;
 
 expr_statement   ::= expression ";" ;
 
@@ -15,6 +15,10 @@ print_statement  ::= "print" expression ";" ;
 block_statement  ::= "{" declaration* "}" ;
 
 if_statemnet     ::= if "(" expression ")" statement [ "else" statement ] ;
+
+while_statement   ::= "while" "(" expression ")" statement ;
+
+for_statement    ::= "for" "(" ( var_declaration | expr_statement | ";" ) [ expression ] ";" [ expression ] ")" statement ;
 
 expression       ::=  assignment;
 

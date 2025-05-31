@@ -20,8 +20,8 @@
 
 void run(std::string code)
 {
-  // A little trolling my friend
-  interp::Interpreter().interpret(pars::Parser(lex::Lexer(code).scan_tokens()).parse());
+  auto tokens = lex::Lexer(code).scan_tokens();
+  interp::Interpreter().interpret(pars::Parser(tokens).parse());
   {
     using err::Exit_code;
 
@@ -64,6 +64,8 @@ void run_prompt()
 
 int main(int argc, char *argv[])
 {
+  run_file("./test/test.phos");
+  return 0;
   if (argc > 2)
   {
     std::println("Usage: lang <file>");

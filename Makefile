@@ -1,5 +1,5 @@
 CXX := g++
-CXXFLAGS := -Wall -Wextra -pedantic -std=c++2b -I./src
+CXXFLAGS := -Wall -Wextra -pedantic -std=c++2b -I./src -ggdb
 BUILD_FOLDER := bin
 SOURCE_FOLDER := src
 

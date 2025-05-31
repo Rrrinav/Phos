@@ -19,13 +19,13 @@ namespace interp
       for (const auto &stmt : statements) execute(stmt);
     }
 
-    Interpreter() : environment_(runtime::Environment{}), evaluator_(this->environment_)
+    Interpreter() : environment_(std::make_shared<runtime::Environment>()), evaluator_(this->environment_)
     {
       evaluator_.environment_ = environment_;
     }
 
   private:
-    runtime::Environment environment_;
+    std::shared_ptr<runtime::Environment> environment_;
     interp::Evaluator    evaluator_;
 
     void execute(const pars::Statement &stmt)
@@ -50,12 +50,12 @@ namespace interp
       if (stmt.initializer.has_value())
         value = evaluator_.evaluate(*stmt.initializer);
 
-      environment_.define(stmt.name.lexeme, value);
+      environment_->define(stmt.name.lexeme, value);
     }
 
     void execute_node(const pars::Block_stmt &stmt)
     {
-      runtime::Environment block_env = runtime::Environment(this->environment_);
+      auto block_env = std::make_shared<runtime::Environment>(environment_);
       this->execute_block(stmt.statements, block_env);
     }
 
@@ -71,15 +71,25 @@ namespace interp
       }
     }
 
-    void execute_block(std::span<const pars::Statement> statements, runtime::Environment &environment)
+    void execute_block(std::span<const pars::Statement> statements, std::shared_ptr<runtime::Environment> new_env)
     {
-      runtime::Environment main_env = environment_;
-      environment_ = environment;
+      auto previous_env = environment_;     // Save current env
+      environment_ = new_env;               // Switch to new (but shared) env
 
-      for (const auto &stmt : statements) execute(stmt);
+      for (const auto &stmt : statements)
+        execute(stmt);
 
-      environment_ = main_env;
+      environment_ = previous_env;          // Restore
     }
 
+    void execute_node(const pars::While_stmt &stmt)
+    {
+      while (true)
+      {
+        auto value = evaluator_.evaluate(*stmt.condition);
+        if (!utl::is_truthy(value)) break;
+        execute(*stmt.body);
+      }
+    }
   };
 }; // namespace interp

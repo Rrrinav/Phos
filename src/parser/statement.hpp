@@ -41,9 +41,19 @@ namespace pars
     std::optional<Stmt_ptr> else_branch;
   };
 
+  struct While_stmt
+  {
+    Expr_ptr condition;
+    Stmt_ptr body;
+  };
+
   struct Statement
   {
-    using Statement_variant = std::variant<Expression_stmt, Print_stmt, Variable_decl_stmt, Block_stmt, If_stmt>;
+    using Statement_variant = std::variant<
+      Expression_stmt, Print_stmt,
+      Variable_decl_stmt, Block_stmt,
+      If_stmt, While_stmt>;
+
     Statement_variant node;
 
     template <typename T>

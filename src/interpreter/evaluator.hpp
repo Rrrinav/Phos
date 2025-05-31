@@ -16,7 +16,7 @@ namespace interp
 {
   struct Evaluator
   {
-    runtime::Environment& environment_;
+    std::shared_ptr<runtime::Environment>& environment_;
 
     lex::Literal_obj evaluate(const pars::Expr& expression)
     {
@@ -105,7 +105,7 @@ namespace interp
       }
       if (result.has_value())
       {
-        return result.value(); 
+        return result.value();
       }
       else
       {
@@ -114,12 +114,12 @@ namespace interp
       }
     }
 
-    inline lex::Literal_obj evaluate_node(const pars::Variable_expr& _v) { return environment_.get(_v.name); }
+    inline lex::Literal_obj evaluate_node(const pars::Variable_expr& _v) { return environment_->get(_v.name); }
 
     inline lex::Literal_obj evaluate_node(const pars::Assign_expr& _a)
     {
       lex::Literal_obj value = this->evaluate(*_a.value);
-      if (this->environment_.assign(_a.name, value))
+      if (this->environment_->assign(_a.name, value))
       {
         return value;
       }

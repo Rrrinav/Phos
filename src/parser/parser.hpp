@@ -72,6 +72,8 @@ namespace pars
       if (match({lex::Token_type::PRINT})) return print_statement();
       if (match({lex::Token_type::LEFT_BRACE})) return block_statement();
       if (match({lex::Token_type::IF})) return if_statement();
+      if (match({lex::Token_type::WHILE})) return while_statement();
+      if (match({lex::Token_type::FOR})) return for_statement();
       else return expression_statement();
     }
 
@@ -116,11 +118,96 @@ namespace pars
         else_branch = std::nullopt;
       }
 
-    return pars::Statement{pars::If_stmt{
-      .condition    = std::make_unique<pars::Expr>(std::move(condition)),
-      .then_branch  = std::make_unique<pars::Statement>(std::move(then_branch)),
-      .else_branch  = std::move(else_branch),
-    }};
+      return pars::Statement{pars::If_stmt{
+        .condition    = std::make_unique<pars::Expr>(std::move(condition)),
+        .then_branch  = std::make_unique<pars::Statement>(std::move(then_branch)),
+        .else_branch  = std::move(else_branch),
+      }};
+    }
+
+    inline pars::Statement while_statement()
+    {
+      consume(lex::Token_type::LEFT_PAREN, "Expect '(' after 'while'.");
+      Expr condition = expression();
+      consume(lex::Token_type::RIGHT_PAREN, "Expect ')' after condition.");
+
+      pars::Statement body = statement();
+
+      return pars::Statement{pars::While_stmt{
+        .condition = std::make_unique<pars::Expr>(std::move(condition)),
+        .body      = std::make_unique<pars::Statement>(std::move(body)),
+      }};
+    }
+
+    inline pars::Statement for_statement()
+    {
+      consume(lex::Token_type::LEFT_PAREN, "Expect '(' after 'while'.");
+
+      // Capture the initializer if it exists
+      std::optional<pars::Statement> initializer;
+      if (match({lex::Token_type::SEMICOLON}))
+        initializer = std::nullopt;
+      else if (match({lex::Token_type::VAR}))
+        initializer = variable_declaration();
+      else
+        initializer = expression_statement();
+
+      // Capture the condition if it exists
+      std::optional<Expr> condition;
+      if (!check(lex::Token_type::SEMICOLON))
+        condition = expression();
+      else
+        condition = Literal_expr{lex::Literal_obj{true}};  // Default to true
+
+      consume(lex::Token_type::SEMICOLON, "Expect ';' after loop condition.");
+
+      // Capture the operation if it exists
+      std::optional<Expr> operation;
+      if (!check(lex::Token_type::RIGHT_PAREN))
+        operation = expression();
+      else
+        operation = Literal_expr{lex::Literal_obj{}};  // Default to no operation
+
+      consume(lex::Token_type::RIGHT_PAREN, "Expect ')' after for loop clauses.");
+
+      auto body = statement();
+
+      if (operation.has_value())
+      {
+        // Wrap the body in a block if it isn't already
+        if (std::holds_alternative<pars::Block_stmt>(body.node))
+        {
+          auto& block = std::get<pars::Block_stmt>(body.node);
+          block.statements.push_back(Expression_stmt{std::make_unique<Expr>(std::move(*operation))});
+        }
+        else
+        {
+          std::vector<pars::Statement> block_statements;
+          block_statements.push_back(std::move(body));
+          block_statements.push_back(Expression_stmt{std::make_unique<Expr>(std::move(*operation))});
+          body = pars::Statement{pars::Block_stmt{std::move(block_statements)}};
+        }
+      }
+
+      if (!condition.has_value())
+        condition = Literal_expr{lex::Literal_obj{true}};
+
+      body = pars::Statement{pars::While_stmt{
+        .condition = std::make_unique<pars::Expr>(std::move(*condition)),
+        .body      = std::make_unique<pars::Statement>(std::move(body))
+      }};
+
+      if (initializer.has_value())
+      {
+        std::vector<pars::Statement> block_statements;
+        block_statements.push_back(std::move(*initializer));
+        block_statements.push_back(std::move(body));
+        body = pars::Statement{pars::Block_stmt{
+          .statements = std::move(block_statements)
+        }};
+      }
+
+      return body;
     }
 
     inline pars::Statement expression_statement()
