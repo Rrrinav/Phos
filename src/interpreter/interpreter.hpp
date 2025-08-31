@@ -48,6 +48,17 @@ public:
         }
     }
 
+
+    std::unordered_map<std::string, Value> get_variables()
+    {
+        return environment->vars;
+    }
+
+    std::unordered_map<std::string, const ast::Function_stmt *> get_functions()
+    {
+        return this->functions;
+    }
+
     Result<void> interpret(const std::vector<std::unique_ptr<ast::Stmt>> &statements)
     {
         // Register all functions first

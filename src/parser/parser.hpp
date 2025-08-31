@@ -28,10 +28,7 @@ public:
 
     void skip_newlines()
     {
-        while (!is_at_end() && match({lex::TokenType::Newline}))
-        {
-            // Keep consuming newline tokens
-        }
+        while (!is_at_end() && match({lex::TokenType::Newline})) {} // Keep consuming newline tokens
     }
 
     // Parses the entire program into a vector of statements
@@ -55,7 +52,7 @@ public:
                 }
                 return std::unexpected(decl_result.error());
             }
-            
+
             if (decl_result.value())
             {
                 statements.push_back(std::move(*decl_result.value()));
@@ -157,7 +154,7 @@ private:
             }
             return std::optional<std::unique_ptr<ast::Stmt>>{std::move(func_result.value())};
         }
-        
+
         if (match({lex::TokenType::Let}))
         {
             auto var_result = var_declaration();
@@ -228,27 +225,49 @@ private:
     Result<std::unique_ptr<ast::Stmt>> var_declaration()
     {
         auto name_result = consume(lex::TokenType::Identifier, "Expect variable name");
-        if (!name_result) return std::unexpected(name_result.error());
+        if (!name_result)
+            return std::unexpected(name_result.error());
         lex::Token name = name_result.value();
 
         types::Type var_type = types::Type(types::kind::Void);
+        std::unique_ptr<ast::Expr> initializer;
+
+        // Check for walrus operator (:=) for type inference
         if (match({lex::TokenType::Colon}))
         {
-            auto type_result = parse_type();
-            if (!type_result) return std::unexpected(type_result.error());
-            var_type = type_result.value();
+            if (match({lex::TokenType::Assign}))
+            {
+                // Walrus operator := - infer type from expression
+                auto init_result = expression();
+                if (!init_result)
+                    return std::unexpected(init_result.error());
+                initializer = std::move(init_result.value());
+
+                // Infer type from the initializer expression
+                var_type = initializer->get_type();
+            }
+            else
+            {
+                // Regular type annotation: let x: int
+                auto type_result = parse_type();
+                if (!type_result)
+                    return std::unexpected(type_result.error());
+                var_type = type_result.value();
+
+                // Check for optional assignment after type
+                if (match({lex::TokenType::Assign}))
+                {
+                    auto init_result = expression();
+                    if (!init_result)
+                        return std::unexpected(init_result.error());
+                    initializer = std::move(init_result.value());
+                }
+            }
         }
 
-        std::unique_ptr<ast::Expr> initializer;
-        if (match({lex::TokenType::Assign}))
-        {
-            auto init_result = expression();
-            if (!init_result) return std::unexpected(init_result.error());
-            initializer = std::move(init_result.value());
-        }
-
-        auto semicolon_result = consume(lex::TokenType::Semicolon, "Expect ';' after variable declaration");
-        if (!semicolon_result) return std::unexpected(semicolon_result.error());
+        auto semicolon_result = consume(lex::TokenType::Semicolon, "Expected ';' after variable declaration");
+        if (!semicolon_result)
+            return std::unexpected(semicolon_result.error());
 
         // Add variable to type tracking
         variable_types[name.lexeme] = var_type;
@@ -279,10 +298,16 @@ private:
 
     Result<std::unique_ptr<ast::Stmt>> print_statement()
     {
+        auto left_paren = consume(lex::TokenType::LeftParen, "Expected '(' after print statement");
+        if (!left_paren) return std::unexpected(left_paren.error());
+
         auto expr_result = expression();
         if (!expr_result) return std::unexpected(expr_result.error());
 
-        auto semicolon_result = consume(lex::TokenType::Semicolon, "Expect ';' after value");
+        auto right_paren = consume(lex::TokenType::RightParen, "Expected ')' after value");
+        if (!right_paren) return std::unexpected(right_paren.error());
+
+        auto semicolon_result = consume(lex::TokenType::Semicolon, "Expect ';' after print statement");
         if (!semicolon_result) return std::unexpected(semicolon_result.error());
 
         return std::make_unique<ast::Print_stmt>(std::move(expr_result.value()), previous().line, previous().column);
@@ -300,12 +325,12 @@ private:
         while (!check(lex::TokenType::RightBrace) && !is_at_end())
         {
             auto stmt_result = declaration();
-            if (!stmt_result) 
+            if (!stmt_result)
             {
                 variable_types = saved_variable_types;
                 return std::unexpected(stmt_result.error());
             }
-            
+
             if (stmt_result.value())
                 statements.push_back(std::move(*stmt_result.value()));
         }
@@ -741,4 +766,5 @@ private:
         return std::unexpected(create_error(peek(), "Expect type"));
     }
 };
-}
+
+} // namepsace phos

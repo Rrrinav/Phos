@@ -39,7 +39,7 @@ std::string string_diff(const std::string &got, const std::string &expected)
 void build_interpreter()
 {
     bld::fs::create_dir_if_not_exists(BIN);
-    if (!std::filesystem::exists(TARGET) && !bld::execute({"g++", "-o", TARGET, SRC + "main.cpp", "--std=c++23", "-O2"}))
+    if (!bld::execute({"g++", "-o", TARGET, SRC + "main.cpp", "--std=c++23", "-O2"}))
     {
         bld::log(bld::Log_type::ERR, "Building failed.");
         std::exit(EXIT_FAILURE);
@@ -55,7 +55,8 @@ std::tuple<int, int, std::vector<std::pair<std::string, std::string>>> run_tests
         std::exit(EXIT_FAILURE);
     }
 
-    build_interpreter();
+    if (!std::filesystem::exists(TARGET)) build_interpreter();
+
     auto files = bld::fs::get_all_files_with_extensions(dir, {"phos"});
 
     int tests_passed = 0;

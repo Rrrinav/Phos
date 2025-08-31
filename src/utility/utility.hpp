@@ -7,6 +7,7 @@
 #include <concepts>
 #include <string>
 #include <type_traits>
+#include <variant>
 
 namespace util {
 

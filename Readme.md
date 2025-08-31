@@ -6,6 +6,6 @@
 
 - [ ] Arrays
 - [ ] User defined types
-- [ ] Imports
 - [ ] Proper I/O (stream direction and reading input)
+- [ ] Imports
 - [ ] Type Inference

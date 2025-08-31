@@ -8,19 +8,27 @@
 #include "parser/parser.hpp"
 #include "lexer/lexer.hpp"
 #include "lexer/token.hpp"
+#include "repl.hpp"
 
 int main(int argc, char *argv[])
 {
+    if (argc == 1)
+    {
+        Phos_repl repl;
+        repl.run();
+        return 0;
+    }
+
     if (argc != 2)
     {
-        std::cerr << "Usage: " << argv[0] << " <filename.phos>" << std::endl;
+        std::println(stderr, "Usage: {} <filename.phos>", argv[0]);
         return 1;
     }
     std::string filename = argv[1];
     std::ifstream file(filename);
     if (!file.is_open())
     {
-        std::cerr << "Error: Could not open file '" << filename << "'" << std::endl;
+        std::println(stderr, "Error: Couldn't open the file: {}.", filename);
         return 1;
     }
     std::stringstream buffer;
@@ -35,7 +43,7 @@ int main(int argc, char *argv[])
         {
             if (token.type == phos::lex::TokenType::Invalid)
             {
-                std::cerr << "Lexer error: " << token.lexeme << " at line " << token.line << ", column " << token.column << std::endl;
+                std::println(stderr, "{}:{}:{}: error: Invalid token: {}", filename, token.line, token.column, token.lexeme);
                 return 1;
             }
         }
@@ -46,7 +54,7 @@ int main(int argc, char *argv[])
 
         if (!parse_result)
         {
-            std::cerr << "Parser error: " << parse_result.error().format() << std::endl;
+            std::println(stderr, "{}:{}", filename, parse_result.error().format());
             return 1;
         }
         auto statements = std::move(*parse_result);
@@ -54,14 +62,14 @@ int main(int argc, char *argv[])
         auto type_result = type_checker.check(statements);
         if (!type_result)
         {
-            std::cerr << "Type error: " << type_result.error().format() << std::endl;
+            std::println(stderr, "{}:{}", filename, type_result.error().format());
             return 1;
         }
         phos::Interpreter interpreter;
         auto interpret_result = interpreter.interpret(statements);
         if (!interpret_result)
         {
-            std::cerr << "Runtime error: " << interpret_result.error().format() << std::endl;
+            std::println(stderr, "{}:{}", filename, type_result.error().format());
             return 1;
         }
     }

@@ -11,7 +11,7 @@ function_declaration = "fn" identifier "(" [ parameter_list ] ")" [ "->" type ] 
 parameter_list = parameter { "," parameter } ;
 parameter = identifier ":" type ;
 
-variable_declaration = "let" identifier [ ":" type ] [ "=" expression ] ";" ;
+variable_declaration = "let" identifier ( [ ":" type ] [ "=" expression ] | ":=" exoression )";" ;
 
 (* Statements *)
 statement = print_statement
@@ -22,7 +22,7 @@ statement = print_statement
           | return_statement
           | expression_statement ;
 
-print_statement = "print" expression ";" ;
+print_statement = "print" "(" expression ")" ";" ;
 
 block_statement = "{" { declaration } "}" ;
 
