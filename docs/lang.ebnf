@@ -22,7 +22,7 @@ statement = print_statement
           | return_statement
           | expression_statement ;
 
-print_statement = "print" "(" expression ")" ";" ;
+print_statement = ( "print" | "print_err" ) "(" expression ")" ";" ;
 
 block_statement = "{" { declaration } "}" ;
 

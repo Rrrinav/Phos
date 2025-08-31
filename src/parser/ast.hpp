@@ -152,8 +152,14 @@ struct Var_stmt : Stmt
     }
 };
 
+enum class Print_stream
+{
+    STDOUT, STDERR
+};
+
 struct Print_stmt : Stmt
 {
+    Print_stream stream;
     std::unique_ptr<Expr> expression;
     explicit Print_stmt(std::unique_ptr<Expr> expr, size_t l = 0, size_t c = 0) : expression(std::move(expr))
     {

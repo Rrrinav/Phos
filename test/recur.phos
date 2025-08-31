@@ -15,4 +15,4 @@ print("hello: " + x as string);
 print(fact(5));
 print(fib(6));
 
-main();
+print_err(fib(6));

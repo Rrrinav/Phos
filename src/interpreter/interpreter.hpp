@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdio>
+#include <print>
 #include <string>
 #include <variant>
 #include <iostream>
@@ -162,28 +164,29 @@ private:
 
     Result<void> execute_print_stmt(const ast::Print_stmt &stmt)
     {
+        auto stream = stmt.stream == ast::Print_stream::STDOUT ? stdout : stderr;
+
         auto eval_res = evaluate(*stmt.expression);
         if (!eval_res)
             return std::unexpected(eval_res.error());
 
         std::visit(
-            [](auto &&arg)
+            [&](auto &&arg)
             {
                 using T = std::decay_t<decltype(arg)>;
                 if constexpr (std::is_same_v<T, std::string>)
-                    std::cout << arg;
+                    std::println(stream, "{}", arg);
                 else if constexpr (std::is_same_v<T, bool>)
-                    std::cout << (arg ? "true" : "false");
+                    std::println(stream, "{}", arg ? "true" : "false");
                 else if constexpr (std::is_same_v<T, std::nullptr_t>)
-                    std::cout << "null";
+                    std::println("null");
                 else if constexpr (std::is_same_v<T, std::monostate>)
-                    std::cout << "monostate";
+                    std::println(stream,"monostate: uninitialized");
                 else
-                    std::cout << arg;
+                    std::println(stream,"{}", arg);
             },
-            *eval_res);
+        *eval_res);
 
-        std::cout << std::endl;
         return {};
     }
 

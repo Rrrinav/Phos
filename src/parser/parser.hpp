@@ -283,6 +283,8 @@ private:
 
         if (match({lex::TokenType::Print}))
             return print_statement();
+        if (match({lex::TokenType::PrintErr}))
+            return print_statement(ast::Print_stream::STDERR);
         if (match({lex::TokenType::LeftBrace}))
             return block_statement();
         if (match({lex::TokenType::If}))
@@ -296,7 +298,7 @@ private:
         return expression_statement();
     }
 
-    Result<std::unique_ptr<ast::Stmt>> print_statement()
+    Result<std::unique_ptr<ast::Stmt>> print_statement(ast::Print_stream stream = ast::Print_stream::STDOUT)
     {
         auto left_paren = consume(lex::TokenType::LeftParen, "Expected '(' after print statement");
         if (!left_paren) return std::unexpected(left_paren.error());
@@ -310,7 +312,9 @@ private:
         auto semicolon_result = consume(lex::TokenType::Semicolon, "Expect ';' after print statement");
         if (!semicolon_result) return std::unexpected(semicolon_result.error());
 
-        return std::make_unique<ast::Print_stmt>(std::move(expr_result.value()), previous().line, previous().column);
+        auto stm = std::make_unique<ast::Print_stmt>(std::move(expr_result.value()), previous().line, previous().column);
+        stm->stream = stream;
+        return std::move(stm);
     }
 
     Result<std::unique_ptr<ast::Stmt>> block_statement()

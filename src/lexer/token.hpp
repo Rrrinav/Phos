@@ -12,7 +12,7 @@ namespace lex {
 enum class TokenType : uint8_t
 {
     Integer, Float, String, Bool, Identifier, Let, If, Else, While, For,
-    Fn, Return, Print, Plus, Minus, Star, Slash, Percent, Equal, NotEqual,
+    Fn, Return, Print, PrintErr, Plus, Minus, Star, Slash, Percent, Equal, NotEqual,
     Less, Greater, LessEqual, GreaterEqual, Assign, LogicalAnd, LogicalOr,
     LogicalNot, Arrow, LeftParen, RightParen, LeftBrace, RightBrace, Semicolon,
     Comma, Colon, As, Newline, Eof, Invalid
@@ -30,7 +30,7 @@ struct Token
 };
 
 static const std::unordered_map<std::string_view, TokenType> token_keywords = {
-    {"let",    TokenType::Let},
+    {"let",    TokenType::Let},            {"print_err",   TokenType::PrintErr},
     {"if",     TokenType::If},             {"else",      TokenType::Else},
     {"while",  TokenType::While},          {"for",       TokenType::For},
     {"fn",     TokenType::Fn},             {"return",    TokenType::Return},

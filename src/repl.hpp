@@ -16,7 +16,8 @@
 #include "interpreter/interpreter.hpp"
 
 // Utility function to convert values to strings for display
-std::string value_to_string(const phos::Value &value) {
+std::string value_to_string(const phos::Value &value)
+{
     return std::visit(
         [](const auto &v) -> std::string {
             using T = std::decay_t<decltype(v)>;
