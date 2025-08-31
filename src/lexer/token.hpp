@@ -1,66 +1,44 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
-#include <variant>
-#include <span>
-#include <format>
-#include <print>
+#include <unordered_map>
 
-#include "./token_type.hpp"
+#include "../value/value.hpp"
 
-namespace lex
+namespace phos {
+namespace lex {
+
+enum class TokenType : uint8_t
 {
-  using Literal_obj = std::variant<std::monostate, double, std::string, bool>;
+    Integer, Float, String, Bool, Identifier, Let, If, Else, While, For,
+    Fn, Return, Print, Plus, Minus, Star, Slash, Percent, Equal, NotEqual,
+    Less, Greater, LessEqual, GreaterEqual, Assign, LogicalAnd, LogicalOr,
+    LogicalNot, Arrow, LeftParen, RightParen, LeftBrace, RightBrace, Semicolon,
+    Comma, Colon, As, Newline, Eof, Invalid
+};
 
-  std::string literalobj_type_to_string(std::size_t index)
-  {
-    if (index == 0) return "NULL";
-    if (index == 1) return "NUMBER";
-    if (index == 2) return "STRING";
-    if (index == 3) return "BOOLEAN";
-    return "UNKNOWN";
-  }
-
-  struct Token
-  {
-    lex::Token_type type;
+struct Token
+{
+    TokenType type;
     std::string lexeme;
-    Literal_obj literal;
-    std::size_t line;
+    Value literal;
+    size_t line;
+    size_t column;
+    Token(TokenType t, std::string lex, Value lit, size_t l, size_t c)
+        : type(t), lexeme(std::move(lex)), literal(std::move(lit)), line(l), column(c) {}
+};
 
-    Token(lex::Token_type type, std::string lexeme, Literal_obj literal, std::size_t line)
-        : type(type), lexeme(std::move(lexeme)), literal(std::move(literal)), line(line)
-    {}
+static const std::unordered_map<std::string_view, TokenType> token_keywords = {
+    {"let",    TokenType::Let},
+    {"if",     TokenType::If},             {"else",      TokenType::Else},
+    {"while",  TokenType::While},          {"for",       TokenType::For},
+    {"fn",     TokenType::Fn},             {"return",    TokenType::Return},
+    {"print",  TokenType::Print},          {"true",      TokenType::Bool},
+    {"false",  TokenType::Bool},           {"int",       TokenType::Identifier},
+    {"float",  TokenType::Identifier},     {"bool",      TokenType::Identifier},
+    {"string", TokenType::Identifier},     {"as",        TokenType::As}
+};
 
-    std::string to_string() const
-    {
-      std::string lit_str;
-      if (std::holds_alternative<double>(literal))
-        lit_str = std::to_string(std::get<double>(literal));
-      else if (std::holds_alternative<std::string>(literal))
-        lit_str = std::get<std::string>(literal);
-      else
-        lit_str = "null";
-
-      return token_type_to_string(type) + " " + lexeme + " " + lit_str;
-    }
-
-    static void print_tokens(std::span<Token> tokens_)
-    {
-      for (const auto &token : tokens_)
-      {
-        std::string literal_str;
-
-        if (std::holds_alternative<double>(token.literal))
-          literal_str = std::format("{}", std::get<double>(token.literal));
-        else if (std::holds_alternative<std::string>(token.literal))
-          literal_str = std::format("\"{}\"", std::get<std::string>(token.literal));
-        else
-          literal_str = "null";
-
-        std::println("{:<15} | lexeme: {:<10} | literal: {}", lex::token_type_to_string(token.type),
-                     token.lexeme.empty() ? "\"\"" : token.lexeme, literal_str);
-      }
-    }
-  };
-}
+} // namespace lex
+} // namespace phos

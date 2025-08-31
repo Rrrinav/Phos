@@ -1,6 +1,3 @@
 /bin/
-main*
-!main.cpp
-/test/*
-!/test/*.cpp
-!/test/*.phos
+bld
+main

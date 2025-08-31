@@ -1,0 +1,89 @@
+(* Program Structure *)
+program = { newline | declaration } ;
+
+declaration = function_declaration
+            | variable_declaration
+            | statement ;
+
+(* Declarations *)
+function_declaration = "fn" identifier "(" [ parameter_list ] ")" [ "->" type ] "{" block_statement "}" ;
+
+parameter_list = parameter { "," parameter } ;
+parameter = identifier ":" type ;
+
+variable_declaration = "let" identifier [ ":" type ] [ "=" expression ] ";" ;
+
+(* Statements *)
+statement = print_statement
+          | block_statement
+          | if_statement
+          | while_statement
+          | for_statement
+          | return_statement
+          | expression_statement ;
+
+print_statement = "print" expression ";" ;
+
+block_statement = "{" { declaration } "}" ;
+
+if_statement = "if" "(" expression ")" statement [ "else" statement ] ;
+
+while_statement = "while" "(" expression ")" statement ;
+
+for_statement = "for" "(" [ for_initializer ] ";" [ expression ] ";" [ expression ] ")" statement ;
+
+for_initializer = "let" identifier [ ":" type ] [ "=" expression ]
+                | expression ;
+
+return_statement = "return" [ expression ] ";" ;
+
+expression_statement = expression ";" ;
+
+(* Expressions - Operator Precedence (lowest to highest) *)
+expression = assignment ;
+
+assignment = logical_or [ "=" assignment ] ;
+
+logical_or = logical_and { "||" logical_and } ;
+
+logical_and = equality { "&&" equality } ;
+
+equality = comparison { ( "==" | "!=" ) comparison } ;
+
+comparison = term { ( "<" | "<=" | ">" | ">=" ) term } ;
+
+term = factor { ( "+" | "-" ) factor } ;
+
+factor = cast { ( "*" | "/" | "%" ) cast } ;
+
+cast = unary { "as" type } ;
+
+unary = ( "!" | "-" ) cast
+      | call ;
+
+call = primary { "(" [ argument_list ] ")" } ;
+
+argument_list = expression { "," expression } ;
+
+primary = boolean_literal
+        | integer_literal
+        | float_literal
+        | string_literal
+        | identifier
+        | "(" expression ")" ;
+
+(* Types *)
+type = "int" | "float" | "bool" | "string" | "void" ;
+
+(* Literals and Identifiers *)
+boolean_literal = "true" | "false" ;
+integer_literal = digit { digit } ;
+float_literal = digit { digit } "." digit { digit } ;
+string_literal = '"' { character } '"' ;
+identifier = letter { letter | digit | "_" } ;
+
+(* Basic Characters *)
+letter = "a" | "b" | ... | "z" | "A" | "B" | ... | "Z" ;
+digit = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
+character = ? any printable character except '"' ? ;
+newline = "\n" | "\r\n" ;

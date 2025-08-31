@@ -1,0 +1,19 @@
+#pragma once
+
+#include <iostream>
+#include <fstream>
+#include <print>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <text_encoding>
+#include <vector>
+#include <variant>
+#include <unordered_map>
+#include <memory>
+#include <optional>
+#include <expected>
+#include <stdexcept>
+#include <algorithm>
+#include <cctype>
+#include <format>
