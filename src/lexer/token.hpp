@@ -11,7 +11,7 @@ namespace lex {
 
 enum class TokenType : uint8_t
 {
-    Integer, Float, String, Bool, Identifier, Let, If, Else, While, For,
+    Integer64, Float64, String, Bool, Array, Identifier, Let, If, Else, While, For,
     Fn, Return, Print, PrintErr, Plus, Minus, Star, Slash, Percent, Equal, NotEqual,
     Less, Greater, LessEqual, GreaterEqual, Assign, LogicalAnd, LogicalOr,
     LogicalNot, Arrow, LeftParen, RightParen, LeftBrace, RightBrace, Semicolon,
@@ -35,9 +35,10 @@ static const std::unordered_map<std::string_view, TokenType> token_keywords = {
     {"while",  TokenType::While},          {"for",       TokenType::For},
     {"fn",     TokenType::Fn},             {"return",    TokenType::Return},
     {"print",  TokenType::Print},          {"true",      TokenType::Bool},
-    {"false",  TokenType::Bool},           {"int",       TokenType::Identifier},
-    {"float",  TokenType::Identifier},     {"bool",      TokenType::Identifier},
-    {"string", TokenType::Identifier},     {"as",        TokenType::As}
+    {"false",  TokenType::Bool},           {"i64",       TokenType::Identifier},
+    {"f64",    TokenType::Identifier},     {"bool",      TokenType::Identifier},
+    {"string", TokenType::Identifier},     {"as",        TokenType::As},
+    {"arr",    TokenType::Array}
 };
 
 } // namespace lex

@@ -22,6 +22,27 @@ std::string operator_token_to_string(phos::lex::TokenType type)
     return it != token_names.end() ? it->second : "unknown";
 }
 
+std::string value_to_string(const phos::Value &value)
+{
+    return std::visit(
+        [](const auto &v) -> std::string {
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_same_v<T, int64_t>)
+                return std::to_string(v);
+            else if constexpr (std::is_same_v<T, double>)
+                return std::to_string(v);
+            else if constexpr (std::is_same_v<T, bool>)
+                return v ? "true" : "false";
+            else if constexpr (std::is_same_v<T, std::string>)
+                return "\"" + v + "\"";
+            else if constexpr (std::is_same_v<T, std::monostate>)
+                return "void";
+            else
+                return "unknown";
+        },
+    value);
+}
+
 #define invalid_oper(op, operand) "Invalid operands (" operand ") for operator '" op "'"
 
 template <typename T>

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <utility>
 #include <vector>
 #include <variant>
 #include <unordered_map>
@@ -219,7 +220,12 @@ private:
         if (!body_result) return std::unexpected(body_result.error());
 
         function_types.emplace(name.lexeme, return_type);
-        return std::make_unique<ast::Function_stmt>(name.lexeme, parameters, return_type, std::move(body_result.value()), name.line, name.column);
+
+        return std::make_unique<ast::Stmt>(
+            (ast::Stmt){
+                (ast::Function_stmt){ .name = name.lexeme, .parameters = parameters, .return_type = return_type, .body =  std::move(body_result.value())},
+                {name.line, name.column}
+        });
     }
 
     Result<std::unique_ptr<ast::Stmt>> var_declaration()
@@ -244,7 +250,7 @@ private:
                 initializer = std::move(init_result.value());
 
                 // Infer type from the initializer expression
-                var_type = initializer->get_type();
+                var_type = initializer->type;
             }
             else
             {
@@ -272,7 +278,10 @@ private:
         // Add variable to type tracking
         variable_types[name.lexeme] = var_type;
 
-        return std::make_unique<ast::Var_stmt>(name.lexeme, var_type, std::move(initializer), name.line, name.column);
+        return std::make_unique<ast::Stmt>( ast::Stmt{
+            ast::Var_stmt{name.lexeme, var_type, std::move(initializer)},
+            ast::Source_location{name.line, name.column}}
+        );
     }
 
     Result<std::unique_ptr<ast::Stmt>> statement()
@@ -312,9 +321,10 @@ private:
         auto semicolon_result = consume(lex::TokenType::Semicolon, "Expect ';' after print statement");
         if (!semicolon_result) return std::unexpected(semicolon_result.error());
 
-        auto stm = std::make_unique<ast::Print_stmt>(std::move(expr_result.value()), previous().line, previous().column);
-        stm->stream = stream;
-        return std::move(stm);
+        return std::make_unique<ast::Stmt>(ast::Stmt{
+            ast::Print_stmt{stream, std::move(expr_result.value())},
+            ast::Source_location{previous().line, previous().column}
+        });
     }
 
     Result<std::unique_ptr<ast::Stmt>> block_statement()
@@ -349,7 +359,7 @@ private:
         // Restore variable types (block creates a new scope)
         variable_types = saved_variable_types;
 
-        return std::make_unique<ast::Block_stmt>(std::move(statements), line, column);
+        return std::make_unique<ast::Stmt>(ast::Stmt{ast::Block_stmt{std::move(statements)}, {line, column}});
     }
 
     Result<std::unique_ptr<ast::Stmt>> if_statement()
@@ -374,7 +384,10 @@ private:
             else_branch = std::move(else_branch_result.value());
         }
 
-        return std::make_unique<ast::If_stmt>(std::move(condition_result.value()), std::move(then_branch_result.value()), std::move(else_branch), previous().line, previous().column);
+        return std::make_unique<ast::Stmt>(ast::Stmt{
+            ast::If_stmt{std::move(condition_result.value()), std::move(then_branch_result.value()), std::move(else_branch)},
+            ast::Source_location{previous().line, previous().column}
+        });
     }
 
     Result<std::unique_ptr<ast::Stmt>> while_statement()
@@ -391,13 +404,17 @@ private:
         auto body_result = statement();
         if (!body_result) return std::unexpected(body_result.error());
 
-        return std::make_unique<ast::While_stmt>(std::move(condition_result.value()), std::move(body_result.value()), previous().line, previous().column);
+        return std::make_unique<ast::Stmt>(ast::Stmt{
+            ast::While_stmt{std::move(condition_result.value()), std::move(body_result.value())}, 
+            ast::Source_location{previous().line, previous().column}
+        });
     }
 
     Result<std::unique_ptr<ast::Stmt>> for_statement()
     {
         auto left_paren_result = consume(lex::TokenType::LeftParen, "Expect '(' after 'for'");
-        if (!left_paren_result) return std::unexpected(left_paren_result.error());
+        if (!left_paren_result)
+            return std::unexpected(left_paren_result.error());
 
         std::unique_ptr<ast::Stmt> initializer;
         if (match({lex::TokenType::Semicolon}))
@@ -407,13 +424,15 @@ private:
         else if (match({lex::TokenType::Let}))
         {
             auto init_result = var_declaration();
-            if (!init_result) return std::unexpected(init_result.error());
+            if (!init_result)
+                return std::unexpected(init_result.error());
             initializer = std::move(init_result.value());
         }
         else
         {
             auto init_result = expression_statement();
-            if (!init_result) return std::unexpected(init_result.error());
+            if (!init_result)
+                return std::unexpected(init_result.error());
             initializer = std::move(init_result.value());
         }
 
@@ -421,47 +440,69 @@ private:
         if (!check(lex::TokenType::Semicolon))
         {
             auto condition_result = expression();
-            if (!condition_result) return std::unexpected(condition_result.error());
+            if (!condition_result)
+                return std::unexpected(condition_result.error());
             condition = std::move(condition_result.value());
         }
 
         auto semicolon_result = consume(lex::TokenType::Semicolon, "Expect ';' after loop condition");
-        if (!semicolon_result) return std::unexpected(semicolon_result.error());
+        if (!semicolon_result)
+            return std::unexpected(semicolon_result.error());
 
         std::unique_ptr<ast::Expr> increment;
         if (!check(lex::TokenType::RightParen))
         {
             auto increment_result = expression();
-            if (!increment_result) return std::unexpected(increment_result.error());
+            if (!increment_result)
+                return std::unexpected(increment_result.error());
             increment = std::move(increment_result.value());
         }
 
         auto right_paren_result = consume(lex::TokenType::RightParen, "Expect ')' after for clauses");
-        if (!right_paren_result) return std::unexpected(right_paren_result.error());
+        if (!right_paren_result)
+            return std::unexpected(right_paren_result.error());
 
         auto body_result = statement();
-        if (!body_result) return std::unexpected(body_result.error());
+        if (!body_result)
+            return std::unexpected(body_result.error());
         auto body = std::move(body_result.value());
 
+        // Convert for loop to while loop
         if (increment)
         {
+            // Create block: { body; increment; }
             std::vector<std::unique_ptr<ast::Stmt>> body_stmts;
             body_stmts.push_back(std::move(body));
-            body_stmts.push_back(std::make_unique<ast::Expr_stmt>(std::move(increment), 0, 0));
-            body = std::make_unique<ast::Block_stmt>(std::move(body_stmts), 0, 0);
+
+            ast::Expr_stmt increment_stmt{std::move(increment)};
+            body_stmts.push_back(std::make_unique<ast::Stmt>(ast::Stmt{std::move(increment_stmt), {previous().line, previous().column}}));
+
+            ast::Block_stmt block_node{std::move(body_stmts)};
+            body = std::make_unique<ast::Stmt>(ast::Stmt{std::move(block_node), {previous().line, previous().column}});
         }
 
+        // Default condition to true if not provided
         if (!condition)
-            condition = std::make_unique<ast::Literal_expr>(true, types::Type(types::kind::Bool), 0, 0);
+        {
+            ast::Literal_expr true_literal{Value{true}};
+            condition = std::make_unique<ast::Expr>(ast::Expr{std::move(true_literal), types::Type(types::kind::Bool), {previous().line, previous().column}});
+        }
 
-        auto while_loop = std::make_unique<ast::While_stmt>(std::move(condition), std::move(body), previous().line, previous().column);
+        // Create the while loop
+        ast::While_stmt while_node{std::move(condition), std::move(body)};
+        auto while_loop = std::make_unique<ast::Stmt>(ast::Stmt{std::move(while_node), {previous().line, previous().column}});
+
+        // If there's an initializer, create a block: { initializer; while_loop; }
         if (initializer)
         {
             std::vector<std::unique_ptr<ast::Stmt>> stmts;
             stmts.push_back(std::move(initializer));
             stmts.push_back(std::move(while_loop));
-            return std::make_unique<ast::Block_stmt>(std::move(stmts), previous().line, previous().column);
+
+            ast::Block_stmt block_node{std::move(stmts)};
+            return std::make_unique<ast::Stmt>(ast::Stmt{std::move(block_node), {previous().line, previous().column}});
         }
+
         return while_loop;
     }
 
@@ -470,7 +511,7 @@ private:
         size_t line = previous().line;
         size_t column = previous().column;
         std::unique_ptr<ast::Expr> value;
-        
+
         if (!check(lex::TokenType::Semicolon))
         {
             auto value_result = expression();
@@ -481,7 +522,7 @@ private:
         auto semicolon_result = consume(lex::TokenType::Semicolon, "Expect ';' after return value");
         if (!semicolon_result) return std::unexpected(semicolon_result.error());
 
-        return std::make_unique<ast::Return_stmt>(std::move(value), line, column);
+        return std::make_unique<ast::Stmt>(ast::Stmt{ast::Return_stmt{std::move(value)}, {line, column}});
     }
 
     Result<std::unique_ptr<ast::Stmt>> expression_statement()
@@ -492,7 +533,7 @@ private:
         auto semicolon_result = consume(lex::TokenType::Semicolon, "Expect ';' after expression");
         if (!semicolon_result) return std::unexpected(semicolon_result.error());
 
-        return std::make_unique<ast::Expr_stmt>(std::move(expr_result.value()), previous().line, previous().column);
+        return std::make_unique<ast::Stmt>(ast::Stmt{ast::Expr_stmt{std::move(expr_result.value())}, {previous().line, previous().column}});
     }
 
     // Expression parsing with operator precedence
@@ -510,9 +551,13 @@ private:
             auto value_result = assignment();
             if (!value_result) return std::unexpected(value_result.error());
 
-            if (auto *var_expr = dynamic_cast<ast::Variable_expr *>(expr.get()))
+            if (auto *var_expr = std::get_if<ast::Variable_expr>(&expr->node))
             {
-                return std::make_unique<ast::Assignment_expr>(var_expr->name, std::move(value_result.value()), var_expr->type, equals.line, equals.column);
+                return std::make_unique<ast::Expr>(ast::Expr{
+                    ast::Assignment_expr{var_expr->name, std::move(value_result.value())},
+                    expr->type,
+                    {equals.line, equals.column}
+                });
             }
             return std::unexpected(create_error(equals, "Invalid assignment target"));
         }
@@ -531,7 +576,15 @@ private:
             auto right_result = logical_and();
             if (!right_result) return std::unexpected(right_result.error());
 
-            expr = std::make_unique<ast::Binary_expr>(std::move(expr), op.type, std::move(right_result.value()), types::Type(types::kind::Bool), op.line, op.column);
+            auto binary_expr = std::make_unique<ast::Expr>();
+            binary_expr->node = ast::Binary_expr{
+                .left = std::move(expr),
+                .op = op.type,
+                .right = std::move(right_result.value())
+            };
+            binary_expr->type = types::Type(types::kind::Bool);
+            binary_expr->loc = {op.line, op.column};
+            expr = std::move(binary_expr);
         }
         return expr;
     }
@@ -548,7 +601,11 @@ private:
             auto right_result = equality();
             if (!right_result) return std::unexpected(right_result.error());
 
-            expr = std::make_unique<ast::Binary_expr>(std::move(expr), op.type, std::move(right_result.value()), types::Type(types::kind::Bool), op.line, op.column);
+            auto binary_expr = std::make_unique<ast::Expr>();
+            binary_expr->node = ast::Binary_expr{.left = std::move(expr), .op = op.type, .right = std::move(right_result.value())};
+            binary_expr->type = types::Type(types::kind::Bool);
+            binary_expr->loc = {op.line, op.column};
+            expr = std::move(binary_expr);
         }
         return expr;
     }
@@ -565,7 +622,15 @@ private:
             auto right_result = comparison();
             if (!right_result) return std::unexpected(right_result.error());
 
-            expr = std::make_unique<ast::Binary_expr>(std::move(expr), op.type, std::move(right_result.value()), types::Type(types::kind::Bool), op.line, op.column);
+            auto binary_expr = std::make_unique<ast::Expr>();
+            binary_expr->node = ast::Binary_expr{
+                .left = std::move(expr),
+                .op = op.type,
+                .right = std::move(right_result.value())
+            };
+            binary_expr->type = types::Type(types::kind::Bool);
+            binary_expr->loc = {op.line, op.column};
+            expr = std::move(binary_expr);
         }
         return expr;
     }
@@ -582,7 +647,15 @@ private:
             auto right_result = term();
             if (!right_result) return std::unexpected(right_result.error());
 
-            expr = std::make_unique<ast::Binary_expr>(std::move(expr), op.type, std::move(right_result.value()), types::Type(types::kind::Bool), op.line, op.column);
+            auto binary_expr = std::make_unique<ast::Expr>();
+            binary_expr->node = ast::Binary_expr{
+                .left = std::move(expr),
+                .op = op.type,
+                .right = std::move(right_result.value())
+            };
+            binary_expr->type = types::Type(types::kind::Bool);
+            binary_expr->loc = {op.line, op.column};
+            expr = std::move(binary_expr);
         }
         return expr;
     }
@@ -599,10 +672,19 @@ private:
             auto right_result = factor();
             if (!right_result) return std::unexpected(right_result.error());
 
-            types::Type result_type = expr->get_type();
-            if (right_result.value()->get_type().kind_ == types::kind::Float && result_type.kind_ == types::kind::Int)
+            types::Type result_type = expr->type;
+            if (right_result.value()->type.kind_ == types::kind::Float && result_type.kind_ == types::kind::Int)
                 result_type = types::Type(types::kind::Float);
-            expr = std::make_unique<ast::Binary_expr>(std::move(expr), op.type, std::move(right_result.value()), result_type, op.line, op.column);
+
+            auto binary_expr = std::make_unique<ast::Expr>();
+            binary_expr->node = ast::Binary_expr{
+                .left = std::move(expr),
+                .op = op.type,
+                .right = std::move(right_result.value())
+            };
+            binary_expr->type = result_type;
+            binary_expr->loc = {op.line, op.column};
+            expr = std::move(binary_expr);
         }
         return expr;
     }
@@ -619,10 +701,19 @@ private:
             auto right_result = cast();
             if (!right_result) return std::unexpected(right_result.error());
 
-            types::Type result_type = expr->get_type();
-            if (right_result.value()->get_type().kind_ == types::kind::Float && result_type.kind_ == types::kind::Int)
+            types::Type result_type = expr->type;
+            if (right_result.value()->type.kind_ == types::kind::Float && result_type.kind_ == types::kind::Int)
                 result_type = types::Type(types::kind::Float);
-            expr = std::make_unique<ast::Binary_expr>(std::move(expr), op.type, std::move(right_result.value()), result_type, op.line, op.column);
+
+            auto binary_expr = std::make_unique<ast::Expr>();
+            binary_expr->node = ast::Binary_expr{
+                .left = std::move(expr),
+                .op = op.type,
+                .right = std::move(right_result.value())
+            };
+            binary_expr->type = result_type;
+            binary_expr->loc = {op.line, op.column};
+            expr = std::move(binary_expr);
         }
         return expr;
     }
@@ -638,7 +729,11 @@ private:
             auto target_type_result = parse_type();
             if (!target_type_result) return std::unexpected(target_type_result.error());
 
-            expr = std::make_unique<ast::Cast_expr>(std::move(expr), target_type_result.value());
+            auto cast_expr = std::make_unique<ast::Expr>();
+            cast_expr->node = ast::Cast_expr{.expression = std::move(expr)};
+            cast_expr->type = target_type_result.value();
+            cast_expr->loc = expr->loc;
+            expr = std::move(cast_expr);
         }
         return expr;
     }
@@ -651,10 +746,18 @@ private:
             auto right_result = cast();
             if (!right_result) return std::unexpected(right_result.error());
 
-            types::Type result_type = right_result.value()->get_type();
+            types::Type result_type = right_result.value()->type;
             if (op.type == lex::TokenType::LogicalNot)
                 result_type = types::Type(types::kind::Bool);
-            return std::make_unique<ast::Unary_expr>(op.type, std::move(right_result.value()), result_type, op.line, op.column);
+
+            auto unary_expr = std::make_unique<ast::Expr>();
+            unary_expr->node = ast::Unary_expr{
+                .op = op.type,
+                .right = std::move(right_result.value())
+            };
+            unary_expr->type = result_type;
+            unary_expr->loc = {op.line, op.column};
+            return unary_expr;
         }
         return call();
     }
@@ -683,14 +786,22 @@ private:
 
             // Extract function name from the expression
             std::string function_name = "unknown";
-            if (auto *var_expr = dynamic_cast<ast::Variable_expr *>(expr.get()))
+            if (auto *var_expr = std::get_if<ast::Variable_expr>(&expr->node))
                 function_name = var_expr->name;
+
             types::Type return_type = types::Type(types::kind::Void);
             auto it = function_types.find(function_name);
             if (it != function_types.end())
                 return_type = it->second;
 
-            expr = std::make_unique<ast::Call_expr>(function_name, std::move(arguments), return_type, paren.line, paren.column);
+            auto call_expr = std::make_unique<ast::Expr>();
+            call_expr->node = ast::Call_expr{
+                .callee = function_name,
+                .arguments = std::move(arguments)
+            };
+            call_expr->type = return_type;
+            call_expr->loc = {paren.line, paren.column};
+            expr = std::move(call_expr);
         }
         return expr;
     }
@@ -703,22 +814,41 @@ private:
         if (match({lex::TokenType::Bool}))
         {
             bool value = std::get<bool>(previous().literal);
-            return std::make_unique<ast::Literal_expr>(value, types::Type(types::kind::Bool), previous().line, previous().column);
+            auto expr = std::make_unique<ast::Expr>();
+            expr->node = ast::Literal_expr{.value = Value(value)};
+            expr->type = types::Type(types::kind::Bool);
+            expr->loc = {previous().line, previous().column};
+            return expr;
         }
 
-        if (match({lex::TokenType::Integer}))
+        if (match({lex::TokenType::Integer64}))
         {
-            return std::make_unique<ast::Literal_expr>(std::get<int64_t>(previous().literal), types::Type(types::kind::Int), previous().line, previous().column);
+            int64_t value = std::get<int64_t>(previous().literal);
+            auto expr = std::make_unique<ast::Expr>();
+            expr->node = ast::Literal_expr{.value = Value(value)};
+            expr->type = types::Type(types::kind::Int);
+            expr->loc = {previous().line, previous().column};
+            return expr;
         }
 
-        if (match({lex::TokenType::Float}))
+        if (match({lex::TokenType::Float64}))
         {
-            return std::make_unique<ast::Literal_expr>(std::get<double>(previous().literal), types::Type(types::kind::Float), previous().line, previous().column);
+            double value = std::get<double>(previous().literal);
+            auto expr = std::make_unique<ast::Expr>();
+            expr->node = ast::Literal_expr{.value = Value(value)};
+            expr->type = types::Type(types::kind::Float);
+            expr->loc = {previous().line, previous().column};
+            return expr;
         }
 
         if (match({lex::TokenType::String}))
         {
-            return std::make_unique<ast::Literal_expr>(std::get<std::string>(previous().literal), types::Type(types::kind::String), previous().line, previous().column);
+            std::string value = std::get<std::string>(previous().literal);
+            auto expr = std::make_unique<ast::Expr>();
+            expr->node = ast::Literal_expr{.value = Value(value)};
+            expr->type = types::Type(types::kind::String);
+            expr->loc = {previous().line, previous().column};
+            return expr;
         }
 
         if (match({lex::TokenType::Identifier}))
@@ -726,12 +856,15 @@ private:
             std::string name = previous().lexeme;
             types::Type type = types::Type(types::kind::Void);
 
-            // Look up variable type if it's already declared
             auto it = variable_types.find(name);
             if (it != variable_types.end())
                 type = it->second;
 
-            return std::make_unique<ast::Variable_expr>(name, type, previous().line, previous().column);
+            auto expr = std::make_unique<ast::Expr>();
+            expr->node = ast::Variable_expr{.name = name};
+            expr->type = type;
+            expr->loc = {previous().line, previous().column};
+            return expr;
         }
 
         if (match({lex::TokenType::LeftParen}))
@@ -755,9 +888,9 @@ private:
         if (match({lex::TokenType::Identifier}))
         {
             std::string type_name = previous().lexeme;
-            if (type_name == "int")
+            if (type_name == "i64")
                 return types::Type(types::kind::Int);
-            if (type_name == "float")
+            if (type_name == "64")
                 return types::Type(types::kind::Float);
             if (type_name == "bool")
                 return types::Type(types::kind::Bool);

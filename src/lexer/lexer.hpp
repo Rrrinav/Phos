@@ -157,21 +157,25 @@ private:
         }
         std::string lexeme(source.substr(start, current - start));
         if (is_float)
-            return Token(TokenType::Float, lexeme, std::stod(lexeme), line, start_col);
+            return Token(TokenType::Float64, lexeme, std::stod(lexeme), line, start_col);
         else
-            return Token(TokenType::Integer, lexeme, std::stoll(lexeme), line, start_col);
+            return Token(TokenType::Integer64, lexeme, std::stoll(lexeme), line, start_col);
     }
 
     Token scan_identifier()
     {
         size_t start = current - 1, start_col = column - 1;
+
         while (std::isalnum(peek()) || peek() == '_') advance();
+
         std::string lexeme(source.substr(start, current - start));
         auto it = keywords.find(lexeme);
         TokenType type = (it != keywords.end()) ? it->second : TokenType::Identifier;
         Value value = lexeme;
+
         if (type == TokenType::Bool)
             value = (lexeme == "true");
+
         return Token(type, lexeme, std::move(value), line, start_col);
     }
 };

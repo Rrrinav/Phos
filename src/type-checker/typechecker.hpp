@@ -1,389 +1,329 @@
 #pragma once
-
-#include "../utility/includes.hpp"
-#include "../utility/utility.hpp"
-
-#include "../value/type.hpp"
-#include "../error/result.hpp"
+#include <unordered_map>
+#include <vector>
+#include <string>
+#include <optional>
+#include "../error/err.hpp"
 #include "../parser/ast.hpp"
+#include "../value/type.hpp"
 
-namespace phos {
-namespace types {
+namespace phos
+{
+namespace types
+{
 
-class TypeChecker
+class Type_checker
 {
 private:
-    std::unordered_map<std::string, types::Type> variables;
-    std::unordered_map<std::string, std::pair<std::vector<types::Type>, types::Type>> functions;
-    types::Type current_function_return_type = types::Type(types::kind::Void);
+    struct FunctionSignature
+    {
+        std::vector<types::Type> param_types;
+        types::Type return_type;
+    };
+
+    std::vector<err::msg> errors;
+    // Stack-based variable scopes for block/function scoping
+    std::vector<std::unordered_map<std::string, types::Type>> variable_stack;
+    std::unordered_map<std::string, FunctionSignature> functions;
 
 public:
-    Result<void> check(const std::vector<std::unique_ptr<ast::Stmt>> &statements)
+    Type_checker() { variable_stack.push_back({}); }
+    void check(const std::vector<std::unique_ptr<phos::ast::Stmt>> &stmts)
     {
-        for (const auto &stmt : statements)
-        {
-            if (const auto *func_stmt = dynamic_cast<const ast::Function_stmt *>(stmt.get()))
-            {
-                std::vector<types::Type> param_types;
-                for (const auto &param : func_stmt->parameters) param_types.push_back(param.second);
-                functions.emplace(func_stmt->name, std::make_pair(param_types, func_stmt->return_type));
-            }
-        }
-        for (const auto &stmt : statements)
-        {
-            auto result = check_stmt(*stmt);
-            if (!result)
-                return std::unexpected(result.error());
-        }
-        return {};
+        for (const auto &stmt : stmts) check_stmt(*stmt);
+    }
+    // Error reporting
+    const std::vector<err::msg> &get_errors() const { return errors; }
+    bool has_errors() const { return !errors.empty(); }
+    void add_error(const std::string &message, const phos::ast::Source_location &loc)
+    {
+        errors.push_back(err::msg(message.c_str(), "type-checking", loc.line, loc.column));
     }
 
-private:
-    Result<void> check_stmt(const ast::Stmt &stmt)
+    // Scoped variable environment
+    void enter_scope() { variable_stack.push_back({}); }
+    void exit_scope() { variable_stack.pop_back(); }
+    void declare_variable(const std::string &name, const types::Type &type) { variable_stack.back()[name] = type; }
+
+    std::optional<types::Type> lookup_variable(const std::string &name) const
     {
-        if (const auto *var_stmt = dynamic_cast<const ast::Var_stmt *>(&stmt))
-            return check_var_stmt(*var_stmt);
-        if (const auto *print_stmt = dynamic_cast<const ast::Print_stmt *>(&stmt))
-            return check_print_stmt(*print_stmt);
-        if (const auto *expr_stmt = dynamic_cast<const ast::Expr_stmt *>(&stmt))
-            return check_expr_stmt(*expr_stmt);
-        if (const auto *if_stmt = dynamic_cast<const ast::If_stmt *>(&stmt))
-            return check_if_stmt(*if_stmt);
-        if (const auto *while_stmt = dynamic_cast<const ast::While_stmt *>(&stmt))
-            return check_while_stmt(*while_stmt);
-        if (const auto *for_stmt = dynamic_cast<const ast::For_stmt *>(&stmt))
-            return check_for_stmt(*for_stmt);
-        if (const auto *block_stmt = dynamic_cast<const ast::Block_stmt *>(&stmt))
-            return check_block_stmt(*block_stmt);
-        if (const auto *func_stmt = dynamic_cast<const ast::Function_stmt *>(&stmt))
-            return check_func_stmt(*func_stmt);
-        if (const auto *return_stmt = dynamic_cast<const ast::Return_stmt *>(&stmt))
-            return check_return_stmt(*return_stmt);
-        return std::unexpected(err::msg("Unknown statement type", "type_checker", stmt.line, stmt.column));
-    }
-    Result<void> check_var_stmt(const ast::Var_stmt &stmt)
-    {
-        if (stmt.initializer)
+        for (auto it = variable_stack.rbegin(); it != variable_stack.rend(); ++it)
         {
-            auto init_type = check_expr(*stmt.initializer);
-            if (!init_type)
-                return std::unexpected(init_type.error());
-            if (*init_type != stmt.type)
-                return std::unexpected(
-                    err::msg(std::format("Type mismatch: cannot assign {} to {}", init_type->to_string(), stmt.type.to_string()),
-                          "type_checker", stmt.line, stmt.column));
+            auto found = it->find(name);
+            if (found != it->end())
+                return found->second;
         }
-        variables[stmt.name] = stmt.type;
-        return {};
+        return std::nullopt;
     }
-    Result<void> check_print_stmt(const ast::Print_stmt &stmt)
+    // Function signature environment
+    void declare_function(const std::string &name, const std::vector<types::Type> &param_types, const types::Type &return_type)
     {
-        auto expr_type = check_expr(*stmt.expression);
-        if (!expr_type)
-            return std::unexpected(expr_type.error());
-        return {};
+        functions[name] = FunctionSignature{param_types, return_type};
     }
-    Result<void> check_expr_stmt(const ast::Expr_stmt &stmt)
+
+    std::optional<FunctionSignature> lookup_function(const std::string &name) const
     {
-        auto expr_type = check_expr(*stmt.expression);
-        if (!expr_type)
-            return std::unexpected(expr_type.error());
-        return {};
+        auto it = functions.find(name);
+        if (it != functions.end())
+            return it->second;
+        return std::nullopt;
     }
-    Result<void> check_if_stmt(const ast::If_stmt &stmt)
+
+    // Deep type equality (expand as needed for arrays/structs)
+    bool equals(const types::Type &t1, const types::Type &t2) const { return t1.kind_ == t2.kind_; }
+
+    // Expression Type Checking
+    types::Type check_expr(const phos::ast::Expr &expr)
     {
-        auto cond_type = check_expr(*stmt.condition);
-        if (!cond_type)
-            return std::unexpected(cond_type.error());
-        if (cond_type->kind_ != types::kind::Bool)
-            return std::unexpected(err::msg("If condition must be boolean", "type_checker", stmt.condition->line, stmt.condition->column));
-        auto then_result = check_stmt(*stmt.then_branch);
-        if (!then_result)
-            return std::unexpected(then_result.error());
-        if (stmt.else_branch)
+        using namespace phos::ast;
+        switch (expr.node.index())
         {
-            auto else_result = check_stmt(*stmt.else_branch);
-            if (!else_result)
-                return std::unexpected(else_result.error());
+            case 0:
+                return check_expr_node(std::get<Literal_expr>(expr.node), expr);  // Literal
+            case 1:
+                return check_expr_node(std::get<Variable_expr>(expr.node), expr);  // Variable
+            case 2:
+                return check_expr_node(std::get<Binary_expr>(expr.node), expr);  // Binary
+            case 3:
+                return check_expr_node(std::get<Unary_expr>(expr.node), expr);  // Unary
+            case 4:
+                return check_expr_node(std::get<Call_expr>(expr.node), expr);  // Call
+            case 5:
+                return check_expr_node(std::get<Assignment_expr>(expr.node), expr);  // Assignment
+            case 6:
+                return check_expr_node(std::get<Cast_expr>(expr.node), expr);  // Cast
+            default:
+                add_error("Unknown expression type", expr.loc);
+                return types::Type(types::kind::Void);
         }
-        return {};
     }
-    Result<void> check_while_stmt(const ast::While_stmt &stmt)
+
+    types::Type check_expr_node(const phos::ast::Literal_expr &node, const phos::ast::Expr &expr)
     {
-        auto cond_type = check_expr(*stmt.condition);
-        if (!cond_type)
-            return std::unexpected(cond_type.error());
-        if (cond_type->kind_ != types::kind::Bool)
-            return std::unexpected(err::msg("While condition must be boolean", "type_checker", stmt.condition->line, stmt.condition->column));
-        auto body_result = check_stmt(*stmt.body);
-        if (!body_result)
-            return std::unexpected(body_result.error());
-        return {};
-    }
-    Result<void> check_for_stmt(const ast::For_stmt &stmt)
-    {
-        auto saved_variables = variables;
-        if (stmt.initializer)
-        {
-            auto init_result = check_stmt(*stmt.initializer);
-            if (!init_result)
+        using namespace types;
+        return std::visit(
+            [](const auto &val) -> Type
             {
-                variables = saved_variables;
-                return std::unexpected(init_result.error());
+                using T = std::decay_t<decltype(val)>;
+                if constexpr (std::is_same_v<T, bool>)
+                    return Type(kind::Bool);
+                else if constexpr (std::is_same_v<T, int64_t>)
+                    return Type(kind::Int);
+                else if constexpr (std::is_same_v<T, double>)
+                    return Type(kind::Float);
+                else if constexpr (std::is_same_v<T, std::string>)
+                    return Type(kind::String);
+                else
+                    return Type(kind::Void);
+            },
+            node.value);
+    }
+
+    types::Type check_expr_node(const phos::ast::Variable_expr &node, const phos::ast::Expr &expr)
+    {
+        auto type_opt = lookup_variable(node.name);
+        if (!type_opt)
+        {
+            add_error("Undefined variable: " + node.name, expr.loc);
+            return types::Type(types::kind::Void);
+        }
+        return *type_opt;
+    }
+
+    types::Type check_expr_node(const phos::ast::Binary_expr &node, const phos::ast::Expr &expr)
+    {
+        types::Type left = check_expr(*node.left);
+        types::Type right = check_expr(*node.right);
+
+        if (!equals(left, right))
+        {
+            // Allow int/float upgrade
+            if (!((left.kind_ == types::kind::Float && right.kind_ == types::kind::Int) ||
+                  (left.kind_ == types::kind::Int && right.kind_ == types::kind::Float)))
+            {
+                add_error("Type mismatch in binary expression. Left: " + left.to_string() + ", Right: " + right.to_string(), expr.loc);
             }
         }
-        if (stmt.condition)
-        {
-            auto cond_type = check_expr(*stmt.condition);
-            if (!cond_type)
-            {
-                variables = saved_variables;
-                return std::unexpected(cond_type.error());
-            }
-            if (cond_type->kind_ != types::kind::Bool)
-            {
-                variables = saved_variables;
-                return std::unexpected(
-                    err::msg("For condition must be boolean", "type_checker", stmt.condition->line, stmt.condition->column));
-            }
-        }
-        if (stmt.increment)
-        {
-            auto inc_type = check_expr(*stmt.increment);
-            if (!inc_type)
-            {
-                variables = saved_variables;
-                return std::unexpected(inc_type.error());
-            }
-        }
-        auto body_result = check_stmt(*stmt.body);
-        if (!body_result)
-        {
-            variables = saved_variables;
-            return std::unexpected(body_result.error());
-        }
-        variables = saved_variables;
-        return {};
+        return (left.kind_ == types::kind::Float || right.kind_ == types::kind::Float) ? types::Type(types::kind::Float) : left;
     }
-    Result<void> check_block_stmt(const ast::Block_stmt &stmt)
+
+    types::Type check_expr_node(const phos::ast::Unary_expr &node, const phos::ast::Expr &expr) { return check_expr(*node.right); }
+
+    types::Type check_expr_node(const phos::ast::Call_expr &node, const phos::ast::Expr &expr)
     {
-        auto saved_variables = variables;
-        for (const auto &statement : stmt.statements)
+        auto fsig = lookup_function(node.callee);
+        if (!fsig)
         {
-            auto result = check_stmt(*statement);
-            if (!result)
-            {
-                variables = saved_variables;
-                return std::unexpected(result.error());
-            }
+            add_error("Undefined function: " + node.callee, expr.loc);
+            return types::Type(types::kind::Void);
         }
-        variables = saved_variables;
-        return {};
-    }
-    Result<void> check_func_stmt(const ast::Function_stmt &stmt)
-    {
-        auto saved_variables = variables;
-        auto saved_return_type = current_function_return_type;
-        current_function_return_type = stmt.return_type;
-        for (const auto &param : stmt.parameters) variables.emplace(param.first, param.second);
-        auto body_result = check_stmt(*stmt.body);
-        if (!body_result)
+        // Check arg count and types
+        if (node.arguments.size() != fsig->param_types.size())
         {
-            variables = saved_variables;
-            current_function_return_type = saved_return_type;
-            return std::unexpected(body_result.error());
-        }
-        variables = saved_variables;
-        current_function_return_type = saved_return_type;
-        return {};
-    }
-    Result<void> check_return_stmt(const ast::Return_stmt &stmt)
-    {
-        if (stmt.expression)
-        {
-            auto expr_type = check_expr(*stmt.expression);
-            if (!expr_type)
-                return std::unexpected(expr_type.error());
-            if (*expr_type != current_function_return_type)
-                return std::unexpected(err::msg(std::format("Return type mismatch: expected {}, got {}",
-                                                         current_function_return_type.to_string(), expr_type->to_string()),
-                                             "type_checker", stmt.line, stmt.column));
+            add_error("Function call arity mismatch for '" + node.callee + "': expected " + std::to_string(fsig->param_types.size()) +
+                          ", got " + std::to_string(node.arguments.size()),
+                      expr.loc);
         }
         else
         {
-            if (current_function_return_type.kind_ != types::kind::Void)
-                return std::unexpected(
-                    err::msg(std::format("Function expects return type {}, but got void return", current_function_return_type.to_string()),
-                          "type_checker", stmt.line, stmt.column));
-        }
-        return {};
-    }
-    // Strict type checking for string concatenation
-    Result<types::Type> check_expr(const ast::Expr &expr)
-    {
-        if (const auto *literal = dynamic_cast<const ast::Literal_expr *>(&expr))
-            return literal->type;
-        if (const auto *variable = dynamic_cast<const ast::Variable_expr *>(&expr))
-        {
-            auto it = variables.find(variable->name);
-            if (it == variables.end())
-                return std::unexpected(
-                    err::msg(std::format("Undefined variable '{}'", variable->name), "type_checker", variable->line, variable->column));
-            return it->second;
-        }
-        if (const auto *binary = dynamic_cast<const ast::Binary_expr *>(&expr))
-            return check_binary_expr(*binary);
-        if (const auto *unary = dynamic_cast<const ast::Unary_expr *>(&expr))
-            return check_unary_expr(*unary);
-        if (const auto *call = dynamic_cast<const ast::Call_expr *>(&expr))
-            return check_call_expr(*call);
-        if (const auto *assignment = dynamic_cast<const ast::Assignment_expr *>(&expr))
-            return check_assignment_expr(*assignment);
-        if (const auto *cast = dynamic_cast<const ast::Cast_expr *>(&expr))
-            return check_cast_expr(*cast);
-        return std::unexpected(err::msg("Unknown expression type", "type_checker", expr.line, expr.column));
-    }
-    Result<types::Type> check_binary_expr(const ast::Binary_expr &expr)
-    {
-        auto left_type = check_expr(*expr.left);
-        if (!left_type)
-            return std::unexpected(left_type.error());
-        auto right_type = check_expr(*expr.right);
-        if (!right_type)
-            return std::unexpected(right_type.error());
-        switch (expr.operator_)
-        {
-            case lex::TokenType::Plus:
-                if (left_type->kind_ == types::kind::String || right_type->kind_ == types::kind::String)
+            for (size_t i = 0; i < node.arguments.size(); ++i)
+            {
+                types::Type arg_type = check_expr(*node.arguments[i]);
+                if (!equals(arg_type, fsig->param_types[i]))
                 {
-                    // Strict: Only string + string allowed for concatenation
-                    if (left_type->kind_ == types::kind::String && right_type->kind_ == types::kind::String)
-                        return types::Type(types::kind::String);
-                    return std::unexpected(err::msg(std::format("Operator '+' requires both operands to be strings for concatenation"),
-                                                 "type_checker", expr.line, expr.column));
+                    add_error("Function call argument type mismatch for '" + node.callee + "' at position " + std::to_string(i + 1) +
+                                  ": expected " + fsig->param_types[i].to_string() + ", got " + arg_type.to_string(),
+                              expr.loc);
                 }
-                if (left_type->kind_ == types::kind::Int && right_type->kind_ == types::kind::Int)
-                    return types::Type(types::kind::Int);
-                if (left_type->kind_ == types::kind::Float && right_type->kind_ == types::kind::Float)
-                    return types::Type(types::kind::Float);
-                return std::unexpected(err::msg(std::format("Operator '+' requires both operands to be numbers or strings"), "type_checker",
-                                             expr.line, expr.column));
-            case lex::TokenType::Minus:
-            case lex::TokenType::Star:
-            case lex::TokenType::Slash:
-            case lex::TokenType::Percent:
-                if (left_type->kind_ == types::kind::Int && right_type->kind_ == types::kind::Int)
-                    return types::Type(types::kind::Int);
-                if (left_type->kind_ == types::kind::Float && right_type->kind_ == types::kind::Float)
-                    return types::Type(types::kind::Float);
-                return std::unexpected(
-                    err::msg(std::format("Operator '{}' requires both operands to be numbers", token_type_to_string(expr.operator_)),
-                          "type_checker", expr.line, expr.column));
-            case lex::TokenType::Equal:
-            case lex::TokenType::NotEqual:
-            case lex::TokenType::Less:
-            case lex::TokenType::Greater:
-            case lex::TokenType::LessEqual:
-            case lex::TokenType::GreaterEqual:
-                if (*left_type != *right_type)
-                    return std::unexpected(
-                        err::msg(std::format("Comparison operator '{}' requires operands of same type", token_type_to_string(expr.operator_)),
-                              "type_checker", expr.line, expr.column));
-                return types::Type(types::kind::Bool);
-            case lex::TokenType::LogicalAnd:
-            case lex::TokenType::LogicalOr:
-                if (left_type->kind_ == types::kind::Bool && right_type->kind_ == types::kind::Bool)
-                    return types::Type(types::kind::Bool);
-                return std::unexpected(
-                    err::msg(std::format("Operator '{}' requires both operands to be boolean", token_type_to_string(expr.operator_)),
-                          "type_checker", expr.line, expr.column));
-            default:
-                return std::unexpected(err::msg(std::format("Invalid binary operator '{}'", token_type_to_string(expr.operator_)),
-                                             "type_checker", expr.line, expr.column));
+            }
         }
-    }
-    Result<types::Type> check_unary_expr(const ast::Unary_expr &expr)
-    {
-        auto right_type = check_expr(*expr.right);
-        if (!right_type)
-            return std::unexpected(right_type.error());
-        switch (expr.operator_)
-        {
-            case lex::TokenType::Minus:
-                if (right_type->kind_ == types::kind::Int || right_type->kind_ == types::kind::Float)
-                    return *right_type;
-                return std::unexpected(err::msg("Unary minus requires numeric operand", "type_checker", expr.line, expr.column));
-            case lex::TokenType::LogicalNot:
-                if (right_type->kind_ == types::kind::Bool)
-                    return types::Type(types::kind::Bool);
-                return std::unexpected(err::msg("Logical not requires boolean operand", "type_checker", expr.line, expr.column));
-            default:
-                return std::unexpected(err::msg(std::format("Invalid unary operator '{}'", token_type_to_string(expr.operator_)),
-                                             "type_checker", expr.line, expr.column));
-        }
-    }
-    Result<types::Type> check_call_expr(const ast::Call_expr &expr)
-    {
-        auto func_it = functions.find(expr.callee);
-        if (func_it == functions.end())
-            return std::unexpected(err::msg(std::format("Undefined function '{}'", expr.callee), "type_checker", expr.line, expr.column));
-        const auto &[expected_param_types, return_type] = func_it->second;
-        if (expr.arguments.size() != expected_param_types.size())
-            return std::unexpected(err::msg(std::format("Function '{}' expects {} arguments but got {}", expr.callee,
-                                                     expected_param_types.size(), expr.arguments.size()),
-                                         "type_checker", expr.line, expr.column));
-        for (size_t i = 0; i < expr.arguments.size(); i++)
-        {
-            auto arg_type = check_expr(*expr.arguments[i]);
-            if (!arg_type)
-                return std::unexpected(arg_type.error());
-            if (*arg_type != expected_param_types[i])
-                return std::unexpected(err::msg(std::format("Argument {} type mismatch: expected {}, got {}", i + 1,
-                                                         expected_param_types[i].to_string(), arg_type->to_string()),
-                                             "type_checker", expr.arguments[i]->line, expr.arguments[i]->column));
-        }
-        return return_type;
-    }
-    Result<types::Type> check_assignment_expr(const ast::Assignment_expr &expr)
-    {
-        auto it = variables.find(expr.name);
-        if (it == variables.end())
-            return std::unexpected(err::msg(std::format("Undefined variable '{}'", expr.name), "type_checker", expr.line, expr.column));
-        auto value_type = check_expr(*expr.value);
-        if (!value_type)
-            return std::unexpected(value_type.error());
-        if (it->second != *value_type)
-            return std::unexpected(err::msg(
-                std::format("Cannot assign {} to variable '{}' of type {}", value_type->to_string(), expr.name, it->second.to_string()),
-                "type_checker", expr.line, expr.column));
-        return it->second;
+        return fsig->return_type;
     }
 
-    Result<types::Type> check_cast_expr(const ast::Cast_expr &expr)
+    types::Type check_expr_node(const phos::ast::Assignment_expr &node, const phos::ast::Expr &expr)
     {
-        auto source_type = check_expr(*expr.expression);
-        if (!source_type)
-            return std::unexpected(source_type.error());
-        if ((source_type->kind_ == types::kind::Int   && expr.target_type.kind_ == types::kind::Float)  ||
-            (source_type->kind_ == types::kind::Float && expr.target_type.kind_ == types::kind::Int)    ||
-            (source_type->kind_ == types::kind::Bool  && expr.target_type.kind_ == types::kind::Int)    ||
-            (source_type->kind_ == types::kind::Int   && expr.target_type.kind_ == types::kind::Bool)   ||
-            (source_type->kind_ == types::kind::Int   && expr.target_type.kind_ == types::kind::String) ||
-            (source_type->kind_ == types::kind::Float && expr.target_type.kind_ == types::kind::String) ||
-            (source_type->kind_ == types::kind::Bool  && expr.target_type.kind_ == types::kind::String))
+        auto var_type_opt = lookup_variable(node.name);
+        types::Type value_type = check_expr(*node.value);
+
+        if (!var_type_opt)
         {
-            return expr.target_type;
+            add_error("Assignment to undefined variable: " + node.name, expr.loc);
+            return types::Type(types::kind::Void);
         }
-        if (source_type->kind_ == expr.target_type.kind_)
-            return expr.target_type;
-        return std::unexpected(err::msg(std::format("Cannot cast from {} to {}", source_type->to_string(), expr.target_type.to_string()),
-                                     "type_checker", expr.line, expr.column));
+        if (!equals(*var_type_opt, value_type))
+        {
+            add_error("Type mismatch in assignment to '" + node.name + "': expected " + var_type_opt->to_string() + ", got " +
+                          value_type.to_string(),
+                      expr.loc);
+        }
+        return *var_type_opt;
     }
-    std::string token_type_to_string(lex::TokenType type) const
+
+    types::Type check_expr_node(const phos::ast::Cast_expr &node, const phos::ast::Expr &expr)
     {
-        return util::operator_token_to_string(type);
+        types::Type src_type = check_expr(*node.expression);
+        // Extract target type from expr
+        types::Type target_type = expr.type;  // Provided by parser, else fallback
+        return target_type;
+    }
+
+    // Statement Type Checking
+    void check_stmt(const phos::ast::Stmt &stmt)
+    {
+        using namespace phos::ast;
+        switch (stmt.node.index())
+        {
+            case 0:
+                check_stmt_node(std::get<Return_stmt>(stmt.node), stmt);
+                break;
+            case 1:
+                check_stmt_node(std::get<Function_stmt>(stmt.node), stmt);
+                break;
+            case 2:
+                check_stmt_node(std::get<Var_stmt>(stmt.node), stmt);
+                break;
+            case 3:
+                check_stmt_node(std::get<Print_stmt>(stmt.node), stmt);
+                break;
+            case 4:
+                check_stmt_node(std::get<Expr_stmt>(stmt.node), stmt);
+                break;
+            case 5:
+                check_stmt_node(std::get<Block_stmt>(stmt.node), stmt);
+                break;
+            case 6:
+                check_stmt_node(std::get<If_stmt>(stmt.node), stmt);
+                break;
+            case 7:
+                check_stmt_node(std::get<While_stmt>(stmt.node), stmt);
+                break;
+            case 8:
+                check_stmt_node(std::get<For_stmt>(stmt.node), stmt);
+                break;
+            default:
+                add_error("Unknown statement type", stmt.loc);
+        }
+    }
+
+    void check_stmt_node(const phos::ast::Return_stmt &node, const phos::ast::Stmt &stmt)
+    {
+        if (node.expression)
+            check_expr(*node.expression);
+    }
+
+    void check_stmt_node(const phos::ast::Function_stmt &node, const phos::ast::Stmt &stmt)
+    {
+        // Register function signature
+        std::vector<types::Type> param_types;
+        for (auto &param : node.parameters) param_types.push_back(param.second);
+        declare_function(node.name, param_types, node.return_type);
+
+        enter_scope();
+        for (const auto &param : node.parameters) declare_variable(param.first, param.second);
+        check_stmt(*node.body);
+        exit_scope();
+    }
+
+    void check_stmt_node(const phos::ast::Var_stmt &node, const phos::ast::Stmt &stmt)
+    {
+        declare_variable(node.name, node.type);
+        if (node.initializer)
+        {
+            types::Type init_type = check_expr(*node.initializer);
+            if (!equals(node.type, init_type))
+            {
+                add_error("Variable '" + node.name + "' declaration type does not match initializer: expected " + node.type.to_string() +
+                              ", got " + init_type.to_string(),
+                          stmt.loc);
+            }
+        }
+    }
+
+    void check_stmt_node(const phos::ast::Print_stmt &node, const phos::ast::Stmt &stmt) { check_expr(*node.expression); }
+    void check_stmt_node(const phos::ast::Expr_stmt &node, const phos::ast::Stmt &stmt) { check_expr(*node.expression); }
+
+    void check_stmt_node(const phos::ast::Block_stmt &node, const phos::ast::Stmt &stmt)
+    {
+        enter_scope();
+        for (const auto &st : node.statements) check_stmt(*st);
+        exit_scope();
+    }
+
+    void check_stmt_node(const phos::ast::If_stmt &node, const phos::ast::Stmt &stmt)
+    {
+        types::Type cond_type = check_expr(*node.condition);
+        if (cond_type.kind_ != types::kind::Bool)
+            add_error("If condition must be boolean, got " + cond_type.to_string(), stmt.loc);
+        check_stmt(*node.then_branch);
+        if (node.else_branch)
+            check_stmt(*node.else_branch);
+    }
+
+    void check_stmt_node(const phos::ast::While_stmt &node, const phos::ast::Stmt &stmt)
+    {
+        types::Type cond_type = check_expr(*node.condition);
+        if (cond_type.kind_ != types::kind::Bool)
+            add_error("While condition must be boolean, got " + cond_type.to_string(), stmt.loc);
+        check_stmt(*node.body);
+    }
+
+    void check_stmt_node(const phos::ast::For_stmt &node, const phos::ast::Stmt &stmt)
+    {
+        enter_scope();
+        if (node.initializer)
+            check_stmt(*node.initializer);
+        if (node.condition)
+        {
+            types::Type cond_type = check_expr(*node.condition);
+            if (cond_type.kind_ != types::kind::Bool)
+                add_error("For condition must be boolean, got " + cond_type.to_string(), stmt.loc);
+        }
+        if (node.increment)
+            check_expr(*node.increment);
+        check_stmt(*node.body);
+        exit_scope();
     }
 };
 
-} // namespace types
-} // namespace phos
+}  // namespace types
+}  // namespace phos

@@ -5,12 +5,12 @@
 ## Example
 
 ```js
-fn fib(x: int) -> int {
+fn fib(x: i64) -> i64 {
     if (x <= 1) return x;
     else return fib(x - 1) + fib(x - 2);
 }
 
-let y: int;
+let y: i64;
 let x:= 10;
 
 print("hello: " + x as string + " " + y as string);
@@ -29,8 +29,9 @@ print_err(s);
 
 ## TODO
 
-- [ ] Arrays
+- [ ] Make ast node have their own type and source location
 - [ ] User defined types
-- [ ] Proper I/O (stream direction and reading input)
+- [ ] Arrays
+- [ ] Proper I/O (reading input)
 - [ ] Imports
 - [ ] Type Inference

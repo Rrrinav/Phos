@@ -7,7 +7,6 @@
 #include <print>
 #include <vector>
 #include <memory>
-#include <variant>
 
 // Your existing includes
 #include "lexer/lexer.hpp"
@@ -16,31 +15,10 @@
 #include "interpreter/interpreter.hpp"
 
 // Utility function to convert values to strings for display
-std::string value_to_string(const phos::Value &value)
-{
-    return std::visit(
-        [](const auto &v) -> std::string {
-            using T = std::decay_t<decltype(v)>;
-            if constexpr (std::is_same_v<T, int64_t>)
-                return std::to_string(v);
-            else if constexpr (std::is_same_v<T, double>)
-                return std::to_string(v);
-            else if constexpr (std::is_same_v<T, bool>)
-                return v ? "true" : "false";
-            else if constexpr (std::is_same_v<T, std::string>)
-                return "\"" + v + "\"";
-            else if constexpr (std::is_same_v<T, std::monostate>)
-                return "void";
-            else
-                return "unknown";
-        },
-    value);
-}
-
 class Phos_repl
 {
 private:
-    phos::types::TypeChecker type_checker;
+    phos::types::Type_checker type_checker;
     phos::Interpreter interpreter;
     std::vector<std::unique_ptr<phos::ast::Stmt>> global_statements;
 
@@ -164,10 +142,11 @@ private:
             auto new_statements = std::move(*parse_result);
 
             // Type check new statements in the context of existing ones
-            auto type_result = type_checker.check(new_statements);
-            if (!type_result)
+            type_checker.check(new_statements);
+            if (type_checker.has_errors())
             {
-                std::println("{}:{}", filename, type_result.error().format());
+                auto errors = type_checker.get_errors();
+                for (const auto &e : errors) std::println("{}:{}", filename, e.format());
                 return false;
             }
 
@@ -230,7 +209,7 @@ public:
                 else if (line == "clear")
                 {
                     global_statements.clear();
-                    type_checker = phos::types::TypeChecker();  // Reset type checker
+                    type_checker = phos::types::Type_checker();  // Reset type checker
                     interpreter = phos::Interpreter();          // Reset interpreter
                     std::println("Cleared all definitions.");
                     continue;

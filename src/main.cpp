@@ -4,6 +4,7 @@
 #include <iostream>
 
 #include "interpreter/interpreter.hpp"
+#include "parser/ast-printer.hpp"
 #include "type-checker/typechecker.hpp"
 #include "parser/parser.hpp"
 #include "lexer/lexer.hpp"
@@ -19,10 +20,16 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-    if (argc != 2)
+    if (argc <= 2)
     {
         std::println(stderr, "Usage: {} <filename.phos>", argv[0]);
         return 1;
+    }
+    bool print_ast = false;
+    if (argc == 3)
+    {
+        std::string opt = argv[2];
+        if (opt == "--ast-dump") print_ast = true;
     }
     std::string filename = argv[1];
     std::ifstream file(filename);
@@ -48,28 +55,31 @@ int main(int argc, char *argv[])
             }
         }
         phos::Parser parser(tokens);
-        auto parse_result = parser.parse();
-        //std::println("size: {}", parse_result->size());
-        //for (auto &p : parse_result.value()) phos::print_stmtt(&(*p), 2);
 
+        auto parse_result = parser.parse();
         if (!parse_result)
         {
             std::println(stderr, "{}:{}", filename, parse_result.error().format());
             return 1;
         }
-        auto statements = std::move(*parse_result);
-        phos::types::TypeChecker type_checker;
-        auto type_result = type_checker.check(statements);
-        if (!type_result)
+        if (print_ast)
         {
-            std::println(stderr, "{}:{}", filename, type_result.error().format());
-            return 1;
+            phos::ast::AstPrinter printer;
+            printer.print_statements(parse_result.value());
+        }
+        auto statements = std::move(*parse_result);
+        phos::types::Type_checker type_checker;
+        type_checker.check(statements);
+        if (!type_checker.has_errors())
+        {
+            auto errors = type_checker.get_errors();
+            for (const auto & e: errors) std::println(stderr, "{}:{}", filename, e.format());
         }
         phos::Interpreter interpreter;
         auto interpret_result = interpreter.interpret(statements);
         if (!interpret_result)
         {
-            std::println(stderr, "{}:{}", filename, type_result.error().format());
+            std::println(stderr, "{}:{}", filename, interpret_result.error().format());
             return 1;
         }
     }

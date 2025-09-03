@@ -1,4 +1,5 @@
-#pragma once
+#ifndef _ERR_HPP_
+#define _ERR_HPP_
 
 #include <string>
 #include <format>
@@ -31,3 +32,5 @@ struct msg
 
 } // namespace err
 } // namespace phos
+
+#endif // _ERR_HPP_
