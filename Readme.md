@@ -29,8 +29,8 @@ print_err(s);
 
 ## TODO
 
-- [ ] Make ast node have their own type and source location
 - [ ] User defined types
+- [ ] Have proper command line args for it
 - [ ] Arrays
 - [ ] Proper I/O (reading input)
 - [ ] Imports

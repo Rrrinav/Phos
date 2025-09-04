@@ -21,7 +21,7 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-    if (argc <= 2)
+    if (argc < 2)
     {
         std::println(stderr, "Usage: {} <filename.phos>", argv[0]);
         return 1;
@@ -29,7 +29,7 @@ int main(int argc, char *argv[])
     bool print_ast = false;
     bool print_use_unicode = true;
     bool print_only_print = false;
-    if (argc == 3)
+    if (argc == 4)
     {
         std::string opt = argv[2];
         if (opt == "--ast-dump")
