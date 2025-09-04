@@ -15,12 +15,6 @@ namespace phos {
                                std::nullptr_t,
                                std::monostate
                                >;
-    struct Return_value
-    {
-        Value value;
-        explicit Return_value(Value v) : value(std::move(v)) {}
-    };
-
     struct Variable
     {
         types::Type type;

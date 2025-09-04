@@ -93,7 +93,7 @@ public:
             case 6:
                 return check_expr_node(std::get<Cast_expr>(expr.node), expr);  // Cast
             default:
-                add_error("Unknown expression type", expr.loc);
+                add_error("Unknown expression type", ast::loc_copy(expr.node));
                 return types::Type(types::kind::Void);
         }
     }
@@ -124,7 +124,7 @@ public:
         auto type_opt = lookup_variable(node.name);
         if (!type_opt)
         {
-            add_error("Undefined variable: " + node.name, expr.loc);
+            add_error("Undefined variable: " + node.name, node.loc);
             return types::Type(types::kind::Void);
         }
         return *type_opt;
@@ -141,7 +141,7 @@ public:
             if (!((left.kind_ == types::kind::Float && right.kind_ == types::kind::Int) ||
                   (left.kind_ == types::kind::Int && right.kind_ == types::kind::Float)))
             {
-                add_error("Type mismatch in binary expression. Left: " + left.to_string() + ", Right: " + right.to_string(), expr.loc);
+                add_error("Type mismatch in binary expression. Left: " + left.to_string() + ", Right: " + right.to_string(), ast::loc_copy(expr.node));
             }
         }
         return (left.kind_ == types::kind::Float || right.kind_ == types::kind::Float) ? types::Type(types::kind::Float) : left;
@@ -154,7 +154,7 @@ public:
         auto fsig = lookup_function(node.callee);
         if (!fsig)
         {
-            add_error("Undefined function: " + node.callee, expr.loc);
+            add_error("Undefined function: " + node.callee, ast::loc_copy(expr.node));
             return types::Type(types::kind::Void);
         }
         // Check arg count and types
@@ -162,7 +162,7 @@ public:
         {
             add_error("Function call arity mismatch for '" + node.callee + "': expected " + std::to_string(fsig->param_types.size()) +
                           ", got " + std::to_string(node.arguments.size()),
-                      expr.loc);
+                      ast::loc_copy(expr.node));
         }
         else
         {
@@ -173,7 +173,7 @@ public:
                 {
                     add_error("Function call argument type mismatch for '" + node.callee + "' at position " + std::to_string(i + 1) +
                                   ": expected " + fsig->param_types[i].to_string() + ", got " + arg_type.to_string(),
-                              expr.loc);
+                              ast::loc_copy(expr.node));
                 }
             }
         }
@@ -187,14 +187,14 @@ public:
 
         if (!var_type_opt)
         {
-            add_error("Assignment to undefined variable: " + node.name, expr.loc);
+            add_error("Assignment to undefined variable: " + node.name, ast::loc_copy(expr.node));
             return types::Type(types::kind::Void);
         }
         if (!equals(*var_type_opt, value_type))
         {
             add_error("Type mismatch in assignment to '" + node.name + "': expected " + var_type_opt->to_string() + ", got " +
                           value_type.to_string(),
-                      expr.loc);
+                      ast::loc_copy(expr.node));
         }
         return *var_type_opt;
     }
@@ -203,7 +203,7 @@ public:
     {
         types::Type src_type = check_expr(*node.expression);
         // Extract target type from expr
-        types::Type target_type = expr.type;  // Provided by parser, else fallback
+        types::Type target_type = ast::get_type_copy(expr.node);  // Provided by parser, else fallback
         return target_type;
     }
 
@@ -237,11 +237,8 @@ public:
             case 7:
                 check_stmt_node(std::get<While_stmt>(stmt.node), stmt);
                 break;
-            case 8:
-                check_stmt_node(std::get<For_stmt>(stmt.node), stmt);
-                break;
             default:
-                add_error("Unknown statement type", stmt.loc);
+                add_error("Unknown statement type", ast::loc_copy(stmt.node));
         }
     }
 
@@ -274,7 +271,7 @@ public:
             {
                 add_error("Variable '" + node.name + "' declaration type does not match initializer: expected " + node.type.to_string() +
                               ", got " + init_type.to_string(),
-                          stmt.loc);
+                          ast::loc_copy(stmt.node));
             }
         }
     }
@@ -293,7 +290,7 @@ public:
     {
         types::Type cond_type = check_expr(*node.condition);
         if (cond_type.kind_ != types::kind::Bool)
-            add_error("If condition must be boolean, got " + cond_type.to_string(), stmt.loc);
+            add_error("If condition must be boolean, got " + cond_type.to_string(), ast::loc_copy(stmt.node));
         check_stmt(*node.then_branch);
         if (node.else_branch)
             check_stmt(*node.else_branch);
@@ -303,25 +300,8 @@ public:
     {
         types::Type cond_type = check_expr(*node.condition);
         if (cond_type.kind_ != types::kind::Bool)
-            add_error("While condition must be boolean, got " + cond_type.to_string(), stmt.loc);
+            add_error("While condition must be boolean, got " + cond_type.to_string(), ast::loc_copy(stmt.node));
         check_stmt(*node.body);
-    }
-
-    void check_stmt_node(const phos::ast::For_stmt &node, const phos::ast::Stmt &stmt)
-    {
-        enter_scope();
-        if (node.initializer)
-            check_stmt(*node.initializer);
-        if (node.condition)
-        {
-            types::Type cond_type = check_expr(*node.condition);
-            if (cond_type.kind_ != types::kind::Bool)
-                add_error("For condition must be boolean, got " + cond_type.to_string(), stmt.loc);
-        }
-        if (node.increment)
-            check_expr(*node.increment);
-        check_stmt(*node.body);
-        exit_scope();
     }
 };
 

@@ -1,6 +1,9 @@
 #pragma once
 
-#include "../utility/includes.hpp"
+#include <cstdint>
+#include <vector>
+#include <string>
+#include<memory>
 
 namespace phos {
 namespace types {
