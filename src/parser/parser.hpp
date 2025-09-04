@@ -226,10 +226,21 @@ private:
 
         this->variable_types = saved_variable_types;
 
+        types::Type func_type(types::kind::Function);
+        for (auto [ s, t ]: parameters) func_type.parameter_types.push_back(t);
+
+        auto r = std::make_unique<types::Type>();
+        r->kind_ = return_type.kind_;
+        r->parameter_types = return_type.parameter_types;
+
+        func_type.return_type = std::move(r);
+
         return std::make_unique<ast::Stmt>(
             (ast::Stmt){
                 (ast::Function_stmt){ .name = name.lexeme, .parameters = parameters, .return_type = return_type, .body =  std::move(body_result.value()),
-                .loc = {name.line, name.column}}
+                .loc = {name.line, name.column},
+                .function_type = func_type
+            }
         });
     }
 

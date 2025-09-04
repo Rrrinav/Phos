@@ -120,6 +120,7 @@ struct Function_stmt
     std::unique_ptr<struct Stmt> body;
 
     Source_location loc;
+    types::Type function_type;
 };
 
 struct Var_stmt

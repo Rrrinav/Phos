@@ -13,6 +13,7 @@
 
 int main(int argc, char *argv[])
 {
+    // TODO: Proper arguments parsing
     if (argc == 1)
     {
         Phos_repl repl;
@@ -26,10 +27,13 @@ int main(int argc, char *argv[])
         return 1;
     }
     bool print_ast = false;
+    bool print_use_unicode = true;
+    bool print_only_print = false;
     if (argc == 3)
     {
         std::string opt = argv[2];
-        if (opt == "--ast-dump") print_ast = true;
+        if (opt == "--ast-dump")
+            print_ast = true;
     }
     std::string filename = argv[1];
     std::ifstream file(filename);
@@ -65,7 +69,15 @@ int main(int argc, char *argv[])
         if (print_ast)
         {
             phos::ast::AstPrinter printer;
-            printer.print_statements(parse_result.value());
+            if (print_use_unicode)
+                printer.print_statements(parse_result.value());
+            else
+            {
+                printer.use_unicode = false;
+                printer.print_statements(parse_result.value());
+            }
+            if (print_only_print)
+                return 0;
         }
         auto statements = std::move(*parse_result);
         phos::types::Type_checker type_checker;
@@ -73,7 +85,7 @@ int main(int argc, char *argv[])
         if (!type_checker.has_errors())
         {
             auto errors = type_checker.get_errors();
-            for (const auto & e: errors) std::println(stderr, "{}:{}", filename, e.format());
+            for (const auto &e : errors) std::println(stderr, "{}:{}", filename, e.format());
         }
         phos::Interpreter interpreter;
         auto interpret_result = interpreter.interpret(statements);

@@ -5,10 +5,11 @@
 #include <string>
 #include<memory>
 
-namespace phos {
-namespace types {
+namespace phos::types {
 
 enum class kind : uint8_t { Int, Float, Bool, String, Void, Function };
+
+enum class primitives : uint8_t { Int, Float, Bool, String, Void, Function };
 
 struct Type
 {
@@ -88,5 +89,4 @@ struct Type
     }
 };
 
-} // namespace type
-} // namespace phos
+} // namespace phos::types
