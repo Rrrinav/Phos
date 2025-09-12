@@ -1,564 +1,773 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdio>
-#include <print>
-#include <string>
-#include <variant>
-#include <vector>
-#include <unordered_map>
 #include <memory>
-#include <expected>
+#include <unordered_map>
+#include <vector>
+#include <variant>
+#include <iostream>
+#include <string>
 
-#include "../utility/utility.hpp"
-#include "environment.hpp"
 #include "../parser/ast.hpp"
+#include "../value/type.hpp"
+#include "../value/value.hpp"
+#include "../error/err.hpp"
+#include "../error/result.hpp"
+
+// RAII guard to restore the environment automatically after scope exits
+template <typename F>
+struct Finally
+{
+    F func;
+    ~Finally() { func(); }
+};
+
+template <typename F>
+Finally<F> finally(F func)
+{
+    return {func};
+}
 
 namespace phos
 {
 
+struct ReturnValue
+{
+    Value value;
+    bool is_return;
+
+    ReturnValue() : value(std::monostate{}), is_return(false) {}
+    ReturnValue(const Value &v) : value(v), is_return(true) {}
+};
+
+class Environment
+{
+private:
+    std::unordered_map<std::string, Value> values;
+    std::shared_ptr<Environment> enclosing;
+
+public:
+    Environment() : enclosing(nullptr) {}
+    Environment(std::shared_ptr<Environment> enclosing) : enclosing(std::move(enclosing)) {}
+
+    Result<void> define(const std::string &name, const Value &value)
+    {
+        values[name] = value;
+        return {};
+    }
+
+    Result<Value> get(const std::string &name) const
+    {
+        if (values.contains(name))
+            return values.at(name);
+        if (enclosing != nullptr)
+            return enclosing->get(name);
+        return std::unexpected(err::msg("Undefined variable '" + name + "'", "interpreter", 0, 0));
+    }
+
+    Result<void> assign(const std::string &name, const Value &value)
+    {
+        if (values.contains(name))
+        {
+            values[name] = value;
+            return {};
+        }
+        if (enclosing != nullptr)
+            return enclosing->assign(name, value);
+        return std::unexpected(err::msg("Undefined variable '" + name + "'", "interpreter", 0, 0));
+    }
+};
+
 class Interpreter
 {
 private:
-    Environment *environment = nullptr;
-    std::unordered_map<std::string, const ast::Function_stmt *> functions;
-    std::string filename;
+    // ========================================================================
+    // Internal Data Structures
+    // ========================================================================
 
-    // Structure to represent return values
-    struct Value_result
+    struct FunctionData
     {
-        Value value;
-        bool has_return;
-
-        Value_result() : value(std::monostate{}), has_return(false) {}
-        explicit Value_result(Value val) : value(std::move(val)), has_return(true) {}
-
-        explicit operator bool() const { return has_return; }
+        types::Function_type signature;
+        std::shared_ptr<ast::Function_stmt> declaration;
+        std::shared_ptr<Environment> definition_environment;
     };
 
-public:
-    Interpreter() { environment = new Environment(nullptr); }
-
-    ~Interpreter()
+    struct ClosureData
     {
-        Environment *env = environment;
-        while (env)
-        {
-            Environment *p = env->parent;
-            delete env;
-            env = p;
-        }
+        std::size_t id;
+        types::Closure_type signature;
+        std::shared_ptr<ast::Closure_expr> declaration;
+        std::shared_ptr<Environment> captured_environment;
+    };
+
+    struct ModelData
+    {
+        std::shared_ptr<types::Model_type> signature;
+        std::unordered_map<std::string, FunctionData> methods;
+    };
+
+    // Environment management
+    std::shared_ptr<Environment> globals;
+    std::shared_ptr<Environment> environment;
+
+    // Code execution tables
+    std::unordered_map<std::string, FunctionData> functions;
+    std::unordered_map<size_t, ClosureData> closures;
+    std::unordered_map<std::string, ModelData> model_data;
+    size_t next_closure_id = 0;
+
+public:
+    // ========================================================================
+    // Constructor & Public Interface
+    // ========================================================================
+
+    Interpreter()
+    {
+        globals = std::make_shared<Environment>();
+        environment = globals;
     }
-
-    std::unordered_map<std::string, Value> get_variables() { return environment->vars; }
-
-    std::unordered_map<std::string, const ast::Function_stmt *> get_functions() { return this->functions; }
 
     Result<void> interpret(const std::vector<std::unique_ptr<ast::Stmt>> &statements)
     {
-        // Register all functions first
-        for (const auto &stmt : statements)
-            if (const auto *func_stmt = std::get_if<ast::Function_stmt>(&stmt->node))
-                functions.emplace(func_stmt->name, func_stmt);
-
-        // Execute non-function statements
-        for (const auto &stmt : statements)
+        for (const auto &statement : statements)
         {
-            if (std::get_if<ast::Function_stmt>(&stmt->node))
-                continue;
-
-            auto result = execute(*stmt);
+            auto result = execute(*statement);
             if (!result)
                 return std::unexpected(result.error());
+            if (result.value().is_return)
+                return std::unexpected(err::msg("Cannot return from top-level code.", "interpreter", 0, 0));
         }
         return {};
     }
 
 private:
-    Result<void> declareVariable(const std::string &name, Value val)
-    {
-        environment->define(name, std::move(val));
-        return {};
-    }
+    // ========================================================================
+    // Expression Evaluation
+    // ========================================================================
 
-    Result<bool> assignVariable(const std::string &name, Value val)
-    {
-        if (environment->assign(name, std::move(val)))
-            return true;
-        return std::unexpected(err::msg("Assignment to undefined variable", "runtime", 0, 0, filename));
-    }
-
-    Result<Value> lookup_variable(const std::string &name, const ast::Source_location &loc)
-    {
-        if (auto *val = environment->lookup(name))
-            return *val;
-        return std::unexpected(err::msg("Undefined variable '" + name + "'", "runtime", loc.line, loc.column, filename));
-    }
-
-    // ===== Statement execution =====
-    Result<Value_result> execute(const ast::Stmt &stmt)
-    {
-        return std::visit(
-            [this, &stmt](const auto &s) -> Result<Value_result>
-            {
-                using T = std::decay_t<decltype(s)>;
-                if constexpr (std::is_same_v<T, ast::Var_stmt>)
-                    return execute_var_stmt(s);
-                else if constexpr (std::is_same_v<T, ast::Print_stmt>)
-                    return execute_print_stmt(s);
-                else if constexpr (std::is_same_v<T, ast::Expr_stmt>)
-                    return execute_expr_stmt(s);
-                else if constexpr (std::is_same_v<T, ast::If_stmt>)
-                    return execute_if_stmt(s);
-                else if constexpr (std::is_same_v<T, ast::While_stmt>)
-                    return execute_while_stmt(s);
-                else if constexpr (std::is_same_v<T, ast::Block_stmt>)
-                    return execute_block_stmt(s);
-                else if constexpr (std::is_same_v<T, ast::Return_stmt>)
-                    return execute_return_stmt(s);
-                else if constexpr (std::is_same_v<T, ast::Function_stmt>)
-                    return Value_result{};  // Functions are handled in interpret()
-                else
-                    return std::unexpected(err::msg("Unknown statement type", "runtime", ast::loc_copy(stmt.node).line, ast::loc_copy(stmt.node).column));
-            },
-            stmt.node);
-    }
-
-    Result<Value_result> execute_var_stmt(const ast::Var_stmt &stmt)
-    {
-        Value value;
-        if (stmt.initializer)
-        {
-            auto eval_res = evaluate(*stmt.initializer);
-            if (!eval_res)
-                return std::unexpected(eval_res.error());
-            value = *eval_res;
-        }
-        else
-        {
-            // Default initialization based on type
-            switch (stmt.type.kind_)
-            {
-                case types::kind::Int:
-                    value = int64_t(0);
-                    break;
-                case types::kind::Float:
-                    value = double(0.0);
-                    break;
-                case types::kind::Bool:
-                    value = false;
-                    break;
-                case types::kind::String:
-                    value = std::string("");
-                    break;
-                case types::kind::Void:
-                    value = std::monostate{};
-                    break;
-                default:
-                    return std::unexpected(err::msg("Cannot default-initialize variable", "runtime", stmt.loc.line, stmt.loc.column));
-            }
-        }
-
-        auto declare_res = declareVariable(stmt.name, std::move(value));
-        if (!declare_res)
-            return std::unexpected(declare_res.error());
-
-        return Value_result{};
-    }
-
-    Result<Value_result> execute_print_stmt(const ast::Print_stmt &stmt)
-    {
-        auto stream = (stmt.stream == ast::Print_stream::STDOUT) ? stdout : stderr;
-
-        auto eval_res = evaluate(*stmt.expression);
-        if (!eval_res)
-            return std::unexpected(eval_res.error());
-
-        std::visit(
-            [&](auto &&arg)
-            {
-                using T = std::decay_t<decltype(arg)>;
-                if constexpr (std::is_same_v<T, std::string>)
-                    std::println(stream, "{}", arg);
-                else if constexpr (std::is_same_v<T, bool>)
-                    std::println(stream, "{}", arg ? "true" : "false");
-                else if constexpr (std::is_same_v<T, std::nullptr_t>)
-                    std::println(stream, "null");
-                else if constexpr (std::is_same_v<T, std::monostate>)
-                    std::println(stream, "monostate: uninitialized");
-                else
-                    std::println(stream, "{}", arg);
-            },
-            *eval_res);
-
-        return Value_result{};
-    }
-
-    Result<Value_result> execute_expr_stmt(const ast::Expr_stmt &stmt)
-    {
-        auto eval_res = evaluate(*stmt.expression);
-        if (!eval_res)
-            return std::unexpected(eval_res.error());
-        return Value_result{};
-    }
-
-    Result<Value_result> execute_if_stmt(const ast::If_stmt &stmt)
-    {
-        auto cond_res = evaluate(*stmt.condition);
-        if (!cond_res)
-            return std::unexpected(cond_res.error());
-
-        if (!std::holds_alternative<bool>(*cond_res))
-            return std::unexpected(err::msg("If condition must be bool", "runtime", ast::loc(stmt.condition->node).line, ast::loc(stmt.condition->node).column));
-
-
-        bool cond_value = std::get<bool>(*cond_res);
-
-        if (cond_value)
-            return execute(*stmt.then_branch);
-        else if (stmt.else_branch)
-            return execute(*stmt.else_branch);
-
-        return Value_result{};
-    }
-
-    Result<Value_result> execute_while_stmt(const ast::While_stmt &stmt)
-    {
-        while (true)
-        {
-            auto cond_res = evaluate(*stmt.condition);
-            if (!cond_res)
-                return std::unexpected(cond_res.error());
-
-            if (!std::holds_alternative<bool>(*cond_res))
-                return std::unexpected(
-                    err::msg("While condition must be bool", "runtime", ast::loc(stmt.condition->node).line, ast::loc(stmt.condition->node).column));
-
-            bool cond_value = std::get<bool>(*cond_res);
-            if (!cond_value)
-                break;
-
-            auto body_res = execute(*stmt.body);
-            if (!body_res)
-                return std::unexpected(body_res.error());
-
-            // Check if return statement was encountered
-            if (body_res->has_return)
-                return *body_res;
-        }
-        return Value_result{};
-    }
-
-    Result<Value_result> execute_block_stmt(const ast::Block_stmt &stmt)
-    {
-        Environment *saved_env = environment;
-        environment = new Environment(environment);
-
-        Result<Value_result> block_result = Value_result{};
-        for (const auto &s : stmt.statements)
-        {
-            auto res = execute(*s);
-            if (!res)
-            {
-                block_result = std::unexpected(res.error());
-                break;
-            }
-
-            // Check if return statement was encountered
-            if (res->has_return)
-            {
-                block_result = *res;
-                break;
-            }
-        }
-
-        delete environment;
-        environment = saved_env;
-        return block_result;
-    }
-
-    Result<Value_result> execute_return_stmt(const ast::Return_stmt &stmt)
-    {
-        Value value = std::monostate{};  // Default to monostate for void returns
-
-        if (stmt.expression)
-        {
-            auto eval_res = evaluate(*stmt.expression);
-            if (!eval_res)
-                return std::unexpected(eval_res.error());
-            value = *eval_res;
-        }
-
-        return Value_result{value};
-    }
-
-    // ===== Expression evaluation =====
     Result<Value> evaluate(const ast::Expr &expr)
     {
         return std::visit(
-            [this, &expr](const auto &e) -> Result<Value>
+            [this](auto &&arg) -> Result<Value>
             {
-                using T = std::decay_t<decltype(e)>;
+                using T = std::decay_t<decltype(arg)>;
 
-                if constexpr (std::is_same_v<T, ast::Literal_expr>)
-                    return e.value;
-                else if constexpr (std::is_same_v<T, ast::Variable_expr>)
-                    return lookup_variable(e.name, ast::loc_copy(expr.node));
+                if constexpr (std::is_same_v<T, ast::Assignment_expr>)
+                {
+                    auto value_result = evaluate(*arg.value);
+                    if (!value_result)
+                        return value_result;
+
+                    auto assign_result = environment->assign(arg.name, value_result.value());
+                    if (!assign_result)
+                        return std::unexpected(assign_result.error());
+
+                    return value_result.value();
+                }
+
                 else if constexpr (std::is_same_v<T, ast::Binary_expr>)
-                    return evaluate_binary_expr(e);
-                else if constexpr (std::is_same_v<T, ast::Unary_expr>)
-                    return evaluate_unary_expr(e);
+                {
+                    auto left_result = evaluate(*arg.left);
+                    if (!left_result)
+                        return left_result;
+
+                    auto right_result = evaluate(*arg.right);
+                    if (!right_result)
+                        return right_result;
+
+                    const auto &left = left_result.value();
+                    const auto &right = right_result.value();
+
+                    switch (arg.op)
+                    {
+                        case lex::TokenType::Plus:
+                            return add(left, right);
+                        case lex::TokenType::Minus:
+                            return subtract(left, right);
+                        case lex::TokenType::Star:
+                            return multiply(left, right);
+                        case lex::TokenType::Slash:
+                            return divide(left, right);
+                        case lex::TokenType::Percent:
+                            return modulo(left, right);
+                        case lex::TokenType::Equal:
+                            return Value(equals(left, right));
+                        case lex::TokenType::NotEqual:
+                            return Value(!equals(left, right));
+                        case lex::TokenType::Less:
+                            return lessThan(left, right);
+                        case lex::TokenType::LessEqual:
+                            return lessThanOrEqual(left, right);
+                        case lex::TokenType::Greater:
+                            return greaterThan(left, right);
+                        case lex::TokenType::GreaterEqual:
+                            return greaterThanOrEqual(left, right);
+                        case lex::TokenType::LogicalAnd:
+                            return Value(isTruthy(left) && isTruthy(right));
+                        case lex::TokenType::LogicalOr:
+                            return Value(isTruthy(left) || isTruthy(right));
+                        default:
+                            return std::unexpected(err::msg("Unknown binary operator.", "interpreter", arg.loc.line, arg.loc.column));
+                    }
+                }
+
                 else if constexpr (std::is_same_v<T, ast::Call_expr>)
-                    return evaluate_call_expr(e);
-                else if constexpr (std::is_same_v<T, ast::Assignment_expr>)
-                    return evaluate_assignment_expr(e);
+                {
+                    auto callee_result = environment->get(arg.callee);
+                    if (!callee_result)
+                        return callee_result;
+
+                    std::vector<Value> arguments;
+                    for (const auto &argument : arg.arguments)
+                    {
+                        auto arg_result = evaluate(*argument);
+                        if (!arg_result)
+                            return arg_result;
+                        arguments.push_back(arg_result.value());
+                    }
+
+                    if (is_function(callee_result.value()))
+                        return call_function(arg.callee, arguments, arg.loc);
+                    else if (is_closure(callee_result.value()))
+                        return call_closure(get_closure(callee_result.value())->id, arguments, arg.loc);
+                    else
+                        return std::unexpected(
+                            err::msg("Can only call functions and closures.", "interpreter", arg.loc.line, arg.loc.column));
+                }
+
                 else if constexpr (std::is_same_v<T, ast::Cast_expr>)
-                    return evaluate_cast_expr(e);
-                else
-                    return std::unexpected(err::msg("Unknown expression type", "runtime", ast::loc_copy(expr.node).line, ast::loc_copy(expr.node).column));
+                {
+                    auto value_result = evaluate(*arg.expression);
+                    if (!value_result)
+                        return value_result;
+                    return cast_value(value_result.value(), arg.target_type);
+                }
+
+                else if constexpr (std::is_same_v<T, ast::Closure_expr>)
+                {
+                    size_t id = next_closure_id++;
+
+                    types::Closure_type closure_type_info;
+                    for (const auto &param : arg.parameters) closure_type_info.function_type.parameter_types.push_back(param.second);
+                    closure_type_info.function_type.return_type = arg.return_type;
+
+                    closures[id] = ClosureData{id, closure_type_info, std::make_shared<ast::Closure_expr>(arg), environment};
+
+                    auto func_val = std::make_shared<FunctionValue>(closure_type_info.function_type, arg.parameters, environment);
+                    auto closure_val = std::make_shared<ClosureValue>(func_val, std::unordered_map<std::string, Value>{});
+                    closure_val->id = id;
+                    return Value(closure_val);
+                }
+
+                else if constexpr (std::is_same_v<T, ast::Field_access_expr>)
+                {
+                    auto object_result = evaluate(*arg.object);
+                    if (!object_result)
+                        return object_result;
+
+                    if (!is_model(object_result.value()))
+                        return std::unexpected(
+                            err::msg("Can only access fields on model instances.", "interpreter", arg.loc.line, arg.loc.column));
+
+                    auto model_val = get_model(object_result.value());
+                    if (model_val->fields.contains(arg.field_name))
+                        return model_val->fields.at(arg.field_name);
+
+                    return std::unexpected(
+                        err::msg("Field '" + arg.field_name + "' not found.", "interpreter", arg.loc.line, arg.loc.column));
+                }
+
+                else if constexpr (std::is_same_v<T, ast::Field_assignment_expr>)
+                {
+                    auto object_result = evaluate(*arg.object);
+                    if (!object_result)
+                        return object_result;
+
+                    if (!is_model(object_result.value()))
+                        return std::unexpected(
+                            err::msg("Can only assign to fields of a model instance.", "interpreter", arg.loc.line, arg.loc.column));
+
+                    auto value_res = evaluate(*arg.value);
+                    if (!value_res)
+                        return value_res;
+
+                    get_model(object_result.value())->fields[arg.field_name] = value_res.value();
+                    return value_res.value();
+                }
+
+                else if constexpr (std::is_same_v<T, ast::Literal_expr>)
+                {
+                    return arg.value;
+                }
+
+                else if constexpr (std::is_same_v<T, ast::Method_call_expr>)
+                {
+                    auto object_result = evaluate(*arg.object);
+                    if (!object_result)
+                        return object_result;
+
+                    if (!is_model(object_result.value()))
+                        return std::unexpected(
+                            err::msg("Can only call methods on model instances.", "interpreter", arg.loc.line, arg.loc.column));
+
+                    auto model_val = get_model(object_result.value());
+                    const auto &model_name = model_val->signature.name;
+
+                    if (!model_data.contains(model_name) || !model_data.at(model_name).methods.contains(arg.method_name))
+                        return std::unexpected(
+                            err::msg("Method '" + arg.method_name + "' not found.", "interpreter", arg.loc.line, arg.loc.column));
+
+                    const auto &method_data = model_data.at(model_name).methods.at(arg.method_name);
+
+                    std::vector<Value> arguments;
+                    for (const auto &argument : arg.arguments)
+                    {
+                        auto arg_result = evaluate(*argument);
+                        if (!arg_result)
+                            return arg_result;
+                        arguments.push_back(arg_result.value());
+                    }
+
+                    auto new_env = std::make_shared<Environment>(method_data.definition_environment);
+                    new_env->define("this", object_result.value());
+
+                    for (size_t i = 0; i < method_data.declaration->parameters.size(); ++i)
+                        new_env->define(method_data.declaration->parameters[i].first, arguments[i]);
+
+                    auto result = executeBlock(std::get<ast::Block_stmt>(method_data.declaration->body->node).statements, new_env);
+                    if (!result)
+                        return std::unexpected(result.error());
+                    if (result.value().is_return)
+                        return result.value().value;
+                    return Value(std::monostate{});
+                }
+
+                else if constexpr (std::is_same_v<T, ast::Model_literal_expr>)
+                {
+                    if (!model_data.contains(arg.model_name))
+                        return std::unexpected(
+                            err::msg("Model type '" + arg.model_name + "' is not defined.", "interpreter", arg.loc.line, arg.loc.column));
+
+                    auto model_type = model_data.at(arg.model_name).signature;
+                    auto instance = std::make_shared<ModelValue>(*model_type, std::unordered_map<std::string, Value>{});
+
+                    for (const auto &[name, expr] : arg.fields)
+                    {
+                        auto val_res = evaluate(*expr);
+                        if (!val_res)
+                            return val_res;
+                        instance->fields[name] = val_res.value();
+                    }
+                    return Value(instance);
+                }
+
+                else if constexpr (std::is_same_v<T, ast::Unary_expr>)
+                {
+                    auto right_result = evaluate(*arg.right);
+                    if (!right_result)
+                        return right_result;
+
+                    switch (arg.op)
+                    {
+                        case lex::TokenType::Minus:
+                            return negate(right_result.value());
+                        case lex::TokenType::LogicalNot:
+                            return Value(!isTruthy(right_result.value()));
+                        default:
+                            return std::unexpected(err::msg("Unknown unary operator.", "interpreter", arg.loc.line, arg.loc.column));
+                    }
+                }
+
+                else if constexpr (std::is_same_v<T, ast::Variable_expr>)
+                {
+                    return environment->get(arg.name);
+                }
+
+                return std::unexpected(err::msg("Unhandled expression type", "interpreter", 0, 0));
             },
             expr.node);
     }
 
-    Result<Value> evaluate_binary_expr(const ast::Binary_expr &expr)
+    // ========================================================================
+    // Statement Execution
+    // ========================================================================
+
+    Result<ReturnValue> execute(const ast::Stmt &stmt)
     {
-        auto left_res = evaluate(*expr.left);
-        if (!left_res)
-            return std::unexpected(left_res.error());
-
-        auto right_res = evaluate(*expr.right);
-        if (!right_res)
-            return std::unexpected(right_res.error());
-
         return std::visit(
-            [&](auto &&left_val, auto &&right_val) -> Result<Value>
+            [this](auto &&arg) -> Result<ReturnValue>
             {
-                using LeftT = std::decay_t<decltype(left_val)>;
-                using RightT = std::decay_t<decltype(right_val)>;
+                using T = std::decay_t<decltype(arg)>;
 
-                if constexpr (std::is_same_v<LeftT, std::monostate>)
-                    return std::unexpected(err::msg("Cannot perform binary operation on uninitialized value", "runtime",
-                                                    ast::loc(expr.left->node).line, ast::loc(expr.left->node).column));
-                if constexpr (std::is_same_v<RightT, std::monostate>)
-                    return std::unexpected(err::msg("Cannot perform binary operation on uninitialized value", "runtime",
-                                                    ast::loc(expr.right->node).line, ast::loc(expr.right->node).column));
-                else if constexpr (std::is_same_v<LeftT, std::nullptr_t>)
-                    return std::unexpected(
-                        err::msg("Cannot perform binary operation on null value", "runtime", ast::loc(expr.left->node).line, ast::loc(expr.left->node).column));
-                else if constexpr (std::is_same_v<RightT, std::nullptr_t>)
-                    return std::unexpected(
-                        err::msg("Cannot perform binary operation on null value", "runtime",ast::loc(expr.right->node).line, ast::loc(expr.right->node).column));
-                else if constexpr (!util::AllowedType<LeftT>)
-                    return std::unexpected(
-                        err::msg("Invalid operand type for binary operator", "runtime", ast::loc(expr.left->node).line, ast::loc(expr.left->node).column));
-                else if constexpr (!util::AllowedType<RightT>)
-                    return std::unexpected(
-                        err::msg("Invalid operand type for binary operator", "runtime", ast::loc(expr.right->node).line, ast::loc(expr.right->node).column));
-                else if constexpr (std::is_same_v<LeftT, RightT>)
-                    return util::BinaryOperation<LeftT>(left_val, right_val, expr.op, expr.loc.line, expr.loc.column).execute();
-                else
-                    return std::unexpected(err::msg("Type mismatch in binary expression", "runtime", expr.loc.line, expr.loc.column));
-            },
-            *left_res, *right_res);
-    }
-
-    Result<Value> evaluate_unary_expr(const ast::Unary_expr &expr)
-    {
-        auto right_res = evaluate(*expr.right);
-        if (!right_res)
-            return std::unexpected(right_res.error());
-
-        return std::visit(
-            [&](auto &&right_val) -> Result<Value>
-            {
-                using RightT = std::decay_t<decltype(right_val)>;
-
-                switch (expr.op)
+                if constexpr (std::is_same_v<T, ast::Block_stmt>)
                 {
-                    case lex::TokenType::Minus:
-                        if constexpr (std::is_same_v<RightT, int64_t>)
-                            return -right_val;
-                        else if constexpr (std::is_same_v<RightT, double>)
-                            return -right_val;
-                        else
-                            return std::unexpected(
-                                err::msg("Invalid operand for unary -", "runtime", ast::loc(expr.right->node).line, ast::loc(expr.right->node).column));
-
-                    case lex::TokenType::LogicalNot:
-                        if constexpr (std::is_same_v<RightT, bool>)
-                            return !right_val;
-                        else
-                            return std::unexpected(
-                                err::msg("Invalid operand for !", "runtime", ast::loc(expr.right->node).line, ast::loc(expr.right->node).column));
-
-                    default:
-                        return std::unexpected(err::msg("Unknown unary operator", "runtime", expr.loc.line, expr.loc.column));
+                    return executeBlock(arg.statements, std::make_shared<Environment>(environment));
                 }
-            },
-            *right_res);
-    }
 
-    Result<Value> evaluate_assignment_expr(const ast::Assignment_expr &expr)
-    {
-        auto val = evaluate(*expr.value);
-        if (!val)
-            return std::unexpected(val.error());
-
-        auto assign_res = assignVariable(expr.name, *val);
-        if (!assign_res)
-            return std::unexpected(assign_res.error());
-
-        return *val;
-    }
-
-    Result<Value> evaluate_call_expr(const ast::Call_expr &expr)
-    {
-        auto it = functions.find(expr.callee);
-        if (it == functions.end())
-            return std::unexpected(err::msg("Undefined function '" + expr.callee + "'", "runtime", expr.loc.line, expr.loc.column));
-
-        const ast::Function_stmt *func = it->second;
-        if (func->parameters.size() != expr.arguments.size())
-            return std::unexpected(err::msg("Argument count mismatch for function '" + expr.callee + "'", "runtime", expr.loc.line, expr.loc.column));
-
-        // Evaluate arguments in current environment
-        std::vector<Value> arg_values;
-        for (const auto &arg : expr.arguments)
-        {
-            auto val = evaluate(*arg);
-            if (!val)
-                return std::unexpected(val.error());
-            arg_values.push_back(*val);
-        }
-
-        // Create new environment for function call
-        Environment *saved_env = environment;
-        environment = new Environment(environment);
-
-        // Bind parameters
-        for (size_t i = 0; i < func->parameters.size(); ++i) environment->define(func->parameters[i].first, arg_values[i]);
-
-        // Execute function body
-        Value return_value = std::monostate{};
-        bool has_return = false;
-
-        auto func_result = execute(*func->body);
-        if (!func_result)
-        {
-            delete environment;
-            environment = saved_env;
-            return std::unexpected(func_result.error());
-        }
-
-        // Check if function returned a value
-        if (func_result->has_return)
-        {
-            return_value = func_result->value;
-            has_return = true;
-        }
-
-        // Check return requirements
-        if (func->return_type.kind_ != types::kind::Void && !has_return)
-        {
-            delete environment;
-            environment = saved_env;
-            return std::unexpected(err::msg("Missing return statement in non-void function", "runtime", ast::loc(func->body->node).line, ast::loc(func->body->node).column));
-        }
-
-        // For non-void functions without explicit return, provide default value
-        if (func->return_type.kind_ != types::kind::Void && !has_return)
-        {
-            switch (func->return_type.kind_)
-            {
-                case types::kind::Int:
-                    return_value = int64_t(0);
-                    break;
-                case types::kind::Float:
-                    return_value = double(0.0);
-                    break;
-                case types::kind::Bool:
-                    return_value = false;
-                    break;
-                case types::kind::String:
-                    return_value = std::string("");
-                    break;
-                default:
-                    delete environment;
-                    environment = saved_env;
-                    return std::unexpected(err::msg("Invalid return type", "runtime", expr.loc.line, expr.loc.column));
-            }
-        }
-
-        // For void functions, ensure we return monostate
-        if (func->return_type.kind_ == types::kind::Void && !has_return)
-            return_value = std::monostate{};
-
-        // Restore environment
-        delete environment;
-        environment = saved_env;
-        return return_value;
-    }
-
-    Result<Value> evaluate_cast_expr(const ast::Cast_expr &expr)
-    {
-        auto val = evaluate(*expr.expression);
-        if (!val)
-            return std::unexpected(val.error());
-
-        return std::visit(
-            [&](auto &&value) -> Result<Value>
-            {
-                using T = std::decay_t<decltype(value)>;
-
-                switch (expr.type.kind_)
+                else if constexpr (std::is_same_v<T, ast::Expr_stmt>)
                 {
-                    case types::kind::Int:
-                        if constexpr (std::is_same_v<T, int64_t>)
-                            return value;
-                        else if constexpr (std::is_same_v<T, double>)
-                            return static_cast<int64_t>(value);
-                        else if constexpr (std::is_same_v<T, bool>)
-                            return static_cast<int64_t>(value);
-                        else
-                            return std::unexpected(err::msg("Cannot cast to int", "runtime", ast::loc(expr.expression->node).line, ast::loc(expr.expression->node).column));
-
-                    case types::kind::Float:
-                        if constexpr (std::is_same_v<T, int64_t>)
-                            return static_cast<double>(value);
-                        else if constexpr (std::is_same_v<T, double>)
-                            return value;
-                        else if constexpr (std::is_same_v<T, bool>)
-                            return static_cast<double>(value);
-                        else
-                            return std::unexpected(err::msg("Cannot cast to float", "runtime", ast::loc(expr.expression->node).line, ast::loc(expr.expression->node).column));
-
-                    case types::kind::Bool:
-                        if constexpr (std::is_same_v<T, int64_t>)
-                            return value != 0;
-                        else if constexpr (std::is_same_v<T, double>)
-                            return value != 0.0;
-                        else if constexpr (std::is_same_v<T, bool>)
-                            return value;
-                        else
-                            return std::unexpected(err::msg("Cannot cast to bool", "runtime", ast::loc(expr.expression->node).line, ast::loc(expr.expression->node).column));
-
-                    case types::kind::String:
-                        if constexpr (std::is_same_v<T, int64_t>)
-                            return std::to_string(value);
-                        else if constexpr (std::is_same_v<T, double>)
-                            return std::to_string(value);
-                        else if constexpr (std::is_same_v<T, bool>)
-                            return value ? "true" : "false";
-                        else if constexpr (std::is_same_v<T, std::string>)
-                            return value;
-                        else
-                            return std::unexpected(err::msg("Cannot cast to string", "runtime", ast::loc(expr.expression->node).line, ast::loc(expr.expression->node).column));
-
-                    default:
-                        return std::unexpected(err::msg("Invalid cast target type", "runtime", ast::loc(expr.expression->node).line, ast::loc(expr.expression->node).column));
+                    auto eval_result = evaluate(*arg.expression);
+                    if (!eval_result)
+                        return std::unexpected(eval_result.error());
+                    return ReturnValue{};
                 }
+
+                else if constexpr (std::is_same_v<T, ast::Function_stmt>)
+                {
+                    types::Function_type func_type;
+                    for (const auto &param : arg.parameters) func_type.parameter_types.push_back(param.second);
+                    func_type.return_type = arg.return_type;
+
+                    functions[arg.name] = {func_type, std::make_shared<ast::Function_stmt>(arg), environment};
+
+                    auto func_val = std::make_shared<FunctionValue>(func_type, arg.parameters, environment);
+                    auto define_result = environment->define(arg.name, Value(func_val));
+                    if (!define_result)
+                        return std::unexpected(define_result.error());
+                    return ReturnValue{};
+                }
+
+                else if constexpr (std::is_same_v<T, ast::If_stmt>)
+                {
+                    auto condition_result = evaluate(*arg.condition);
+                    if (!condition_result)
+                        return std::unexpected(condition_result.error());
+
+                    if (isTruthy(condition_result.value()))
+                        return execute(*arg.then_branch);
+                    else if (arg.else_branch != nullptr)
+                        return execute(*arg.else_branch);
+                    return ReturnValue{};
+                }
+
+                else if constexpr (std::is_same_v<T, ast::Model_stmt>)
+                {
+                    auto model_type = std::make_shared<types::Model_type>();
+                    model_type->name = arg.name;
+
+                    for (const auto &[name, type] : arg.fields) model_type->fields[name] = type;
+
+                    ModelData data;
+                    data.signature = model_type;
+
+                    for (const auto &method_ast : arg.methods)
+                    {
+                        types::Function_type method_type;
+                        for (const auto &param : method_ast.parameters) method_type.parameter_types.push_back(param.second);
+                        method_type.return_type = method_ast.return_type;
+
+                        data.methods[method_ast.name] = {method_type, std::make_shared<ast::Function_stmt>(method_ast), environment};
+                        model_type->methods[method_ast.name] = method_type;
+                    }
+
+                    model_data[arg.name] = std::move(data);
+                    return ReturnValue{};
+                }
+
+                else if constexpr (std::is_same_v<T, ast::Print_stmt>)
+                {
+                    auto value_result = evaluate(*arg.expression);
+                    if (!value_result)
+                        return std::unexpected(value_result.error());
+                    std::cout << value_to_string(value_result.value()) << std::endl;
+                    return ReturnValue{};
+                }
+
+                else if constexpr (std::is_same_v<T, ast::Return_stmt>)
+                {
+                    Value value;
+                    if (arg.expression != nullptr)
+                    {
+                        auto value_result = evaluate(*arg.expression);
+                        if (!value_result)
+                            return std::unexpected(value_result.error());
+                        value = value_result.value();
+                    }
+                    return ReturnValue(value);
+                }
+
+                else if constexpr (std::is_same_v<T, ast::Var_stmt>)
+                {
+                    Value value(std::monostate{});
+                    if (arg.initializer != nullptr)
+                    {
+                        auto init_result = evaluate(*arg.initializer);
+                        if (!init_result)
+                            return std::unexpected(init_result.error());
+                        value = init_result.value();
+                    }
+                    auto define_result = environment->define(arg.name, value);
+                    if (!define_result)
+                        return std::unexpected(define_result.error());
+                    return ReturnValue{};
+                }
+
+                else if constexpr (std::is_same_v<T, ast::While_stmt>)
+                {
+                    while (true)
+                    {
+                        auto condition_result = evaluate(*arg.condition);
+                        if (!condition_result)
+                            return std::unexpected(condition_result.error());
+                        if (!isTruthy(condition_result.value()))
+                            break;
+
+                        auto body_result = execute(*arg.body);
+                        if (!body_result)
+                            return body_result;
+                        if (body_result.value().is_return)
+                            return body_result;
+                    }
+                    return ReturnValue{};
+                }
+
+                else if constexpr (std::is_same_v<T, ast::For_stmt>)
+                {
+                    if (arg.initializer != nullptr)
+                    {
+                        auto init_result = execute(*arg.initializer);
+                        if (!init_result)
+                            return init_result;
+                    }
+
+                    while (true)
+                    {
+                        if (arg.condition != nullptr)
+                        {
+                            auto cond_result = evaluate(*arg.condition);
+                            if (!cond_result)
+                                return std::unexpected(cond_result.error());
+                            if (!isTruthy(cond_result.value()))
+                                break;
+                        }
+
+                        auto body_result = execute(*arg.body);
+                        if (!body_result)
+                            return body_result;
+                        if (body_result.value().is_return)
+                            return body_result;
+
+                        if (arg.increment != nullptr)
+                        {
+                            auto inc_result = evaluate(*arg.increment);
+                            if (!inc_result)
+                                return std::unexpected(inc_result.error());
+                        }
+                    }
+                    return ReturnValue{};
+                }
+
+                return std::unexpected(err::msg("Unhandled statement type", "interpreter", 0, 0));
             },
-            *val);
+            stmt.node);
+    }
+
+    Result<ReturnValue> executeBlock(const std::vector<std::unique_ptr<ast::Stmt>> &statements, std::shared_ptr<Environment> block_env)
+    {
+        auto previous = this->environment;
+        this->environment = block_env;
+        auto guard = finally([this, previous]() { this->environment = previous; });
+
+        for (const auto &statement : statements)
+        {
+            auto result = execute(*statement);
+            if (!result || result.value().is_return)
+                return result;
+        }
+        return ReturnValue{};
+    }
+
+    // ========================================================================
+    // Function & Closure Calling
+    // ========================================================================
+
+    Result<Value> call_function(const std::string &name, const std::vector<Value> &arguments, const ast::Source_location &loc)
+    {
+        if (!functions.contains(name))
+            return std::unexpected(err::msg("Undefined function '" + name + "'.", "interpreter", loc.line, loc.column));
+
+        const auto &func_data = functions.at(name);
+        auto new_env = std::make_shared<Environment>(func_data.definition_environment);
+
+        for (size_t i = 0; i < func_data.declaration->parameters.size(); ++i)
+            auto _ = new_env->define(func_data.declaration->parameters[i].first, arguments[i]);
+
+        auto result = executeBlock(std::get<ast::Block_stmt>(func_data.declaration->body->node).statements, new_env);
+        if (!result)
+            return std::unexpected(result.error());
+        if (result.value().is_return)
+            return result.value().value;
+        return Value(std::monostate{});
+    }
+
+    Result<Value> call_closure(size_t id, const std::vector<Value> &arguments, const ast::Source_location &loc)
+    {
+        if (!closures.contains(id))
+            return std::unexpected(err::msg("Invalid or stale closure.", "interpreter", loc.line, loc.column));
+
+        const auto &closure_data = closures.at(id);
+        auto new_env = std::make_shared<Environment>(closure_data.captured_environment);
+
+        for (size_t i = 0; i < closure_data.declaration->parameters.size(); ++i)
+            std::ignore = new_env->define(closure_data.declaration->parameters[i].first, arguments[i]);
+
+        auto result = executeBlock(std::get<ast::Block_stmt>(closure_data.declaration->body->node).statements, new_env);
+        if (!result)
+            return std::unexpected(result.error());
+        if (result.value().is_return)
+            return result.value().value;
+        return Value(std::monostate{});
+    }
+
+    // ========================================================================
+    // Arithmetic Operations
+    // ========================================================================
+
+    Result<Value> add(const Value &l, const Value &r)
+    {
+        if (is_int(l) && is_int(r))
+            return Value(get_int(l) + get_int(r));
+        if (is_float(l) && is_float(r))
+            return Value(get_float(l) + get_float(r));
+        if (is_int(l) && is_float(r))
+            return Value(static_cast<double>(get_int(l)) + get_float(r));
+        if (is_float(l) && is_int(r))
+            return Value(get_float(l) + static_cast<double>(get_int(r)));
+        if (is_string(l) && is_string(r))
+            return Value(get_string(l) + get_string(r));
+        return std::unexpected(err::msg("Operands must be two numbers or two strings for '+'.", "interpreter", 0, 0));
+    }
+
+    Result<Value> subtract(const Value &l, const Value &r)
+    {
+        if (is_int(l) && is_int(r))
+            return Value(get_int(l) - get_int(r));
+        if (is_float(l) && is_float(r))
+            return Value(get_float(l) - get_float(r));
+        if (is_int(l) && is_float(r))
+            return Value(static_cast<double>(get_int(l)) - get_float(r));
+        if (is_float(l) && is_int(r))
+            return Value(get_float(l) - static_cast<double>(get_int(r)));
+        return std::unexpected(err::msg("Operands must be numbers for '-'.", "interpreter", 0, 0));
+    }
+
+    Result<Value> multiply(const Value &l, const Value &r)
+    {
+        if (is_int(l) && is_int(r))
+            return Value(get_int(l) * get_int(r));
+        if (is_float(l) && is_float(r))
+            return Value(get_float(l) * get_float(r));
+        if (is_int(l) && is_float(r))
+            return Value(static_cast<double>(get_int(l)) * get_float(r));
+        if (is_float(l) && is_int(r))
+            return Value(get_float(l) * static_cast<double>(get_int(r)));
+        return std::unexpected(err::msg("Operands must be numbers for '*'.", "interpreter", 0, 0));
+    }
+
+    Result<Value> divide(const Value &l, const Value &r)
+    {
+        if ((is_int(r) && get_int(r) == 0) || (is_float(r) && get_float(r) == 0.0))
+            return std::unexpected(err::msg("Division by zero.", "interpreter", 0, 0));
+
+        if (is_int(l) && is_int(r))
+            return Value(static_cast<double>(get_int(l)) / static_cast<double>(get_int(r)));
+        if (is_float(l) && is_float(r))
+            return Value(get_float(l) / get_float(r));
+        if (is_int(l) && is_float(r))
+            return Value(static_cast<double>(get_int(l)) / get_float(r));
+        if (is_float(l) && is_int(r))
+            return Value(get_float(l) / static_cast<double>(get_int(r)));
+        return std::unexpected(err::msg("Operands must be numbers for '/'.", "interpreter", 0, 0));
+    }
+
+    Result<Value> modulo(const Value &l, const Value &r)
+    {
+        if (!is_int(l) || !is_int(r))
+            return std::unexpected(err::msg("Operands must be integers for '%'.", "interpreter", 0, 0));
+        if (get_int(r) == 0)
+            return std::unexpected(err::msg("Division by zero.", "interpreter", 0, 0));
+        return Value(get_int(l) % get_int(r));
+    }
+
+    Result<Value> negate(const Value &v)
+    {
+        if (is_int(v))
+            return Value(-get_int(v));
+        if (is_float(v))
+            return Value(-get_float(v));
+        return std::unexpected(err::msg("Operand must be a number for '-'.", "interpreter", 0, 0));
+    }
+
+    // ========================================================================
+    // Comparison Operations
+    // ========================================================================
+
+    Result<Value> lessThan(const Value &l, const Value &r)
+    {
+        if (is_int(l) && is_int(r))
+            return Value(get_int(l) < get_int(r));
+        if (is_float(l) && is_float(r))
+            return Value(get_float(l) < get_float(r));
+        if (is_int(l) && is_float(r))
+            return Value(static_cast<double>(get_int(l)) < get_float(r));
+        if (is_float(l) && is_int(r))
+            return Value(get_float(l) < static_cast<double>(get_int(r)));
+        return std::unexpected(err::msg("Operands must be numbers for '<'.", "interpreter", 0, 0));
+    }
+
+    Result<Value> lessThanOrEqual(const Value &l, const Value &r)
+    {
+        if (is_int(l) && is_int(r))
+            return Value(get_int(l) <= get_int(r));
+        if (is_float(l) && is_float(r))
+            return Value(get_float(l) <= get_float(r));
+        if (is_int(l) && is_float(r))
+            return Value(static_cast<double>(get_int(l)) <= get_float(r));
+        if (is_float(l) && is_int(r))
+            return Value(get_float(l) <= static_cast<double>(get_int(r)));
+        return std::unexpected(err::msg("Operands must be numbers for '<='.", "interpreter", 0, 0));
+    }
+
+    Result<Value> greaterThan(const Value &l, const Value &r)
+    {
+        auto result = lessThanOrEqual(l, r);
+        if (!result)
+            return std::unexpected(result.error());
+        return Value(!std::get<bool>(result.value()));
+    }
+
+    Result<Value> greaterThanOrEqual(const Value &l, const Value &r)
+    {
+        auto result = lessThan(l, r);
+        if (!result)
+            return std::unexpected(result.error());
+        return Value(!std::get<bool>(result.value()));
+    }
+
+    // ========================================================================
+    // Utility Methods
+    // ========================================================================
+
+    bool equals(const Value &l, const Value &r) { return l == r; }
+
+    bool isTruthy(const Value &v)
+    {
+        if (is_bool(v))
+            return get_bool(v);
+        if (is_void(v) || is_null(v))
+            return false;
+        if (is_int(v))
+            return get_int(v) != 0;
+        if (is_float(v))
+            return get_float(v) != 0.0;
+        return true;  // Models, functions, closures, and non-empty strings are truthy
+    }
+
+    Result<Value> cast_value(const Value &v, const types::Type &t)
+    {
+        if (types::is_primitive(t) && types::get_primitive_kind(t) == types::Primitive_kind::String)
+            return Value(value_to_string(v));
+        return v;
     }
 };
 

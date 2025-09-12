@@ -15,7 +15,7 @@ enum class TokenType : uint8_t
     Fn, Return, Print, PrintErr, Plus, Minus, Star, Slash, Percent, Equal, NotEqual,
     Less, Greater, LessEqual, GreaterEqual, Assign, LogicalAnd, LogicalOr,
     LogicalNot, Arrow, LeftParen, RightParen, LeftBrace, RightBrace, Semicolon,
-    Comma, Colon, As, Newline, Eof, Invalid
+    Model, Pipe, Dot, Comma, Colon, As, This, Newline, Eof, Invalid
 };
 
 struct Token
@@ -30,7 +30,7 @@ struct Token
 };
 
 static const std::unordered_map<std::string_view, TokenType> token_keywords = {
-    {"let",    TokenType::Let},            {"print_err",   TokenType::PrintErr},
+    {"let",    TokenType::Let},            {"print_err", TokenType::PrintErr},
     {"if",     TokenType::If},             {"else",      TokenType::Else},
     {"while",  TokenType::While},          {"for",       TokenType::For},
     {"fn",     TokenType::Fn},             {"return",    TokenType::Return},
@@ -38,7 +38,8 @@ static const std::unordered_map<std::string_view, TokenType> token_keywords = {
     {"false",  TokenType::Bool},           {"i64",       TokenType::Identifier},
     {"f64",    TokenType::Identifier},     {"bool",      TokenType::Identifier},
     {"string", TokenType::Identifier},     {"as",        TokenType::As},
-    {"arr",    TokenType::Array}
+    {"arr",    TokenType::Array},          {"model",     TokenType::Model},
+    {"this",   TokenType::This}
 };
 
 } // namespace lex

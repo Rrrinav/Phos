@@ -3,9 +3,8 @@
 #include <cstddef>
 #include <memory>
 #include <string>
-#include <utility>
-#include <variant>
 #include <vector>
+#include <variant>
 
 #include "../value/type.hpp"
 #include "../value/value.hpp"
@@ -14,9 +13,6 @@
 namespace phos::ast
 {
 
-// =================================
-// Common metadata
-// =================================
 struct Source_location
 {
     size_t line = 0;
@@ -45,7 +41,6 @@ struct Binary_expr
     std::unique_ptr<struct Expr> left;
     lex::TokenType op;
     std::unique_ptr<struct Expr> right;
-
     types::Type type;
     Source_location loc;
 };
@@ -54,7 +49,6 @@ struct Unary_expr
 {
     lex::TokenType op;
     std::unique_ptr<struct Expr> right;
-
     types::Type type;
     Source_location loc;
 };
@@ -63,7 +57,6 @@ struct Call_expr
 {
     std::string callee;
     std::vector<std::unique_ptr<struct Expr>> arguments;
-
     types::Type type;
     Source_location loc;
 };
@@ -72,7 +65,6 @@ struct Assignment_expr
 {
     std::string name;
     std::unique_ptr<struct Expr> value;
-
     types::Type type;
     Source_location loc;
 };
@@ -80,35 +72,110 @@ struct Assignment_expr
 struct Cast_expr
 {
     std::unique_ptr<struct Expr> expression;
+    types::Type target_type;
+    Source_location loc;
+};
 
-    types::Type type;  // the cast target
+struct Field_access_expr
+{
+    std::unique_ptr<struct Expr> object;
+    std::string field_name;
+    types::Type type;
+    Source_location loc;
+};
+
+struct Field_assignment_expr
+{
+    std::unique_ptr<Expr> object;
+    std::string field_name;
+    std::unique_ptr<Expr> value;
+    types::Type type;
+    Source_location loc;
+};
+
+struct Method_call_expr
+{
+    std::unique_ptr<struct Expr> object;
+    std::string method_name;
+    std::vector<std::unique_ptr<struct Expr>> arguments;
+    types::Type type;
+    Source_location loc;
+};
+
+struct Model_literal_expr
+{
+    std::string model_name;
+    std::vector<std::pair<std::string, std::unique_ptr<struct Expr>>> fields;
+    types::Type type;
+    Source_location loc;
+};
+
+struct Closure_expr
+{
+    std::vector<std::pair<std::string, types::Type>> parameters;
+    types::Type return_type;
+    std::shared_ptr<struct Stmt> body;
+    types::Type type;
     Source_location loc;
 };
 
 // =================================
 // Unified expression wrapper
 // =================================
-using Expr_node = std::variant<
-    Literal_expr,
-    Variable_expr,
-    Binary_expr,
-    Unary_expr,
-    Call_expr,
-    Assignment_expr,
-    Cast_expr
->;
-
 struct Expr
 {
-    Expr_node node;
+    using Node = std::variant<Literal_expr, Variable_expr, Binary_expr, Unary_expr, Call_expr, Assignment_expr, Cast_expr,
+                              Field_access_expr, Method_call_expr, Model_literal_expr, Closure_expr, Field_assignment_expr>;
+
+    Node node;
 };
+
+// Helper functions for accessing expression properties
+inline types::Type &get_type(Expr::Node &node)
+{
+    return std::visit(
+        [](auto &expr) -> types::Type &
+        {
+            using T = std::decay_t<decltype(expr)>;
+            if constexpr (std::is_same_v<T, Cast_expr>)
+                return expr.target_type;
+            else
+                return expr.type;
+        },
+        node);
+}
+
+// const version
+inline const types::Type &get_type(const Expr::Node &node)
+{
+    return std::visit(
+        [](auto const &expr) -> const types::Type &
+        {
+            using T = std::decay_t<decltype(expr)>;
+            if constexpr (std::is_same_v<T, Cast_expr>)
+                return expr.target_type;
+            else
+                return expr.type;
+        },
+        node);
+}
+
+inline Source_location &get_loc(Expr::Node &node)
+{
+    return std::visit([](auto &expr) -> Source_location & { return expr.loc; }, node);
+}
+
+inline Source_location &loc_copy(Expr::Node node)
+{
+    return std::visit([](auto &expr) -> Source_location & { return expr.loc; }, node);
+}
 
 // =================================
 // Statement node types
 // =================================
 struct Return_stmt
 {
-    std::unique_ptr<Expr> expression;  // may be null
+    std::unique_ptr<Expr> expression;
     Source_location loc;
 };
 
@@ -117,17 +184,24 @@ struct Function_stmt
     std::string name;
     std::vector<std::pair<std::string, types::Type>> parameters;
     types::Type return_type;
-    std::unique_ptr<struct Stmt> body;
-
+    std::shared_ptr<struct Stmt> body;
     Source_location loc;
-    types::Type function_type;
+};
+
+struct Model_stmt
+{
+    std::string name;
+    std::vector<std::pair<std::string, types::Type>> fields;
+    std::vector<Function_stmt> methods;
+    Source_location loc;
 };
 
 struct Var_stmt
 {
     std::string name;
     types::Type type;
-    std::unique_ptr<Expr> initializer;  // may be null
+    std::unique_ptr<Expr> initializer;
+    bool type_inferred = false;
     Source_location loc;
 };
 
@@ -160,7 +234,7 @@ struct If_stmt
 {
     std::unique_ptr<Expr> condition;
     std::unique_ptr<struct Stmt> then_branch;
-    std::unique_ptr<struct Stmt> else_branch;  // may be null
+    std::unique_ptr<struct Stmt> else_branch;
     Source_location loc;
 };
 
@@ -171,49 +245,64 @@ struct While_stmt
     Source_location loc;
 };
 
+struct For_stmt
+{
+    std::unique_ptr<struct Stmt> initializer;
+    std::unique_ptr<Expr> condition;
+    std::unique_ptr<Expr> increment;
+    std::unique_ptr<struct Stmt> body;
+    Source_location loc;
+};
+
 // =================================
 // Unified statement wrapper
 // =================================
-using Stmt_node = std::variant<
-    Return_stmt,
-    Function_stmt,
-    Var_stmt,
-    Print_stmt,
-    Expr_stmt,
-    Block_stmt,
-    If_stmt,
-    While_stmt
->;
-
 struct Stmt
 {
-    Stmt_node node;
+    using Node = std::variant<Return_stmt, Function_stmt, Model_stmt, Var_stmt, Print_stmt, Expr_stmt, Block_stmt, If_stmt, While_stmt,
+                              For_stmt>;
+
+    Node node;
 };
 
-types::Type &get_type(Expr_node &node)
+// Helper functions for accessing statement properties
+inline Source_location &get_loc(Stmt::Node &node)
 {
-    return std::visit([](auto &n) -> types::Type &{ return n.type; }, node);
+    return std::visit([](auto &stmt) -> Source_location & { return stmt.loc; }, node);
 }
 
-types::Type get_type_copy(const Expr_node &node)
+inline Source_location loc_copy(const Stmt::Node &node)
 {
-    return std::visit([](auto &n) -> types::Type { return n.type; }, node);
+    return std::visit([](auto &stmt) -> Source_location { return stmt.loc; }, node);
 }
 
-Source_location &loc(Stmt_node &node)
+
+inline types::Type get_type(const Stmt::Node &node)
 {
-    return std::visit([](auto &n) -> Source_location &{ return n.loc; }, node);
-}
-Source_location &loc(Expr_node &node)
-{
-    return std::visit([](auto &n) -> Source_location &{ return n.loc; }, node);
-}
-Source_location loc_copy(const Stmt_node &node)
-{
-    return std::visit([](auto &n) -> Source_location { return n.loc; }, node);
-}
-Source_location loc_copy(const Expr_node &node)
-{
-    return std::visit([](auto &n) -> Source_location { return n.loc; }, node);
+    return std::visit(
+        [](auto const &stmt) -> types::Type
+        {
+            using T = std::decay_t<decltype(stmt)>;
+            if constexpr (std::is_same_v<T, ast::Var_stmt>)
+            {
+                return stmt.type;
+            }
+            else if constexpr (std::is_same_v<T, ast::Return_stmt>)
+            {
+                if (stmt.expression)
+                    return get_type(stmt.expression->node);
+                return types::Primitive_kind::Void;
+            }
+            else if constexpr (std::is_same_v<T, ast::Expr_stmt>)
+            {
+                return get_type(stmt.expression->node);
+            }
+            else
+            {
+                // For Block, If, While, For, etc., the "type" is void.
+                return types::Primitive_kind::Void;
+            }
+        },
+        node);
 }
 }  // namespace phos::ast

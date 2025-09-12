@@ -36,10 +36,15 @@ std::string string_diff(const std::string &got, const std::string &expected)
     return out.str();
 }
 
-void build_interpreter()
+void build_interpreter(bool release = false)
 {
     bld::fs::create_dir_if_not_exists(BIN);
-    if (!bld::execute({"g++", "-o", TARGET, SRC + "main.cpp", "--std=c++23", "-O2"}))
+    bld::Command cmd = {"g++", "-o", TARGET, SRC + "main.cpp", "--std=c++23"};
+
+    if (release) cmd.add_parts("-O2");
+    else cmd.add_parts("-ggdb","-O0");
+
+    if (!bld::execute(cmd))
     {
         bld::log(bld::Log_type::ERR, "Building failed.");
         std::exit(EXIT_FAILURE);
@@ -114,7 +119,8 @@ int main(int argc, char *argv[])
     }
     else
     {
-        build_interpreter();
+        bool rel = cfg["rel"] ? true : false;
+        build_interpreter(rel);
         return 0;
     }
 }

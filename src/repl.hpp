@@ -11,14 +11,14 @@
 // Your existing includes
 #include "lexer/lexer.hpp"
 #include "parser/parser.hpp"
-#include "type-checker/typechecker.hpp"
+#include "type-checker/type-checker.hpp"
 #include "interpreter/interpreter.hpp"
 
 // Utility function to convert values to strings for display
 class Phos_repl
 {
 private:
-    phos::types::Type_checker type_checker;
+    phos::Type_checker type_checker;
     phos::Interpreter interpreter;
     std::vector<std::unique_ptr<phos::ast::Stmt>> global_statements;
 
@@ -120,7 +120,6 @@ private:
             phos::lex::Lexer lexer(source);
             auto tokens = lexer.tokenize();
 
-            // Check for lexer errors
             for (const auto &token : tokens)
             {
                 if (token.type == phos::lex::TokenType::Invalid)
@@ -141,16 +140,19 @@ private:
 
             auto new_statements = std::move(*parse_result);
 
-            // Type check new statements in the context of existing ones
-            type_checker.check(new_statements);
-            if (type_checker.has_errors())
+            std::vector<std::unique_ptr<phos::ast::Stmt>> combined;
+            for (auto &stmt : global_statements) combined.push_back(std::make_unique<phos::ast::Stmt>(std::move(*stmt)));
+            for (auto &stmt : new_statements) combined.push_back(std::make_unique<phos::ast::Stmt>(std::move(*stmt)));
+
+            // Type check in full context
+            auto checked = type_checker.check(combined);
+            if (!checked.empty())
             {
-                auto errors = type_checker.get_errors();
-                for (const auto &e : errors) std::println("{}:{}", filename, e.format());
+                for (auto e : checked) std::println(stderr, "{}:{}", filename, e.format());
                 return false;
             }
 
-            // Execute the new statements
+            // Only interpret the new ones (side effects apply to interpreter state)
             auto interpret_result = interpreter.interpret(new_statements);
             if (!interpret_result)
             {
@@ -158,7 +160,7 @@ private:
                 return false;
             }
 
-            // Add new statements to global context
+            // Add new to globals
             for (auto &stmt : new_statements) global_statements.push_back(std::move(stmt));
 
             return true;
@@ -209,8 +211,8 @@ public:
                 else if (line == "clear")
                 {
                     global_statements.clear();
-                    type_checker = phos::types::Type_checker();  // Reset type checker
-                    interpreter = phos::Interpreter();          // Reset interpreter
+                    type_checker = phos::Type_checker();  // Reset type checker
+                    interpreter = phos::Interpreter();    // Reset interpreter
                     std::println("Cleared all definitions.");
                     continue;
                 }

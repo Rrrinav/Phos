@@ -1,89 +1,126 @@
-(* Program Structure *)
-program = { newline | declaration } ;
+(* ======================================== *)
+(* 1. Program Structure & Declarations      *)
+(* ======================================== *)
 
-declaration = function_declaration
-            | variable_declaration
-            | statement ;
+program              = { declaration | newline } ;
 
-(* Declarations *)
-function_declaration = "fn" identifier "(" [ parameter_list ] ")" [ "->" type ] "{" block_statement "}" ;
+declaration          = function_declaration
+                     | model_declaration
+                     | variable_declaration
+                     | statement ;
 
-parameter_list = parameter { "," parameter } ;
-parameter = identifier ":" type ;
+function_declaration = "fn" identifier "(" [ parameter_list ] ")" [ "->" type ] block_statement ;
 
-variable_declaration = "let" identifier ( [ ":" type ] [ "=" expression ] | ":=" exoression )";" ;
+model_declaration    = "model" identifier "{" { field_declaration | function_declaration } "}" ;
 
-(* Statements *)
-statement = print_statement
-          | block_statement
-          | if_statement
-          | while_statement
-          | for_statement
-          | return_statement
-          | expression_statement ;
+field_declaration    = "let" identifier ":" type [ "=" expression ] ";" ;
 
-print_statement = ( "print" | "print_err" ) "(" expression ")" ";" ;
+variable_declaration = "let" identifier ( ":" type [ "=" expression ] | ":=" expression ) ";" ;
 
-block_statement = "{" { declaration } "}" ;
+parameter_list       = parameter { "," parameter } ;
+parameter            = identifier ":" type ;
 
-if_statement = "if" "(" expression ")" statement [ "else" statement ] ;
 
-while_statement = "while" "(" expression ")" statement ;
+(* ======================================== *)
+(* 2. Statements                            *)
+(* ======================================== *)
 
-for_statement = "for" "(" [ for_initializer ] ";" [ expression ] ";" [ expression ] ")" statement ;
-
-for_initializer = "let" identifier [ ":" type ] [ "=" expression ]
-                | expression ;
-
-return_statement = "return" [ expression ] ";" ;
+statement            = print_statement
+                     | if_statement
+                     | while_statement
+                     | for_statement
+                     | return_statement
+                     | block_statement
+                     | expression_statement ;
 
 expression_statement = expression ";" ;
 
-(* Expressions - Operator Precedence (lowest to highest) *)
-expression = assignment ;
+print_statement      = ( "print" | "print_err" ) "(" expression ")" ";" ;
 
-assignment = logical_or [ "=" assignment ] ;
+block_statement      = "{" { declaration } "}" ;
 
-logical_or = logical_and { "||" logical_and } ;
+if_statement         = "if" "(" expression ")" statement [ "else" statement ] ;
 
-logical_and = equality { "&&" equality } ;
+while_statement      = "while" "(" expression ")" statement ;
 
-equality = comparison { ( "==" | "!=" ) comparison } ;
+for_statement        = "for" "(" ( variable_declaration | expression_statement | ";" )
+                                [ expression ] ";"
+                                [ expression ]
+                              ")" statement ;
 
-comparison = term { ( "<" | "<=" | ">" | ">=" ) term } ;
+return_statement     = "return" [ expression ] ";" ;
 
-term = factor { ( "+" | "-" ) factor } ;
 
-factor = cast { ( "*" | "/" | "%" ) cast } ;
+(* ======================================== *)
+(* 3. Expressions (by precedence)           *)
+(* ======================================== *)
 
-cast = unary { "as" type } ;
+expression   = assignment ;
 
-unary = ( "!" | "-" ) cast
-      | call ;
+assignment   = ( call "." identifier | identifier ) "=" assignment
+             | logical_or ;
 
-call = primary { "(" [ argument_list ] ")" } ;
+logical_or   = logical_and { "||" logical_and } ;
+
+logical_and  = equality { "&&" equality } ;
+
+equality     = comparison { ( "==" | "!=" ) comparison } ;
+
+comparison   = term { ( ">" | ">=" | "<" | "<=" ) term } ;
+
+term         = factor { ( "+" | "-" ) factor } ;
+
+factor       = cast { ( "*" | "/" | "%" ) cast } ;
+
+cast         = unary { "as" type } ;
+
+unary        = ( "!" | "-" ) unary
+             | call ;
+
+call         = primary { call_suffix } ;
+
+call_suffix  = "(" [ argument_list ] ")"
+             | "." identifier ;
+
+primary      = literal
+             | "this"
+             | identifier
+             | model_literal
+             | closure_expression
+             | "(" expression ")" ;
 
 argument_list = expression { "," expression } ;
 
-primary = boolean_literal
-        | integer_literal
-        | float_literal
-        | string_literal
-        | identifier
-        | "(" expression ")" ;
 
-(* Types *)
-type = "int" | "float" | "bool" | "string" | "void" ;
+(* ======================================== *)
+(* 4. Literals & Types                      *)
+(* ======================================== *)
 
-(* Literals and Identifiers *)
-boolean_literal = "true" | "false" ;
-integer_literal = digit { digit } ;
-float_literal = digit { digit } "." digit { digit } ;
-string_literal = '"' { character } '"' ;
-identifier = letter { letter | digit | "_" } ;
+literal       = "true" | "false" | integer | float | string ;
 
-(* Basic Characters *)
-letter = "a" | "b" | ... | "z" | "A" | "B" | ... | "Z" ;
-digit = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
-character = ? any printable character except '"' ? ;
-newline = "\n" | "\r\n" ;
+model_literal = identifier "{" [ field_initializer { "," field_initializer } ] "}" ;
+
+field_initializer = "." identifier "=" expression ;
+
+closure_expression = "|" [ parameter_list ] "|" [ "->" type ] block_statement ;
+
+type                 = primitive_type
+                     | identifier (* For model names *)
+                     | closure_type ;
+
+primitive_type       = "i64" | "f64" | "bool" | "string" | "void" ;
+
+closure_type         = "|" [ type { "," type } ] "|" "->" type ;
+
+
+(* ======================================== *)
+(* 5. Terminals (Lexer Tokens)              *)
+(* ======================================== *)
+
+identifier           = letter { letter | digit | "_" } ;
+integer              = digit { digit } ;
+float                = digit { digit } "." digit { digit } ;
+string               = '"' { any_character_except_quote } '"' ;
+letter               = "a"..."z" | "A"..."Z" ;
+digit                = "0"..."9" ;
+newline              = ? platform-specific newline character(s) ? ;

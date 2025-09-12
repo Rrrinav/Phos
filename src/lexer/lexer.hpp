@@ -63,6 +63,8 @@ private:
                 line++;
                 column = 1;
                 return Token(TokenType::Newline, "\n", 0, line - 1, start_col);
+            case '.':
+                return Token(TokenType::Dot, ".", 0, line, start_col);
             case '(':
                 return Token(TokenType::LeftParen, "(", 0, line, start_col);
             case ')':
@@ -85,8 +87,6 @@ private:
                 return Token(TokenType::Minus, "-", 0, line, start_col);
             case '*':
                 return Token(TokenType::Star, "*", 0, line, start_col);
-            case '/':
-                return Token(TokenType::Slash, "/", 0, line, start_col);
             case '%':
                 return Token(TokenType::Percent, "%", 0, line, start_col);
             case '!':
@@ -112,9 +112,41 @@ private:
             case '|':
                 if (match('|'))
                     return Token(TokenType::LogicalOr, "||", 0, line, start_col);
+                else return Token(TokenType::Pipe, "|", 0, line, start_col);
                 break;
             case '"':
                 return scan_string();
+            case '/':
+                if (match('/'))
+                {
+                    // single-line comment: skip until newline or end
+                    while (peek() != '\n' && !is_at_end()) advance();
+                    return std::nullopt;
+                }
+                else if (match('*'))
+                {
+                    // block comment: skip until */
+                    while (!(peek() == '*' && peek_next() == '/') && !is_at_end())
+                    {
+                        if (peek() == '\n')
+                        {
+                            line++;
+                            column = 1;
+                        }
+                        advance();
+                    }
+                    if (!is_at_end())
+                    {
+                        advance();  // consume '*'
+                        advance();  // consume '/'
+                    }
+                    return std::nullopt;
+                }
+                else
+                {
+                    return Token(TokenType::Slash, "/", 0, line, start_col);
+                }
+
             default:
                 if (std::isdigit(c))
                     return scan_number();
