@@ -1,0 +1,46 @@
+# Phos Built-in Functions and Methods
+
+This document lists all globally available functions and built-in methods
+for primitive types.
+
+==================================
+## Global Functions
+==================================
+
+### len(subject) -> i64
+Returns the length or size of a collection.
+
+- Parameters:
+  - `subject` (string | array): The value to measure.
+- Returns (`i64`):
+  - For a `string`, the number of characters.
+  - For an `array`, the number of elements.
+- Example:
+  let my_array := [10, 20, 30];
+  print(len(my_array)); // Prints 3
+
+### clock() -> f64
+Returns the number of milliseconds that have passed since the Unix epoch.
+
+- Parameters: None
+- Returns (`f64`): A floating-point number representing milliseconds.
+- Example:
+  let start_time := clock();
+
+==================================
+## Built-in Methods
+==================================
+
+### Array Methods
+
+#### array.push(element) -> void
+Appends a new element to the end of an array. This function modifies
+the array in-place.
+
+- Parameters:
+  - `element` (any): The value to add. Its type must match the array's element type.
+- Returns: `void`
+- Example:
+  let nums: i64[] = [1];
+  nums.push(2);
+  print(nums); // Prints [1, 2]

@@ -1,0 +1,50 @@
+# The Phos Type System
+
+Phos is a statically-typed language. This means every variable's type
+must be known at compile time, which helps prevent many common bugs.
+
+==================================
+## Primitive Types
+==================================
+- `i64`: A 64-bit signed integer for whole numbers (e.g., -10, 0, 42).
+- `f64`: A 64-bit floating-point number for decimals (e.g., 3.14, -0.5).
+- `bool`: A boolean value, can be `true` or `false`.
+- `string`: A sequence of characters, written in double quotes (e.g., "hello").
+- `void`: Represents the absence of a value, used as the return type for
+          functions that do not return anything.
+
+==================================
+## Composite Types
+==================================
+
+### Arrays
+An array is an ordered, mutable list of elements of the same type.
+- Syntax: `T[]`, where T is any other type.
+- Example: `let my_numbers: i64[] = [10, 20, 30];`
+
+### Models
+A model is a custom data structure that groups together named fields.
+It is similar to a `struct` or `class` in other languages.
+- Example:
+  model Point {
+    let x: i64;
+    let y: i64;
+  }
+
+### Closures (Function Types)
+Variables can hold functions. The type of a function is defined by its
+parameters and return type.
+- Syntax: `|T1, T2| -> T_Return`
+- Example: `let my_adder: |i64, i64| -> i64 = |a: i64, b: i64| -> i64 { return a + b; };`
+
+==================================
+## Type Inference
+==================================
+Phos supports type inference using the `:=` operator. The compiler will
+deduce the type of the variable from the expression it is initialized with.
+
+- `let x := 10;`      // Inferred as i64
+- `let y := [1, 2];`  // Inferred as i64[]
+
+An explicit type annotation is required for empty arrays or for variables
+that are not initialized.

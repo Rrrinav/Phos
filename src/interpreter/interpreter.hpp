@@ -13,6 +13,7 @@
 #include "../value/value.hpp"
 #include "../error/err.hpp"
 #include "../error/result.hpp"
+#include "./native_globals.hpp"
 
 // RAII guard to restore the environment automatically after scope exits
 template <typename F>
@@ -125,6 +126,9 @@ public:
     {
         globals = std::make_shared<Environment>();
         environment = globals;
+        auto native_functions = native::get_natives();
+        for (auto & a: native_functions)
+            this->define_native(a->name, a->arity, a->signature, a->parameters, a->code);
     }
 
     Result<void> interpret(const std::vector<std::unique_ptr<ast::Stmt>> &statements)
@@ -138,6 +142,20 @@ public:
                 return std::unexpected(err::msg("Cannot return from top-level code.", "interpreter", 0, 0));
         }
         return {};
+    }
+
+    void define_native(const std::string &name, int arity, types::Function_type signature,
+                       std::vector<std::pair<std::string, types::Type>> parameters,
+                       std::function<Result<Value>(const std::vector<Value> &)> code)
+    {
+        auto func_val = std::make_shared<Native_function_value>();
+        func_val->name = name;
+        func_val->arity = arity;
+        func_val->signature = std::move(signature);
+        func_val->parameters = std::move(parameters);
+        func_val->code = std::move(code);
+
+        std::ignore = globals->define(name, Value(func_val));
     }
 
 private:
@@ -291,6 +309,17 @@ private:
                         return call_function(arg.callee, arguments, arg.loc);
                     else if (is_closure(callee_result.value()))
                         return call_closure(get_closure(callee_result.value())->id, arguments, arg.loc);
+                    else if (is_native_function(callee_result.value()))
+                    {
+                        auto native_fn = get_native_function(callee_result.value());
+                        if (native_fn->arity != -1 && arguments.size() != native_fn->arity)
+                        {
+                            return std::unexpected(err::msg("'" + native_fn->name + "' expected " + std::to_string(native_fn->arity) +
+                                                            " arguments but got " + std::to_string(arguments.size()) + ".",
+                                                            "interpreter", arg.loc.line, arg.loc.column));
+                        }
+                        return native_fn->code(arguments);
+                    }
                     else
                         return std::unexpected(
                             err::msg("Can only call functions and closures.", "interpreter", arg.loc.line, arg.loc.column));
@@ -769,11 +798,7 @@ private:
             return Value(get_int(l) < get_int(r));
         if (is_float(l) && is_float(r))
             return Value(get_float(l) < get_float(r));
-        if (is_int(l) && is_float(r))
-            return Value(static_cast<double>(get_int(l)) < get_float(r));
-        if (is_float(l) && is_int(r))
-            return Value(get_float(l) < static_cast<double>(get_int(r)));
-        return std::unexpected(err::msg("Operands must be numbers for '<'.", "interpreter", 0, 0));
+        return std::unexpected(err::msg("Operands must be numbers of same type for '<'. Even the comparison between f64 and i64 is not allowed", "interpreter", 0, 0));
     }
 
     Result<Value> lessThanOrEqual(const Value &l, const Value &r)
@@ -782,27 +807,27 @@ private:
             return Value(get_int(l) <= get_int(r));
         if (is_float(l) && is_float(r))
             return Value(get_float(l) <= get_float(r));
-        if (is_int(l) && is_float(r))
-            return Value(static_cast<double>(get_int(l)) <= get_float(r));
-        if (is_float(l) && is_int(r))
-            return Value(get_float(l) <= static_cast<double>(get_int(r)));
-        return std::unexpected(err::msg("Operands must be numbers for '<='.", "interpreter", 0, 0));
+
+        return std::unexpected(err::msg("Operands must be numbers of same type for '<='. Even the comparison between f64 and i64 is not allowed", "interpreter", 0, 0));
     }
 
     Result<Value> greaterThan(const Value &l, const Value &r)
     {
-        auto result = lessThanOrEqual(l, r);
-        if (!result)
-            return std::unexpected(result.error());
-        return Value(!std::get<bool>(result.value()));
+        if (is_int(l) && is_int(r))
+            return Value(get_int(l) > get_int(r));
+        if (is_float(l) && is_float(r))
+            return Value(get_float(l) > get_float(r));
+        return std::unexpected(err::msg("Operands must be numbers of same type for '>'. Even the comparison between f64 and i64 is not allowed", "interpreter", 0, 0));
     }
 
     Result<Value> greaterThanOrEqual(const Value &l, const Value &r)
     {
-        auto result = lessThan(l, r);
-        if (!result)
-            return std::unexpected(result.error());
-        return Value(!std::get<bool>(result.value()));
+        if (is_int(l) && is_int(r))
+            return Value(get_int(l) >= get_int(r));
+        if (is_float(l) && is_float(r))
+            return Value(get_float(l) >= get_float(r));
+
+        return std::unexpected(err::msg("Operands must be numbers of same type for '>='. Even the comparison between f64 and i64 is not allowed", "interpreter", 0, 0));
     }
 
     // ========================================================================

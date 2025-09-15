@@ -7,9 +7,8 @@
 #include <memory>
 #include <variant>
 
-namespace phos::types
+namespace types
 {
-
 enum class Primitive_kind : uint8_t
 {
     Int,
@@ -25,10 +24,11 @@ struct Function_type;
 struct Closure_type;
 struct Model_type;
 struct Array_type;
+struct Native_function_type;
 
 // Modern type representation using variant
 using Type = std::variant<Primitive_kind, std::shared_ptr<Function_type>, std::shared_ptr<Closure_type>, std::shared_ptr<Model_type>,
-                          std::shared_ptr<Array_type>>;
+                          std::shared_ptr<Array_type>, std::shared_ptr<Native_function_type>>;
 
 struct Function_type
 {
@@ -64,6 +64,12 @@ struct Model_type
     std::unordered_map<std::string, Function_type> methods;
 
     bool operator==(const Model_type &other) const { return name == other.name && fields == other.fields && methods == other.methods; }
+};
+
+struct Native_function_type
+{
+    std::vector<std::vector<Type>> allowed_types;
+    Type return_type;
 };
 
 struct Array_type

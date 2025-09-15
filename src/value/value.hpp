@@ -7,9 +7,11 @@
 #include <cstdint>
 #include <string>
 #include <sstream>
+#include <functional>
 #include <vector>
 
 #include "type.hpp"
+#include "../error/result.hpp"
 
 namespace phos
 {
@@ -20,9 +22,11 @@ struct Function_value;
 struct Closure_value;
 struct Model_value;
 struct Array_value;
+struct Native_function_value;
 
 using Value = std::variant<int64_t, double, bool, std::string, std::shared_ptr<Model_value>, std::shared_ptr<Function_value>,
-                           std::shared_ptr<Closure_value>, std::shared_ptr<Array_value>, std::nullptr_t, std::monostate>;
+                           std::shared_ptr<Closure_value>, std::shared_ptr<Array_value>, std::nullptr_t, std::monostate,
+                           std::shared_ptr<Native_function_value>>;
 
 struct Function_value
 {
@@ -62,6 +66,15 @@ struct Array_value
     std::vector<Value> elements;
 };
 
+struct Native_function_value
+{
+    std::string name;
+    int arity;
+    types::Function_type signature;
+    std::vector<std::pair<std::string, types::Type>> parameters;
+    std::function<Result<Value>(const std::vector<Value>& arguments)> code;
+};
+
 // Helper functions for value manipulation
 inline bool is_int(const Value &value) { return std::holds_alternative<int64_t>(value); }
 inline bool is_float(const Value &value) { return std::holds_alternative<double>(value); }
@@ -73,9 +86,9 @@ inline bool is_closure(const Value &value) { return std::holds_alternative<std::
 inline bool is_array(const Value &value) { return std::holds_alternative<std::shared_ptr<Array_value>>(value); }
 inline bool is_null(const Value &value) { return std::holds_alternative<std::nullptr_t>(value); }
 inline bool is_void(const Value &value) { return std::holds_alternative<std::monostate>(value); }
-inline bool is_callable(const Value &value)
-{
-    return std::holds_alternative<std::shared_ptr<Function_value>>(value) || std::holds_alternative<std::shared_ptr<Closure_value>>(value);
+inline bool is_native_function(const Value &value) { return std::holds_alternative<std::shared_ptr<Native_function_value>>(value); }
+inline bool is_callable(const Value &value) {
+    return is_function(value) || is_closure(value) || is_native_function(value);
 }
 
 inline int64_t get_int(const Value &value) { return std::get<int64_t>(value); }
@@ -86,6 +99,7 @@ inline std::shared_ptr<Model_value> get_model(const Value &value) { return std::
 inline std::shared_ptr<Function_value> get_function(const Value &value) { return std::get<std::shared_ptr<Function_value>>(value); }
 inline std::shared_ptr<Closure_value> get_closure(const Value &value) { return std::get<std::shared_ptr<Closure_value>>(value); }
 inline std::shared_ptr<Array_value> get_array(const Value &value) { return std::get<std::shared_ptr<Array_value>>(value); }
+inline std::shared_ptr<Native_function_value> get_native_function(const Value &value) { return std::get<std::shared_ptr<Native_function_value>>(value); }
 
 std::string value_to_string_impl(const Value &value, int indent_level);
 std::string value_to_string(const Value &value) { return value_to_string_impl(value, 0); }
