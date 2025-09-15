@@ -61,6 +61,16 @@ public:
             print_str("null");
         }
     }
+    void print_expr_ptr(const std::shared_ptr<Expr> &expr)
+    {
+        if (expr)
+            print_expr(*expr);
+        else
+        {
+            indent();
+            print_str("null");
+        }
+    }
 
     void print_stmt_ptr(const std::unique_ptr<Stmt> &stmt)
     {
@@ -375,6 +385,84 @@ private:
                        indent();
                        print_str("Expression");
                        with_child(false, [&] { print_expr_ptr(node.expression); });
+                   });
+    }
+    void print_expr_node(const Array_literal_expr &node)
+    {
+        indent();
+        print_str("Array Literal");
+        with_child(true,
+                   [&]
+                   {
+                       indent();
+                       print_str("Type: " + types::type_to_string(node.type));
+                   });
+        with_child(false,
+                   [&]
+                   {
+                       indent();
+                       print_str("Elements");
+                       for (size_t i = 0; i < node.elements.size(); ++i)
+                           with_child(i + 1 < node.elements.size(), [&] { print_expr_ptr(node.elements[i]); });
+                   });
+    }
+
+    void print_expr_node(const Array_access_expr &node)
+    {
+        indent();
+        print_str("Array Access");
+        with_child(true,
+                   [&]
+                   {
+                       indent();
+                       print_str("Type: " + types::type_to_string(node.type));
+                   });
+        with_child(true,
+                   [&]
+                   {
+                       indent();
+                       print_str("Array");
+                       with_child(false, [&] { print_expr_ptr(node.array); });
+                   });
+        with_child(false,
+                   [&]
+                   {
+                       indent();
+                       print_str("Index");
+                       with_child(false, [&] { print_expr_ptr(node.index); });
+                   });
+    }
+
+    void print_expr_node(const Array_assignment_expr &node)
+    {
+        indent();
+        print_str("Array Assignment");
+        with_child(true,
+                   [&]
+                   {
+                       indent();
+                       print_str("Type: " + types::type_to_string(node.type));
+                   });
+        with_child(true,
+                   [&]
+                   {
+                       indent();
+                       print_str("Array");
+                       with_child(false, [&] { print_expr_ptr(node.array); });
+                   });
+        with_child(true,
+                   [&]
+                   {
+                       indent();
+                       print_str("Index");
+                       with_child(false, [&] { print_expr_ptr(node.index); });
+                   });
+        with_child(false,
+                   [&]
+                   {
+                       indent();
+                       print_str("Value");
+                       with_child(false, [&] { print_expr_ptr(node.value); });
                    });
     }
 

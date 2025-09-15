@@ -620,8 +620,8 @@ private:
             return std::unexpected(body_result.error());
 
         return std::make_unique<ast::Stmt>(ast::Stmt{ast::While_stmt{.condition = std::move(condition_result.value()),
-                                                                       .body = std::move(body_result.value()),
-                                                                       .loc = {previous().line, previous().column}}});
+                                                                     .body = std::move(body_result.value()),
+                                                                     .loc = {previous().line, previous().column}}});
     }
 
     Result<std::unique_ptr<ast::Stmt>> for_statement()
@@ -772,6 +772,14 @@ private:
                 return std::make_unique<ast::Expr>(ast::Expr{ast::Field_assignment_expr{.object = std::move(field_access_expr->object),
                                                                                         .field_name = field_access_expr->field_name,
                                                                                         .value = std::move(value_result.value()),
+                                                                                        .loc = {equals.line, equals.column}}});
+            }
+            else if (auto *array_access_expr = std::get_if<ast::Array_access_expr>(&expr->node))
+            {
+                return std::make_unique<ast::Expr>(ast::Expr{ast::Array_assignment_expr{.array = std::move(array_access_expr->array),
+                                                                                        .index = std::move(array_access_expr->index),
+                                                                                        .value = std::move(value_result.value()),
+                                                                                        .type = types::Type(types::Primitive_kind::Void),
                                                                                         .loc = {equals.line, equals.column}}});
             }
 
@@ -959,8 +967,7 @@ private:
 
             auto loc = ast::get_loc(expr->node);
             auto cast_expr = std::make_unique<ast::Expr>();
-            cast_expr->node =
-                ast::Cast_expr{.expression = std::move(expr), .target_type = target_type_result.value(), .loc = loc};
+            cast_expr->node = ast::Cast_expr{.expression = std::move(expr), .target_type = target_type_result.value(), .loc = loc};
             expr = std::move(cast_expr);
         }
         return expr;
@@ -1017,7 +1024,9 @@ private:
                 if (auto *var_expr = std::get_if<ast::Variable_expr>(&expr->node))
                 {
                     auto func_it = function_types.find(var_expr->name);
-                    types::Type return_type = (func_it != function_types.end()) ? func_it->second : types::Type(types::Primitive_kind::Void);
+                    types::Type return_type =
+                        (func_it != function_types.end()) ? func_it->second : types::Type(types::Primitive_kind::Void);
+
                     auto call_expr = std::make_unique<ast::Expr>();
                     call_expr->node = ast::Call_expr{.callee = var_expr->name,
                                                      .arguments = std::move(arguments),
@@ -1029,6 +1038,24 @@ private:
                 {
                     return std::unexpected(create_error(peek(), "Invalid function call target."));
                 }
+            }
+            else if (match({lex::TokenType::LeftBracket}))
+            {
+                auto index_result = expression();
+                if (!index_result)
+                    return std::unexpected(index_result.error());
+
+                auto right_bracket_result = consume(lex::TokenType::RightBracket, "Expect ']' after array index");
+                if (!right_bracket_result)
+                    return std::unexpected(right_bracket_result.error());
+
+                auto array_access = std::make_unique<ast::Expr>();
+                array_access->node =
+                    ast::Array_access_expr{.array = std::move(expr),
+                                           .index = std::move(index_result.value()),
+                                           .type = types::Type(types::Primitive_kind::Void),
+                                           .loc = {right_bracket_result.value().line, right_bracket_result.value().column}};
+                expr = std::move(array_access);
             }
             else if (match({lex::TokenType::Dot}))
             {
@@ -1071,9 +1098,9 @@ private:
                     // Field access
                     auto field_access = std::make_unique<ast::Expr>();
                     field_access->node = ast::Field_access_expr{.object = std::move(expr),
-                                                               .field_name = name_result.value().lexeme,
-                                                               .type = types::Type(types::Primitive_kind::Void),
-                                                               .loc = {name_result.value().line, name_result.value().column}};
+                                                                .field_name = name_result.value().lexeme,
+                                                                .type = types::Type(types::Primitive_kind::Void),
+                                                                .loc = {name_result.value().line, name_result.value().column}};
                     expr = std::move(field_access);
                 }
             }
@@ -1106,6 +1133,9 @@ private:
 
         if (match({lex::TokenType::Pipe}))
             return parse_closure_expression();
+
+        if (match({lex::TokenType::LeftBracket}))
+            return parse_array_literal();
 
         if (match({lex::TokenType::Bool}))
         {
@@ -1152,7 +1182,8 @@ private:
 
             types::Type t = types::Type(types::Primitive_kind::Void);  // Default
             auto it = variable_types.find(name);
-            if (it != variable_types.end()) t = it->second;
+            if (it != variable_types.end())
+                t = it->second;
 
             auto expr = std::make_unique<ast::Expr>();
             expr->node = ast::Variable_expr{.name = name, .type = t, .loc = {previous().line, previous().column}};
@@ -1208,9 +1239,6 @@ private:
         types::Type return_type = types::Type(types::Primitive_kind::Void);
         if (match({lex::TokenType::Arrow}))
         {
-            // ========================================================================= //
-            // FIX 2: Allow omitting the return type in a closure literal, e.g. `-> {`
-            // ========================================================================= //
             if (peek().type != lex::TokenType::LeftBrace)
             {
                 auto return_type_result = parse_type();
@@ -1238,10 +1266,38 @@ private:
 
         auto expr = std::make_unique<ast::Expr>();
         expr->node = ast::Closure_expr{.parameters = std::move(parameters),
-                                        .return_type = return_type,
-                                        .body = std::shared_ptr<ast::Stmt>(std::move(body_result.value())),
-                                        .type = types::Type{closure_type},
-                                        .loc = {line, column}};
+                                       .return_type = return_type,
+                                       .body = std::shared_ptr<ast::Stmt>(std::move(body_result.value())),
+                                       .type = types::Type{closure_type},
+                                       .loc = {line, column}};
+
+        return expr;
+    }
+
+    Result<std::unique_ptr<ast::Expr>> parse_array_literal()
+    {
+        size_t line = previous().line;
+        size_t column = previous().column;
+
+        std::vector<std::shared_ptr<ast::Expr>> elements;
+
+        if (!check(lex::TokenType::RightBracket))
+        {
+            do {
+                auto element_result = expression();
+                if (!element_result)
+                    return std::unexpected(element_result.error());
+                elements.push_back(std::move(element_result.value()));
+            } while (match({lex::TokenType::Comma}));
+        }
+
+        auto right_bracket_result = consume(lex::TokenType::RightBracket, "Expect ']' after array elements");
+        if (!right_bracket_result)
+            return std::unexpected(right_bracket_result.error());
+
+        auto expr = std::make_unique<ast::Expr>();
+        expr->node = ast::Array_literal_expr{
+            .elements = std::move(elements), .type = types::Type(types::Primitive_kind::Void), .loc = {line, column}};
 
         return expr;
     }
@@ -1337,23 +1393,38 @@ private:
         if (match({lex::TokenType::Identifier}))
         {
             std::string type_name = previous().lexeme;
+
+            types::Type base_type;
             if (type_name == "i64")
-                return types::Type(types::Primitive_kind::Int);
-            if (type_name == "f64")
-                return types::Type(types::Primitive_kind::Float);
-            if (type_name == "bool")
-                return types::Type(types::Primitive_kind::Bool);
-            if (type_name == "string")
-                return types::Type(types::Primitive_kind::String);
-            if (type_name == "void")
-                return types::Type(types::Primitive_kind::Void);
+                base_type = types::Type(types::Primitive_kind::Int);
+            else if (type_name == "f64")
+                base_type = types::Type(types::Primitive_kind::Float);
+            else if (type_name == "bool")
+                base_type = types::Type(types::Primitive_kind::Bool);
+            else if (type_name == "string")
+                base_type = types::Type(types::Primitive_kind::String);
+            else if (type_name == "void")
+                base_type = types::Type(types::Primitive_kind::Void);
+            else
+            {
+                auto model_it = model_types.find(type_name);
+                if (model_it != model_types.end())
+                    base_type = model_it->second;
+                else
+                    return std::unexpected(create_error(previous(), "Unknown type: " + type_name));
+            }
 
-            auto model_it = model_types.find(type_name);
-            if (model_it != model_types.end())
-                return model_it->second;
+            if (match({lex::TokenType::LeftBracket}))
+            {
+                if (match({lex::TokenType::RightBracket}))
+                    return types::Type(std::make_shared<types::Array_type>(base_type));
+                else
+                    return std::unexpected(create_error(peek(), "Fixed-size arrays not yet supported"));
+            }
 
-            return std::unexpected(create_error(previous(), "Unknown type: " + type_name));
+            return base_type;
         }
+
         return std::unexpected(create_error(peek(), "Expect type"));
     }
 };

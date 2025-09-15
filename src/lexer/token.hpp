@@ -14,7 +14,7 @@ enum class TokenType : uint8_t
     Integer64, Float64, String, Bool, Array, Identifier, Let, If, Else, While, For,
     Fn, Return, Print, PrintErr, Plus, Minus, Star, Slash, Percent, Equal, NotEqual,
     Less, Greater, LessEqual, GreaterEqual, Assign, LogicalAnd, LogicalOr,
-    LogicalNot, Arrow, LeftParen, RightParen, LeftBrace, RightBrace, Semicolon,
+    LogicalNot, Arrow, LeftParen, RightParen, LeftBrace, RightBrace, LeftBracket, RightBracket, Semicolon,
     Model, Pipe, Dot, Comma, Colon, As, This, Newline, Eof, Invalid
 };
 

@@ -119,13 +119,38 @@ struct Closure_expr
     Source_location loc;
 };
 
+struct Array_literal_expr
+{
+    std::vector<std::shared_ptr<Expr>> elements;
+    types::Type type;
+    Source_location loc;
+};
+
+struct Array_access_expr
+{
+    std::shared_ptr<Expr> array;
+    std::shared_ptr<Expr> index;
+    types::Type type;
+    Source_location loc;
+};
+
+struct Array_assignment_expr
+{
+    std::shared_ptr<Expr> array;
+    std::shared_ptr<Expr> index;
+    std::shared_ptr<Expr> value;
+    types::Type type;
+    Source_location loc;
+};
+
 // =================================
 // Unified expression wrapper
 // =================================
 struct Expr
 {
     using Node = std::variant<Literal_expr, Variable_expr, Binary_expr, Unary_expr, Call_expr, Assignment_expr, Cast_expr,
-                              Field_access_expr, Method_call_expr, Model_literal_expr, Closure_expr, Field_assignment_expr>;
+                              Field_access_expr, Method_call_expr, Model_literal_expr, Closure_expr, Field_assignment_expr,
+                              Array_literal_expr, Array_assignment_expr, Array_access_expr>;
 
     Node node;
 };
