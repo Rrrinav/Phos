@@ -1,0 +1,4 @@
+----------- AST -------------
+"--ast-dump"    :  Dump (print) the parsed AST
+"--no-unicode"  :  Disable Unicode tree symbols in AST print
+"--print-only"  :  Only print AST, don’t run interpreter
