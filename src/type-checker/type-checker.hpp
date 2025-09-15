@@ -438,7 +438,6 @@ inline bool Type_checker::is_compatible(const types::Type &a, const types::Type 
             return (*a_closure)->function_type == (*b_closure)->function_type;
     }
 
-    // NEW: Check for array compatibility
     if (const auto *a_array = std::get_if<std::shared_ptr<types::Array_type>>(&a))
     {
         if (const auto *b_array = std::get_if<std::shared_ptr<types::Array_type>>(&b))
@@ -570,12 +569,38 @@ inline void Type_checker::check_stmt_node(ast::Var_stmt &stmt)
             init_type = res.value();
         else
             return;
+
+        if (!stmt.type_inferred && is_array(stmt.type) && is_array(init_type))
+        {
+            const auto& init_array_type = std::get<std::shared_ptr<types::Array_type>>(init_type);
+            if (init_array_type->element_type == types::Type(types::Primitive_kind::Void))
+            {
+                if (auto* array_lit = std::get_if<ast::Array_literal_expr>(&stmt.initializer->node)) {
+                    array_lit->type = stmt.type;
+                }
+                init_type = stmt.type;
+            }
+        }
     }
+
     if (stmt.type_inferred)
+    {
+        if (is_array(init_type))
+        {
+            const auto& array_type = std::get<std::shared_ptr<types::Array_type>>(init_type);
+            if (array_type->element_type == types::Type(types::Primitive_kind::Void))
+            {
+                type_error(stmt.loc, "Cannot infer type of an empty array initializer. Please provide an explicit type.");
+            }
+        }
         stmt.type = init_type;
+    }
     else if (stmt.initializer && !is_compatible(stmt.type, init_type))
+    {
         type_error(stmt.loc, std::format("Initializer type does not match variable's declared type.\n    Expected: {}\n    Got:      {}",
                                          types::type_to_string(stmt.type), types::type_to_string(init_type)));
+    }
+
     declare(stmt.name, stmt.type, stmt.loc);
 }
 inline void Type_checker::check_stmt_node(ast::While_stmt &stmt)

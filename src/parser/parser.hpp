@@ -315,12 +315,20 @@ private:
         if (!right_brace_result)
             return std::unexpected(right_brace_result.error());
 
+        if (parsing_fields)
+        {
+            model_type.name = name.lexeme;
+            for (const auto &field : fields) model_type.fields[field.first] = field.second;
+            model_types[name.lexeme] = types::Type(std::make_shared<types::Model_type>(model_type));
+        }
+
         for (const auto &method : methods)
         {
             types::Function_type func_type;
             for (const auto &param : method.parameters) func_type.parameter_types.push_back(param.second);
             func_type.return_type = method.return_type;
-            model_type.methods[method.name] = func_type;
+            // This is safe because model_type is now guaranteed to exist in the map
+            std::get<std::shared_ptr<types::Model_type>>(model_types[name.lexeme])->methods[method.name] = func_type;
         }
 
         current_model.clear();

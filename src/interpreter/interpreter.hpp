@@ -151,7 +151,68 @@ private:
             [this](auto &&arg) -> Result<Value>
             {
                 using T = std::decay_t<decltype(arg)>;
+                if constexpr (std::is_same_v<T, ast::Array_literal_expr>)
+                {
+                    auto array_val = std::make_shared<Array_value>();
+                    for (const auto &elem_expr : arg.elements)
+                    {
+                        auto elem_result = evaluate(*elem_expr);
+                        if (!elem_result)
+                            return elem_result;
+                        array_val->elements.push_back(elem_result.value());
+                    }
+                    return Value(array_val);
+                }
+                else if constexpr (std::is_same_v<T, ast::Array_access_expr>)
+                {
+                    auto array_res = evaluate(*arg.array);
+                    if (!array_res)
+                        return array_res;
+                    auto index_res = evaluate(*arg.index);
+                    if (!index_res)
+                        return index_res;
 
+                    if (!is_array(array_res.value()))
+                        return std::unexpected(
+                            err::msg("Can only use subscript '[]' on arrays.", "interpreter", arg.loc.line, arg.loc.column));
+                    if (!is_int(index_res.value()))
+                        return std::unexpected(err::msg("Array index must be an integer.", "interpreter", arg.loc.line, arg.loc.column));
+
+                    auto array_val = get_array(array_res.value());
+                    auto index = get_int(index_res.value());
+
+                    if (index < 0 || static_cast<size_t>(index) >= array_val->elements.size())
+                        return std::unexpected(err::msg("Array index out of bounds.", "interpreter", arg.loc.line, arg.loc.column));
+
+                    return array_val->elements.at(index);
+                }
+                else if constexpr (std::is_same_v<T, ast::Array_assignment_expr>)
+                {
+                    auto array_res = evaluate(*arg.array);
+                    if (!array_res)
+                        return array_res;
+                    auto index_res = evaluate(*arg.index);
+                    if (!index_res)
+                        return index_res;
+                    auto value_res = evaluate(*arg.value);
+                    if (!value_res)
+                        return value_res;
+
+                    if (!is_array(array_res.value()))
+                        return std::unexpected(
+                            err::msg("Can only use subscript '[]' on arrays for assignment.", "interpreter", arg.loc.line, arg.loc.column));
+                    if (!is_int(index_res.value()))
+                        return std::unexpected(err::msg("Array index must be an integer.", "interpreter", arg.loc.line, arg.loc.column));
+
+                    auto array_val = get_array(array_res.value());
+                    auto index = get_int(index_res.value());
+
+                    if (index < 0 || static_cast<size_t>(index) >= array_val->elements.size())
+                        return std::unexpected(err::msg("Array index out of bounds.", "interpreter", arg.loc.line, arg.loc.column));
+
+                    array_val->elements[index] = value_res.value();
+                    return value_res.value();
+                }
                 if constexpr (std::is_same_v<T, ast::Assignment_expr>)
                 {
                     auto value_result = evaluate(*arg.value);
@@ -253,8 +314,8 @@ private:
 
                     closures[id] = ClosureData{id, closure_type_info, std::make_shared<ast::Closure_expr>(arg), environment};
 
-                    auto func_val = std::make_shared<FunctionValue>(closure_type_info.function_type, arg.parameters, environment);
-                    auto closure_val = std::make_shared<ClosureValue>(func_val, std::unordered_map<std::string, Value>{});
+                    auto func_val = std::make_shared<Function_value>(closure_type_info.function_type, arg.parameters, environment);
+                    auto closure_val = std::make_shared<Closure_value>(func_val, std::unordered_map<std::string, Value>{});
                     closure_val->id = id;
                     return Value(closure_val);
                 }
@@ -349,7 +410,7 @@ private:
                             err::msg("Model type '" + arg.model_name + "' is not defined.", "interpreter", arg.loc.line, arg.loc.column));
 
                     auto model_type = model_data.at(arg.model_name).signature;
-                    auto instance = std::make_shared<ModelValue>(*model_type, std::unordered_map<std::string, Value>{});
+                    auto instance = std::make_shared<Model_value>(*model_type, std::unordered_map<std::string, Value>{});
 
                     for (const auto &[name, expr] : arg.fields)
                     {
@@ -420,7 +481,7 @@ private:
 
                     functions[arg.name] = {func_type, std::make_shared<ast::Function_stmt>(arg), environment};
 
-                    auto func_val = std::make_shared<FunctionValue>(func_type, arg.parameters, environment);
+                    auto func_val = std::make_shared<Function_value>(func_type, arg.parameters, environment);
                     auto define_result = environment->define(arg.name, Value(func_val));
                     if (!define_result)
                         return std::unexpected(define_result.error());
