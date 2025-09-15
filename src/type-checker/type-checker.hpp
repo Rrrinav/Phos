@@ -59,6 +59,10 @@ private:
     void visit(ast::Method_call_expr &expr);
     void visit(ast::Model_literal_expr &expr);
     void visit(ast::Unary_expr &expr);
+    // NEW: Array visitors
+    void visit(ast::Array_literal_expr &expr);
+    void visit(ast::Array_access_expr &expr);
+    void visit(ast::Array_assignment_expr &expr);
 };
 
 // ===================================================================
@@ -108,6 +112,8 @@ private:
     bool is_numeric(const types::Type &type) const;
     bool is_boolean(const types::Type &type) const;
     bool is_string(const types::Type &type) const;
+    // NEW: Array type check
+    bool is_array(const types::Type &type) const;
 
     void collect_signatures(const std::vector<std::unique_ptr<ast::Stmt>> &statements);
     void check_stmt(ast::Stmt &stmt);
@@ -136,6 +142,10 @@ private:
     Result<types::Type> check_expr_node(ast::Model_literal_expr &expr);
     Result<types::Type> check_expr_node(ast::Unary_expr &expr);
     Result<types::Type> check_expr_node(ast::Variable_expr &expr);
+    // NEW: Array expression checkers
+    Result<types::Type> check_expr_node(ast::Array_literal_expr &expr);
+    Result<types::Type> check_expr_node(ast::Array_access_expr &expr);
+    Result<types::Type> check_expr_node(ast::Array_assignment_expr &expr);
 };
 
 // ===================================================================
@@ -172,6 +182,12 @@ inline void TypeResolver::resolve_type(types::Type &type)
     {
         for (auto &param_type : (*closure_type_ptr)->function_type.parameter_types) resolve_type(param_type);
         resolve_type((*closure_type_ptr)->function_type.return_type);
+    }
+    // NEW: Recursively resolve array element types
+    else if (auto *array_type_ptr = std::get_if<std::shared_ptr<types::Array_type>>(&type))
+    {
+        if (*array_type_ptr)
+            resolve_type((*array_type_ptr)->element_type);
     }
 }
 inline void TypeResolver::visit(ast::Function_stmt &stmt)
@@ -301,6 +317,29 @@ inline void TypeResolver::visit(ast::Unary_expr &expr)
     if (expr.right)
         resolve_expr(*expr.right);
 }
+// NEW: Array resolver implementations
+inline void TypeResolver::visit(ast::Array_literal_expr &expr)
+{
+    for (auto &element : expr.elements)
+        if (element)
+            resolve_expr(*element);
+}
+inline void TypeResolver::visit(ast::Array_access_expr &expr)
+{
+    if (expr.array)
+        resolve_expr(*expr.array);
+    if (expr.index)
+        resolve_expr(*expr.index);
+}
+inline void TypeResolver::visit(ast::Array_assignment_expr &expr)
+{
+    if (expr.array)
+        resolve_expr(*expr.array);
+    if (expr.index)
+        resolve_expr(*expr.index);
+    if (expr.value)
+        resolve_expr(*expr.value);
+}
 
 // ===================================================================
 // TYPE CHECKER IMPLEMENTATIONS
@@ -393,24 +432,22 @@ inline Result<types::Type> Type_checker::lookup(const std::string &name, const a
 
 inline bool Type_checker::is_compatible(const types::Type &a, const types::Type &b) const
 {
-    // Rule: Two closures are compatible if their function signatures match.
     if (const auto *a_closure = std::get_if<std::shared_ptr<types::Closure_type>>(&a))
     {
         if (const auto *b_closure = std::get_if<std::shared_ptr<types::Closure_type>>(&b))
-        {
             return (*a_closure)->function_type == (*b_closure)->function_type;
-        }
     }
 
-    // For models, after the resolution pass, pointer comparison is correct because
-    // all instances of the same model type will point to the same canonical signature object.
-    if (std::holds_alternative<std::shared_ptr<types::Model_type>>(a) &&
-        std::holds_alternative<std::shared_ptr<types::Model_type>>(b))
+    // NEW: Check for array compatibility
+    if (const auto *a_array = std::get_if<std::shared_ptr<types::Array_type>>(&a))
     {
-        return a == b;
+        if (const auto *b_array = std::get_if<std::shared_ptr<types::Array_type>>(&b))
+            return is_compatible((*a_array)->element_type, (*b_array)->element_type);
     }
 
-    // Fallback to strict equality for all other simple types (bool, string, etc.).
+    if (std::holds_alternative<std::shared_ptr<types::Model_type>>(a) && std::holds_alternative<std::shared_ptr<types::Model_type>>(b))
+        return a == b;
+
     return a == b;
 }
 
@@ -441,6 +478,11 @@ inline bool Type_checker::is_string(const types::Type &type) const
     if (const auto *prim = std::get_if<types::Primitive_kind>(&type))
         return *prim == types::Primitive_kind::String;
     return false;
+}
+// NEW: Array type checker implementation
+inline bool Type_checker::is_array(const types::Type &type) const
+{
+    return std::holds_alternative<std::shared_ptr<types::Array_type>>(type);
 }
 
 inline void Type_checker::check_stmt(ast::Stmt &stmt)
@@ -577,7 +619,7 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr)
     auto left = check_expr(*expr.left);
     auto right = check_expr(*expr.right);
     if (!left || !right)
-        return types::Primitive_kind::Void;
+        return expr.type = types::Primitive_kind::Void;  // MODIFIED
     types::Type left_type = left.value();
     types::Type right_type = right.value();
     switch (expr.op)
@@ -629,7 +671,7 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr)
 {
     auto callee_res = lookup(expr.callee, expr.loc);
     if (!callee_res)
-        return callee_res;
+        return expr.type = types::Primitive_kind::Void;  // MODIFIED
 
     types::Type callee_type = callee_res.value();
     types::Function_type *signature = nullptr;
@@ -662,6 +704,8 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr)
 }
 inline Result<types::Type> Type_checker::check_expr_node(ast::Cast_expr &expr)
 {
+    // MODIFIED: Ensure type is assigned to the expression node.
+    // This assumes `ast::Cast_expr` has a `type` member like other expressions.
     std::ignore = check_expr(*expr.expression);
     return expr.target_type = expr.target_type;
 }
@@ -684,7 +728,7 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Field_access_expr 
 {
     auto obj_type = check_expr(*expr.object);
     if (!obj_type)
-        return obj_type;
+        return expr.type = types::Primitive_kind::Void;  // MODIFIED
     if (auto *mt = std::get_if<std::shared_ptr<types::Model_type>>(&obj_type.value()))
     {
         if ((*mt)->fields.contains(expr.field_name))
@@ -709,10 +753,10 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Field_assignment_e
     auto field_type = check_expr_node(field_access_temp);
     expr.object = std::move(field_access_temp.object);
     if (!field_type)
-        return field_type;
+        return expr.type = types::Primitive_kind::Void;  // MODIFIED
     auto val_type = check_expr(*expr.value);
     if (!val_type)
-        return val_type;
+        return expr.type = types::Primitive_kind::Void;  // MODIFIED
     if (!is_compatible(field_type.value(), val_type.value()))
         type_error(expr.loc, "Assignment type mismatch for field");
     return expr.type = field_type.value();
@@ -724,7 +768,7 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &
     auto callee_type = check_expr_node(field_access);
     expr.object = std::move(field_access.object);
     if (!callee_type)
-        return callee_type;
+        return expr.type = types::Primitive_kind::Void;  // MODIFIED
 
     if (auto *ft = std::get_if<std::shared_ptr<types::Function_type>>(&callee_type.value()))
     {
@@ -773,7 +817,7 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Unary_expr &expr)
 {
     auto right_type = check_expr(*expr.right);
     if (!right_type)
-        return right_type;
+        return expr.type = types::Primitive_kind::Void;  // MODIFIED
     switch (expr.op)
     {
         case lex::TokenType::Minus:
@@ -802,8 +846,91 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Variable_expr &exp
     }
     auto type_res = lookup(expr.name, expr.loc);
     if (!type_res)
-        return type_res;
+        return expr.type = types::Primitive_kind::Void;  // MODIFIED
     return expr.type = type_res.value();
+}
+
+// NEW: Array expression checker implementations
+inline Result<types::Type> Type_checker::check_expr_node(ast::Array_literal_expr &expr)
+{
+    if (expr.elements.empty())
+    {
+        // Type of an empty array literal cannot be inferred without context.
+        // This is often resolved during variable declaration type checking.
+        // For now, we'll mark it as an error here or assign a special "any" type.
+        // Let's create a void array type for now.
+        auto element_type = types::Type(types::Primitive_kind::Void);
+        return expr.type = types::Type(std::make_shared<types::Array_type>(element_type));
+    }
+
+    auto first_element_type_res = check_expr(*expr.elements[0]);
+    if (!first_element_type_res)
+        return expr.type = types::Primitive_kind::Void;
+    types::Type common_type = first_element_type_res.value();
+
+    for (size_t i = 1; i < expr.elements.size(); ++i)
+    {
+        auto element_type_res = check_expr(*expr.elements[i]);
+        if (!element_type_res)
+            return expr.type = types::Primitive_kind::Void;
+
+        if (!is_compatible(common_type, element_type_res.value()))
+        {
+            type_error(ast::get_loc(expr.elements[i]->node), "Array elements must have a consistent type.");
+            // In case of error, create a void array type to prevent further cascading errors.
+            auto err_element_type = types::Type(types::Primitive_kind::Void);
+            return expr.type = types::Type(std::make_shared<types::Array_type>(err_element_type));
+        }
+    }
+
+    return expr.type = types::Type(std::make_shared<types::Array_type>(common_type));
+}
+
+inline Result<types::Type> Type_checker::check_expr_node(ast::Array_access_expr &expr)
+{
+    auto array_type_res = check_expr(*expr.array);
+    if (!array_type_res)
+        return expr.type = types::Primitive_kind::Void;
+
+    if (!is_array(array_type_res.value()))
+    {
+        type_error(expr.loc, "Subscript operator '[]' can only be used on arrays.");
+        return expr.type = types::Primitive_kind::Void;
+    }
+
+    auto index_type_res = check_expr(*expr.index);
+    if (index_type_res && index_type_res.value() != types::Type(types::Primitive_kind::Int))
+        type_error(ast::get_loc(expr.index->node), "Array index must be an integer.");
+
+    const auto &array_type = std::get<std::shared_ptr<types::Array_type>>(array_type_res.value());
+    return expr.type = array_type->element_type;
+}
+
+inline Result<types::Type> Type_checker::check_expr_node(ast::Array_assignment_expr &expr)
+{
+    auto array_type_res = check_expr(*expr.array);
+    if (!array_type_res)
+        return expr.type = types::Primitive_kind::Void;
+
+    if (!is_array(array_type_res.value()))
+    {
+        type_error(expr.loc, "Subscript operator '[]' can only be used on arrays for assignment.");
+        return expr.type = types::Primitive_kind::Void;
+    }
+
+    auto index_type_res = check_expr(*expr.index);
+    if (index_type_res && index_type_res.value() != types::Type(types::Primitive_kind::Int))
+        type_error(ast::get_loc(expr.index->node), "Array index must be an integer.");
+
+    auto value_type_res = check_expr(*expr.value);
+    if (!value_type_res)
+        return expr.type = types::Primitive_kind::Void;
+
+    const auto &array_type = std::get<std::shared_ptr<types::Array_type>>(array_type_res.value());
+    if (!is_compatible(array_type->element_type, value_type_res.value()))
+        type_error(ast::get_loc(expr.value->node), "Type of value being assigned does not match array's element type.");
+
+    return expr.type = value_type_res.value();
 }
 
 }  // namespace phos

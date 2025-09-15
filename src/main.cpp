@@ -5,13 +5,13 @@
 #include <string>
 #include <vector>
 
-#include "interpreter/interpreter.hpp"
+//#include "interpreter/interpreter.hpp"
 #include "type-checker/type-checker.hpp"
 #include "parser/ast-printer.hpp"
 #include "parser/parser.hpp"
 #include "lexer/lexer.hpp"
 #include "lexer/token.hpp"
-#include "repl.hpp"
+//#include "repl.hpp"
 
 int main(int argc, char *argv[])
 {
@@ -20,9 +20,9 @@ int main(int argc, char *argv[])
         std::println(stderr, "REPL currently not properly working");
         return 1;
         // TODO: start REPL
-        Phos_repl repl;
-        repl.run();
-        return 0;
+        //Phos_repl repl;
+        //repl.run();
+        //return 0;
     }
 
     std::string filename;
@@ -106,6 +106,13 @@ int main(int argc, char *argv[])
             return 1;
         }
 
+        auto checked = phos::Type_checker().check(*parse_result);
+        if (checked.size() > 0)
+        {
+            for (auto e : checked) std::println(stderr, "{}:{}", filename, e.format());
+            return 1;
+        }
+
         if (print_ast)
         {
             phos::ast::AstPrinter printer;
@@ -116,21 +123,15 @@ int main(int argc, char *argv[])
                 return 0;
         }
 
-        auto checked = phos::Type_checker().check(*parse_result);
-        if (checked.size() > 0)
-        {
-            for (auto e : checked) std::println(stderr, "{}:{}", filename, e.format());
-            return 1;
-        }
-
-        auto statements = std::move(*parse_result);
-        phos::Interpreter interpreter;
-        auto interpret_result = interpreter.interpret(statements);
-        if (!interpret_result)
-        {
-            std::println(stderr, "{}:{}", filename, interpret_result.error().format());
-            return 1;
-        }
+        //
+        //auto statements = std::move(*parse_result);
+        //phos::Interpreter interpreter;
+        //auto interpret_result = interpreter.interpret(statements);
+        //if (!interpret_result)
+        //{
+        //    std::println(stderr, "{}:{}", filename, interpret_result.error().format());
+        //    return 1;
+        //}
     }
     catch (const std::exception &e)
     {

@@ -68,7 +68,8 @@ struct Model_type
 
 struct Array_type
 {
-    types::Type type;
+    types::Type element_type;
+    bool operator==(const Array_type &other) const { return this->element_type == other.element_type; }
 };
 
 // Helper functions for type manipulation
@@ -151,7 +152,7 @@ std::string type_to_string(const Type &type)
     }
     else if (is_array(type))
     {
-        return types::type_to_string(get_array_type(type)->type) + "[]";
+        return types::type_to_string(get_array_type(type)->element_type) + "[]";
     }
 
     return "unknown";
