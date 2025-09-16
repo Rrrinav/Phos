@@ -5,57 +5,44 @@
 ## Example
 
 ```js
-fn fib(x: i64) -> i64 {
-    if (x <= 1) return x;
-    else return fib(x - 1) + fib(x - 2);
+model User {
+    let name: string;
+    let score: i64;
+    let is_active: bool;
 }
 
-model Point {
-    let x: i64;
-    let y: i64;
-    fn show() {
-        print("{ x: " + this.x as string + ", y: " + this.y as string + " }");
+fn filter_users(users: User[], condition: |User| -> bool) -> User[] {
+    let result: User[] = [];
+    let i := 0;
+    while (i < len(users)) {
+        if (condition(users[i])) {
+            result.push(users[i]);
+        }
+        i = i + 1;
     }
+    return result;
 }
 
-let p: Point = { .y = 10, . x = 10 };
-p.show();
-print(p.x);
+let users: User[] = [
+    User{ .name = "Alex", .score = 88, .is_active = true },
+    User{ .name = "Blake", .score = 95, .is_active = false },
+    User{ .name = "Casey", .score = 100, .is_active = true }
+];
 
-fn make_adder(n: i64) -> |i64| -> i64 {
-    let cls : |i64| -> i64 = |x: i64| -> i64 {
-        return x + n;
-    };
-    return cls;
-}
+let high_scoring_and_active: |User| -> bool = |u: User| -> bool {
+    return u.is_active && u.score > 90;
+};
 
-let add5  :|i64| -> i64 = make_adder(5);
-let add10 :|i64| -> i64 = make_adder(10);
+let top_users := filter_users(users, high_scoring_and_active);
 
-print(add5(3));
-print(add10(3));
-
-let y: i64;
-let x:= 10;
-
-print(fib(6));
-
-while (x >= 1)
-{
-    print(x);
-    x = x - 1;
-}
-
-let s := "Some error";
-print_err(s);
+print("--- Top Users Report ---");
+print(top_users);
 ```
 
 ## TODO
 
-- [ ] User defined types
+- [ ] Proper I/O (reading input, file streams)
 - [ ] Have proper command line args for it
-- [ ] Arrays
-- [ ] Proper I/O (reading input)
 - [ ] Imports
 - [ ] Type Inference
 
