@@ -99,6 +99,8 @@ inline bool is_array(const Type &type)                                    { retu
 
 inline std::shared_ptr<Array_type> get_array_type(const Type &type)       { return std::get<std::shared_ptr<Array_type>>(type); }
 
+inline bool is_any(const Type &type)                                       { if (is_primitive(type)) return get_primitive_kind(type) == types::Primitive_kind::Any; else return false; }
+
 // Type conversion to string
 std::string type_to_string(const Type &type)
 {

@@ -2,11 +2,13 @@
 
 #include <cstddef>
 #include <memory>
+#include <map>
 #include <unordered_map>
 #include <vector>
 #include <variant>
 #include <iostream>
 #include <string>
+#include <print>
 
 #include "../parser/ast.hpp"
 #include "../value/type.hpp"
@@ -115,6 +117,8 @@ private:
     std::unordered_map<std::string, FunctionData> functions;
     std::unordered_map<size_t, ClosureData> closures;
     std::unordered_map<std::string, ModelData> model_data;
+    using Native_method = std::function<Result<Value>(Value &, const std::vector<Value> &)>;
+    std::unordered_map<std::string, std::unordered_map<std::string, Native_method>> native_methods;
     size_t next_closure_id = 0;
 
 public:
@@ -127,8 +131,11 @@ public:
         globals = std::make_shared<Environment>();
         environment = globals;
         auto native_functions = native::get_natives();
-        for (auto & a: native_functions)
-            this->define_native(a->name, a->arity, a->signature, a->parameters, a->code);
+        for (auto &a : native_functions) this->define_native(a->name, a->arity, a->signature, a->parameters, a->code);
+
+        auto native_mthds = native::get_native_methods();
+
+        for (auto &a : native_mthds) this->define_native_method(a.this_type, a.name, a.arity, a.code);
     }
 
     Result<void> interpret(const std::vector<std::unique_ptr<ast::Stmt>> &statements)
@@ -156,6 +163,11 @@ public:
         func_val->code = std::move(code);
 
         std::ignore = globals->define(name, Value(func_val));
+    }
+
+    void define_native_method(std::string type, const std::string &name, int arity, Native_method code)
+    {
+        native_methods[type][name] = code;
     }
 
 private:
@@ -315,7 +327,7 @@ private:
                         if (native_fn->arity != -1 && arguments.size() != native_fn->arity)
                         {
                             return std::unexpected(err::msg("'" + native_fn->name + "' expected " + std::to_string(native_fn->arity) +
-                                                            " arguments but got " + std::to_string(arguments.size()) + ".",
+                                                                " arguments but got " + std::to_string(arguments.size()) + ".",
                                                             "interpreter", arg.loc.line, arg.loc.column));
                         }
                         return native_fn->code(arguments);
@@ -396,18 +408,7 @@ private:
                     if (!object_result)
                         return object_result;
 
-                    if (!is_model(object_result.value()))
-                        return std::unexpected(
-                            err::msg("Can only call methods on model instances.", "interpreter", arg.loc.line, arg.loc.column));
-
-                    auto model_val = get_model(object_result.value());
-                    const auto &model_name = model_val->signature.name;
-
-                    if (!model_data.contains(model_name) || !model_data.at(model_name).methods.contains(arg.method_name))
-                        return std::unexpected(
-                            err::msg("Method '" + arg.method_name + "' not found.", "interpreter", arg.loc.line, arg.loc.column));
-
-                    const auto &method_data = model_data.at(model_name).methods.at(arg.method_name);
+                    Value object = object_result.value();
 
                     std::vector<Value> arguments;
                     for (const auto &argument : arg.arguments)
@@ -417,19 +418,78 @@ private:
                             return arg_result;
                         arguments.push_back(arg_result.value());
                     }
+                    //std::cout << "--- Registered Native Methods ---" << std::endl;
+                    //for (const auto &[type, methods_map] : native_methods)
+                    //{
+                    //    std::cout << "Type: " << types::type_to_string(type) << " | Methods Registered: " << methods_map.size()
+                    //              << std::endl;
+                    //    for (const auto &[method_name, method_impl] : methods_map) std::cout << "  - " << method_name << "()" << std::endl;
+                    //}
+                    //std::cout << "---------------------------------" << std::endl;
 
-                    auto new_env = std::make_shared<Environment>(method_data.definition_environment);
-                    new_env->define("this", object_result.value());
+                    // 1. Check for a NATIVE method on an array.
+                    if (is_array(object))
+                    {
+                        // CORRECTED: Use the same generic "any array" type as the key for the map.
+                        auto any_array_type = types::Type(std::make_shared<types::Array_type>(types::Primitive_kind::Any));
 
-                    for (size_t i = 0; i < method_data.declaration->parameters.size(); ++i)
-                        new_env->define(method_data.declaration->parameters[i].first, arguments[i]);
+                        //for (const auto &[registered_type, methods] : native_methods)
+                        //{
+                        //    if (types::type_to_string(registered_type) == "any[]")
+                        //    {
+                        //        std::println("Found registered any[] type");
+                        //        std::println("Are they equal? {}", registered_type == any_array_type);
+                        //        std::println("Hash of registered: {}", std::hash<types::Type>{}(registered_type));
+                        //        std::println("Hash of lookup: {}", std::hash<types::Type>{}(any_array_type));
+                        //    }
+                        //}
 
-                    auto result = executeBlock(std::get<ast::Block_stmt>(method_data.declaration->body->node).statements, new_env);
-                    if (!result)
-                        return std::unexpected(result.error());
-                    if (result.value().is_return)
-                        return result.value().value;
-                    return Value(std::monostate{});
+                            //std::println("count at array type ({}): {}", types::type_to_string(any_array_type),
+                            //             native_methods.count(any_array_type));
+                            //std::println("count of method: {}", native_methods.at(any_array_type).count(arg.method_name));
+                            if (native_methods.count(native::array_type_string) && native_methods.at(native::array_type_string).count(arg.method_name))
+                            {
+                                std::println("count of method: {}", native_methods.at(native::array_type_string).count(arg.method_name));
+                                // This will now find the method correctly.
+                                return native_methods.at(native::array_type_string).at(arg.method_name)(object, arguments);
+                            }
+                        }
+                    // 2. ELSE, check for a NATIVE method on a string.
+                    else if (is_string(object))
+                    {
+                        auto string_type = types::Type(types::Primitive_kind::String);
+                        if (native_methods.count(native::string_type_string) && native_methods.at(native::string_type_string).count(arg.method_name))
+                            return native_methods.at(native::string_type_string).at(arg.method_name)(object, arguments);
+                    }
+                    // 3. ELSE, check for a USER-DEFINED method on a model.
+                    else if (is_model(object))
+                    {
+                        auto model_val = get_model(object);  // Use 'object', not 'object_result.value()'
+                        const auto &model_name = model_val->signature.name;
+
+                        if (model_data.contains(model_name) && model_data.at(model_name).methods.contains(arg.method_name))
+                        {
+                            const auto &method_data = model_data.at(model_name).methods.at(arg.method_name);
+                            auto new_env = std::make_shared<Environment>(method_data.definition_environment);
+                            new_env->define("this", object);
+
+                            for (size_t i = 0; i < method_data.declaration->parameters.size(); ++i)
+                                new_env->define(method_data.declaration->parameters[i].first, arguments[i]);
+
+                            auto result = executeBlock(std::get<ast::Block_stmt>(method_data.declaration->body->node).statements, new_env);
+                            if (!result)
+                                return std::unexpected(result.error());
+
+                            if (result.value().is_return)
+                                return result.value().value;
+
+                            return Value(std::monostate{});
+                        }
+                    }
+
+                    // 4. If nothing is found, it's an error.
+                    return std::unexpected(err::msg("No method named '" + arg.method_name + "' found for this type.", "interpreter",
+                                                    arg.loc.line, arg.loc.column));
                 }
 
                 else if constexpr (std::is_same_v<T, ast::Model_literal_expr>)
@@ -798,7 +858,8 @@ private:
             return Value(get_int(l) < get_int(r));
         if (is_float(l) && is_float(r))
             return Value(get_float(l) < get_float(r));
-        return std::unexpected(err::msg("Operands must be numbers of same type for '<'. Even the comparison between f64 and i64 is not allowed", "interpreter", 0, 0));
+        return std::unexpected(err::msg(
+            "Operands must be numbers of same type for '<'. Even the comparison between f64 and i64 is not allowed", "interpreter", 0, 0));
     }
 
     Result<Value> lessThanOrEqual(const Value &l, const Value &r)
@@ -808,7 +869,8 @@ private:
         if (is_float(l) && is_float(r))
             return Value(get_float(l) <= get_float(r));
 
-        return std::unexpected(err::msg("Operands must be numbers of same type for '<='. Even the comparison between f64 and i64 is not allowed", "interpreter", 0, 0));
+        return std::unexpected(err::msg(
+            "Operands must be numbers of same type for '<='. Even the comparison between f64 and i64 is not allowed", "interpreter", 0, 0));
     }
 
     Result<Value> greaterThan(const Value &l, const Value &r)
@@ -817,7 +879,8 @@ private:
             return Value(get_int(l) > get_int(r));
         if (is_float(l) && is_float(r))
             return Value(get_float(l) > get_float(r));
-        return std::unexpected(err::msg("Operands must be numbers of same type for '>'. Even the comparison between f64 and i64 is not allowed", "interpreter", 0, 0));
+        return std::unexpected(err::msg(
+            "Operands must be numbers of same type for '>'. Even the comparison between f64 and i64 is not allowed", "interpreter", 0, 0));
     }
 
     Result<Value> greaterThanOrEqual(const Value &l, const Value &r)
@@ -827,7 +890,8 @@ private:
         if (is_float(l) && is_float(r))
             return Value(get_float(l) >= get_float(r));
 
-        return std::unexpected(err::msg("Operands must be numbers of same type for '>='. Even the comparison between f64 and i64 is not allowed", "interpreter", 0, 0));
+        return std::unexpected(err::msg(
+            "Operands must be numbers of same type for '>='. Even the comparison between f64 and i64 is not allowed", "interpreter", 0, 0));
     }
 
     // ========================================================================

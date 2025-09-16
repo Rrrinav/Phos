@@ -66,13 +66,15 @@ struct Array_value
     std::vector<Value> elements;
 };
 
+using Native_callable = std::function<Result<Value>(const std::vector<Value>& arguments)>;
+
 struct Native_function_value
 {
     std::string name;
     int arity;
     types::Function_type signature;
     std::vector<std::pair<std::string, types::Type>> parameters;
-    std::function<Result<Value>(const std::vector<Value>& arguments)> code;
+    Native_callable code;
 };
 
 // Helper functions for value manipulation

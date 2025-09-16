@@ -81,7 +81,11 @@ public:
 
     std::vector<err::msg> check(std::vector<std::unique_ptr<ast::Stmt>> &statements);
 
-    Type_checker() { m_native_signatures = native::get_native_signatures(); }
+    Type_checker()
+    {
+        this->m_native_functions = native::get_native_fn_signatures();
+        this->m_native_methods = native::get_native_method_signatures();
+    }
 
 private:
     struct FunctionData
@@ -98,7 +102,8 @@ private:
     std::vector<Scope> scopes;
     std::unordered_map<std::string, FunctionData> functions;
     std::unordered_map<std::string, ModelData> model_data;
-    std::unordered_map<std::string, native::Native_function_signature> m_native_signatures;
+    std::unordered_map<std::string, native::Native_function_signature> m_native_functions;
+    std::unordered_map<std::string, native::Native_method_signature> m_native_methods;
     std::optional<types::Type> current_return_type;
     std::optional<std::shared_ptr<types::Model_type>> current_model_type;
     std::vector<err::msg> errors;
@@ -408,27 +413,27 @@ inline bool Type_checker::is_compatible(const types::Type &expected, const types
 {
     if (auto *expected_array = std::get_if<std::shared_ptr<types::Array_type>>(&expected))
     {
-        if ((*expected_array)->element_type == types::Type(types::Primitive_kind::Void))
+        if (auto *actual_array = std::get_if<std::shared_ptr<types::Array_type>>(&actual))
         {
-            if (is_array(actual))
+            if ((*expected_array)->element_type == types::Type(types::Primitive_kind::Any))
                 return true;
+            return is_compatible((*expected_array)->element_type, (*actual_array)->element_type);
         }
     }
+
     if (const auto *a_closure = std::get_if<std::shared_ptr<types::Closure_type>>(&expected))
     {
         if (const auto *b_closure = std::get_if<std::shared_ptr<types::Closure_type>>(&actual))
             return (*a_closure)->function_type == (*b_closure)->function_type;
     }
-    if (const auto *a_array = std::get_if<std::shared_ptr<types::Array_type>>(&expected))
-    {
-        if (const auto *b_array = std::get_if<std::shared_ptr<types::Array_type>>(&actual))
-            return is_compatible((*a_array)->element_type, (*b_array)->element_type);
-    }
+
     if (std::holds_alternative<std::shared_ptr<types::Model_type>>(expected) &&
         std::holds_alternative<std::shared_ptr<types::Model_type>>(actual))
         return expected == actual;
+
     return expected == actual;
 }
+
 inline types::Type Type_checker::promote_numeric_type(const types::Type &left, const types::Type &right) const
 {
     if ((is_numeric(left) && std::get<types::Primitive_kind>(left) == types::Primitive_kind::Float) ||
@@ -680,11 +685,13 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr)
             return expr.type = types::Primitive_kind::Void;
     }
 }
+
 inline Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr)
 {
-    if (m_native_signatures.count(expr.callee))
+    // 1. Check for a native function first.
+    if (m_native_functions.count(expr.callee))
     {
-        const auto &signature = m_native_signatures.at(expr.callee);
+        const auto &signature = m_native_functions.at(expr.callee);
         if (expr.arguments.size() != signature.allowed_params.size())
         {
             type_error(expr.loc, "Incorrect number of arguments for '" + expr.callee + "'. Expected " +
@@ -692,24 +699,43 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr)
                                      std::to_string(expr.arguments.size()) + ".");
             return expr.type = signature.return_type;
         }
+
         for (size_t i = 0; i < expr.arguments.size(); ++i)
         {
             auto arg_type_res = check_expr(*expr.arguments[i]);
             if (!arg_type_res)
                 return types::Primitive_kind::Void;
+
             const auto &allowed_for_param = signature.allowed_params[i];
             if (!is_argument_compatible(allowed_for_param, arg_type_res.value()))
-                type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch for function '" + expr.callee + "'.");
+            {
+                // --- Improved Error Message Logic ---
+                std::string expected_types_str;
+                for (size_t j = 0; j < allowed_for_param.size(); ++j)
+                {
+                    expected_types_str += types::type_to_string(allowed_for_param[j]);
+                    if (j < allowed_for_param.size() - 1)
+                        expected_types_str += " or ";
+                }
+
+                type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch for function '" + expr.callee + "'.\n" +
+                                                                      "    Expected: " + expected_types_str + "\n" +
+                                                                      "    Got:      " + types::type_to_string(arg_type_res.value()));
+            }
         }
         return expr.type = signature.return_type;
     }
+
+    // 2. Check for a user-defined function.
     if (functions.count(expr.callee))
     {
         const auto &func_data = functions.at(expr.callee);
         const auto &signature = func_data.declaration;
         if (expr.arguments.size() != signature->parameters.size())
         {
-            type_error(expr.loc, "Incorrect number of arguments for function '" + expr.callee + "'.");
+            type_error(expr.loc, "Incorrect number of arguments for function '" + expr.callee + "'. Expected " +
+                                     std::to_string(signature->parameters.size()) + ", but got " + std::to_string(expr.arguments.size()) +
+                                     ".");
         }
         else
         {
@@ -717,23 +743,34 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr)
             {
                 auto arg_type_res = check_expr(*expr.arguments[i]);
                 if (arg_type_res && !is_compatible(signature->parameters[i].second, arg_type_res.value()))
-                    type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch.");
+                {
+                    type_error(ast::get_loc(expr.arguments[i]->node),
+                               "Argument type mismatch for function '" + expr.callee + "'.\n" +
+                                   "    Expected: " + types::type_to_string(signature->parameters[i].second) + "\n" +
+                                   "    Got:      " + types::type_to_string(arg_type_res.value()));
+                }
             }
         }
         return expr.type = signature->return_type;
     }
+
+    // 3. Check for a callable variable (like a closure).
     auto callable_var = lookup_variable(expr.callee, expr.loc);
     if (callable_var)
     {
         if (auto *ct = std::get_if<std::shared_ptr<types::Closure_type>>(&callable_var.value()))
         {
             const auto &signature = (*ct)->function_type;
+            // You would add similar argument checking logic for closures here
             return expr.type = signature.return_type;
         }
     }
+
+    // 4. If nothing callable is found, it's an error.
     type_error(expr.loc, "'" + expr.callee + "' is not a function or callable variable.");
     return types::Primitive_kind::Void;
 }
+
 inline Result<types::Type> Type_checker::check_expr_node(ast::Cast_expr &expr)
 {
     std::ignore = check_expr(*expr.expression);
@@ -793,27 +830,99 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Field_assignment_e
     return expr.type = field_type.value();
 }
 inline Result<types::Type> Type_checker::check_expr_node(ast::Literal_expr &expr) { return expr.type; }
+
 inline Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr)
 {
-    auto field_access = ast::Field_access_expr{std::move(expr.object), expr.method_name, {}, expr.loc};
-    auto callee_type = check_expr_node(field_access);
-    expr.object = std::move(field_access.object);
-    if (!callee_type)
+    auto obj_type_res = check_expr(*expr.object);
+    if (!obj_type_res)
         return expr.type = types::Primitive_kind::Void;
-    if (auto *ft = std::get_if<std::shared_ptr<types::Function_type>>(&callee_type.value()))
+    auto obj_type = obj_type_res.value();
+
+    // 1. Check for a NATIVE BUILT-IN method.
+    if (m_native_methods.count(expr.method_name))
     {
-        auto sig = *ft;
-        if (expr.arguments.size() != sig->parameter_types.size())
-            type_error(expr.loc, "Incorrect argument count for method");
-        else
+        const auto &signature = m_native_methods.at(expr.method_name);
+
+        // Check if the method can be called on this object's type.
+        bool is_valid_this_type = false;
+        for (const auto &valid_type : signature.valid_this_types)
+        {
+            if (is_compatible(valid_type, obj_type))
+            {
+                is_valid_this_type = true;
+                break;
+            }
+        }
+
+        if (is_valid_this_type)
+        {
+            // ... (arity check is the same) ...
+
+            // --- GENERIC TYPE RESOLUTION LOGIC ---
             for (size_t i = 0; i < expr.arguments.size(); ++i)
-                if (auto arg_t = check_expr(*expr.arguments[i]); arg_t && !is_compatible(sig->parameter_types[i], arg_t.value()))
-                    type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch");
-        return expr.type = sig->return_type;
+            {
+                auto arg_type_res = check_expr(*expr.arguments[i]);
+                if (!arg_type_res)
+                    return types::Primitive_kind::Void;
+
+                auto allowed_for_param = signature.allowed_params[i];  // Get a mutable copy
+                auto actual_arg_type = arg_type_res.value();
+
+                // If the expected parameter is generic, resolve it!
+                if (is_any(allowed_for_param[0]))
+                {
+                    if (is_array(obj_type))
+                    {
+                        // For an array method, the generic type must match the array's element type.
+                        allowed_for_param[0] = std::get<std::shared_ptr<types::Array_type>>(obj_type)->element_type;
+                    }
+                }
+
+                if (!is_argument_compatible(allowed_for_param, actual_arg_type))
+                    type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch for method '" + expr.method_name + "'.");
+            }
+
+            // Handle generic return types (e.g., array.pop() -> T).
+            if (is_any(signature.return_type))
+            {
+                if (is_array(obj_type))
+                    return expr.type = std::get<std::shared_ptr<types::Array_type>>(obj_type)->element_type;
+            }
+            return expr.type = signature.return_type;
+        }
     }
-    type_error(expr.loc, "'" + expr.method_name + "' is not a method");
+
+    // 2. If not a native method, check for a USER-DEFINED MODEL method.
+    if (auto *mt = std::get_if<std::shared_ptr<types::Model_type>>(&obj_type))
+    {
+        if ((*mt)->methods.count(expr.method_name))
+        {
+            const auto &method_signature = (*mt)->methods.at(expr.method_name);
+
+            // Check arity for the model method.
+            if (expr.arguments.size() != method_signature.parameter_types.size())
+            {
+                type_error(expr.loc, "Incorrect argument count for method '" + expr.method_name + "'.");
+            }
+            else
+            {
+                // Check argument types for the model method.
+                for (size_t i = 0; i < expr.arguments.size(); ++i)
+                {
+                    auto arg_type_res = check_expr(*expr.arguments[i]);
+                    if (arg_type_res && !is_compatible(method_signature.parameter_types[i], arg_type_res.value()))
+                        type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch.");
+                }
+            }
+            return expr.type = method_signature.return_type;
+        }
+    }
+
+    // 3. If no method was found, it's an error.
+    type_error(expr.loc, "No method named '" + expr.method_name + "' found for this type.");
     return expr.type = types::Primitive_kind::Void;
 }
+
 inline Result<types::Type> Type_checker::check_expr_node(ast::Model_literal_expr &expr)
 {
     if (!model_signatures.contains(expr.model_name))
@@ -928,8 +1037,10 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Array_assignment_e
 
 inline Result<types::Type> Type_checker::check_expr_node(ast::Variable_expr &expr)
 {
-    if (expr.name == "this") {
-        if (!current_model_type) {
+    if (expr.name == "this")
+    {
+        if (!current_model_type)
+        {
             type_error(expr.loc, "Cannot use 'this' outside of a model method");
             return expr.type = types::Primitive_kind::Void;
         }
@@ -939,7 +1050,7 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Variable_expr &exp
     auto type_res = lookup(expr.name, expr.loc);
     if (!type_res)
         return expr.type = types::Primitive_kind::Void;
-        
+
     return expr.type = type_res.value();
 }
 
