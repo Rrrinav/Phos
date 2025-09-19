@@ -467,6 +467,12 @@ inline bool Type_checker::is_compatible(const types::Type &expected, const types
         if (is_any((*expected_array)->element_type) && is_array(actual))
             return true;
     }
+    if (const auto* a_closure = std::get_if<std::shared_ptr<types::Closure_type>>(&expected)) {
+        if (const auto* b_closure = std::get_if<std::shared_ptr<types::Closure_type>>(&actual)) {
+            // Two closures are compatible if their function signatures match.
+            return (*a_closure)->function_type == (*b_closure)->function_type;
+        }
+    }
     if (const auto *a_array = std::get_if<std::shared_ptr<types::Array_type>>(&expected))
     {
         if (const auto *b_array = std::get_if<std::shared_ptr<types::Array_type>>(&actual))
@@ -793,6 +799,14 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr)
     types::Type right_type = right.value();
     switch (expr.op)
     {
+        case lex::TokenType::Less:
+        case lex::TokenType::LessEqual:
+        case lex::TokenType::Greater:
+        case lex::TokenType::GreaterEqual:
+            if (is_numeric(left_type) && is_numeric(right_type))
+                return expr.type = types::Primitive_kind::Bool;
+            type_error(expr.loc, "Comparison operators require numeric operands");
+            return expr.type = types::Primitive_kind::Void;
         case lex::TokenType::Equal:
         case lex::TokenType::NotEqual:
             if ((is_optional(left_type) && is_nil(right_type)) || (is_nil(left_type) && is_optional(right_type)))
