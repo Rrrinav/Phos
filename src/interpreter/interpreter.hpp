@@ -444,21 +444,23 @@ private:
                         //    }
                         //}
 
-                            //std::println("count at array type ({}): {}", types::type_to_string(any_array_type),
-                            //             native_methods.count(any_array_type));
-                            //std::println("count of method: {}", native_methods.at(any_array_type).count(arg.method_name));
-                            if (native_methods.count(native::array_type_string) && native_methods.at(native::array_type_string).count(arg.method_name))
-                            {
-                                std::println("count of method: {}", native_methods.at(native::array_type_string).count(arg.method_name));
-                                // This will now find the method correctly.
-                                return native_methods.at(native::array_type_string).at(arg.method_name)(object, arguments);
-                            }
+                        //std::println("count at array type ({}): {}", types::type_to_string(any_array_type),
+                        //             native_methods.count(any_array_type));
+                        //std::println("count of method: {}", native_methods.at(any_array_type).count(arg.method_name));
+                        if (native_methods.count(native::array_type_string) &&
+                            native_methods.at(native::array_type_string).count(arg.method_name))
+                        {
+                            std::println("count of method: {}", native_methods.at(native::array_type_string).count(arg.method_name));
+                            // This will now find the method correctly.
+                            return native_methods.at(native::array_type_string).at(arg.method_name)(object, arguments);
                         }
+                    }
                     // 2. ELSE, check for a NATIVE method on a string.
                     else if (is_string(object))
                     {
                         auto string_type = types::Type(types::Primitive_kind::String);
-                        if (native_methods.count(native::string_type_string) && native_methods.at(native::string_type_string).count(arg.method_name))
+                        if (native_methods.count(native::string_type_string) &&
+                            native_methods.at(native::string_type_string).count(arg.method_name))
                             return native_methods.at(native::string_type_string).at(arg.method_name)(object, arguments);
                     }
                     // 3. ELSE, check for a USER-DEFINED method on a model.
@@ -474,7 +476,7 @@ private:
                             new_env->define("this", object);
 
                             for (size_t i = 0; i < method_data.declaration->parameters.size(); ++i)
-                                new_env->define(method_data.declaration->parameters[i].first, arguments[i]);
+                                new_env->define(method_data.declaration->parameters[i].name, arguments[i]);
 
                             auto result = executeBlock(std::get<ast::Block_stmt>(method_data.declaration->body->node).statements, new_env);
                             if (!result)
@@ -565,15 +567,22 @@ private:
                 else if constexpr (std::is_same_v<T, ast::Function_stmt>)
                 {
                     types::Function_type func_type;
-                    for (const auto &param : arg.parameters) func_type.parameter_types.push_back(param.second);
+                    for (const auto &param : arg.parameters) func_type.parameter_types.push_back(param.type);
                     func_type.return_type = arg.return_type;
 
                     functions[arg.name] = {func_type, std::make_shared<ast::Function_stmt>(arg), environment};
 
-                    auto func_val = std::make_shared<Function_value>(func_type, arg.parameters, environment);
+                    // PERF: This is slow, maybe straight away move it?
+                    std::vector<std::pair<std::string, types::Type>> param_data;
+                    for (const auto &p : arg.parameters) param_data.push_back({p.name, p.type});
+
+                    // Now, create the Function_value with the clean data.
+                    auto func_val = std::make_shared<Function_value>(func_type, param_data, environment);
+
                     auto define_result = environment->define(arg.name, Value(func_val));
                     if (!define_result)
                         return std::unexpected(define_result.error());
+
                     return ReturnValue{};
                 }
 
@@ -603,7 +612,7 @@ private:
                     for (const auto &method_ast : arg.methods)
                     {
                         types::Function_type method_type;
-                        for (const auto &param : method_ast.parameters) method_type.parameter_types.push_back(param.second);
+                        for (const auto &param : method_ast.parameters) method_type.parameter_types.push_back(param.type);
                         method_type.return_type = method_ast.return_type;
 
                         data.methods[method_ast.name] = {method_type, std::make_shared<ast::Function_stmt>(method_ast), environment};
@@ -740,7 +749,7 @@ private:
         auto new_env = std::make_shared<Environment>(func_data.definition_environment);
 
         for (size_t i = 0; i < func_data.declaration->parameters.size(); ++i)
-            auto _ = new_env->define(func_data.declaration->parameters[i].first, arguments[i]);
+            auto _ = new_env->define(func_data.declaration->parameters[i].name, arguments[i]);
 
         auto result = executeBlock(std::get<ast::Block_stmt>(func_data.declaration->body->node).statements, new_env);
         if (!result)
@@ -904,7 +913,7 @@ private:
     {
         if (is_bool(v))
             return get_bool(v);
-        if (is_void(v) || is_null(v))
+        if (is_void(v) || is_nil(v))
             return false;
         if (is_int(v))
             return get_int(v) != 0;

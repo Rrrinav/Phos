@@ -204,10 +204,17 @@ struct Return_stmt
     Source_location loc;
 };
 
+struct Function_param
+{
+    std::string name;
+    types::Type type;
+    bool is_const;
+};
+
 struct Function_stmt
 {
     std::string name;
-    std::vector<std::pair<std::string, types::Type>> parameters;
+    std::vector<Function_param> parameters;
     types::Type return_type;
     std::shared_ptr<struct Stmt> body;
     Source_location loc;
@@ -223,6 +230,7 @@ struct Model_stmt
 
 struct Var_stmt
 {
+    bool is_const;
     std::string name;
     types::Type type;
     std::unique_ptr<Expr> initializer;
@@ -230,11 +238,7 @@ struct Var_stmt
     Source_location loc;
 };
 
-enum class Print_stream
-{
-    STDOUT,
-    STDERR
-};
+enum class Print_stream { STDOUT, STDERR };
 
 struct Print_stmt
 {

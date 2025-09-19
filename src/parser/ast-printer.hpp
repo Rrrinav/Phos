@@ -490,7 +490,7 @@ private:
                                       [&]
                                       {
                                           indent();
-                                          print_str(node.parameters[i].first + " : " + types::type_to_string(node.parameters[i].second));
+                                          print_str((node.parameters[i].is_const ? "const" : "") + node.parameters[i].name+ " : " + types::type_to_string(node.parameters[i].type));
                                       });
                        }
                    });

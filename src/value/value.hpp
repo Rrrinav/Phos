@@ -24,9 +24,19 @@ struct Model_value;
 struct Array_value;
 struct Native_function_value;
 
-using Value = std::variant<int64_t, double, bool, std::string, std::shared_ptr<Model_value>, std::shared_ptr<Function_value>,
-                           std::shared_ptr<Closure_value>, std::shared_ptr<Array_value>, std::nullptr_t, std::monostate,
-                           std::shared_ptr<Native_function_value>>;
+using Value = std::variant<
+    int64_t,
+    double,
+    bool,
+    std::string,
+    std::shared_ptr<Model_value>,
+    std::shared_ptr<Function_value>,
+    std::shared_ptr<Closure_value>,
+    std::shared_ptr<Array_value>,
+    std::shared_ptr<Native_function_value>,
+    std::nullptr_t, // nil
+    std::monostate  // void
+>;
 
 struct Function_value
 {
@@ -86,7 +96,7 @@ inline bool is_model(const Value &value) { return std::holds_alternative<std::sh
 inline bool is_function(const Value &value) { return std::holds_alternative<std::shared_ptr<Function_value>>(value); }
 inline bool is_closure(const Value &value) { return std::holds_alternative<std::shared_ptr<Closure_value>>(value); }
 inline bool is_array(const Value &value) { return std::holds_alternative<std::shared_ptr<Array_value>>(value); }
-inline bool is_null(const Value &value) { return std::holds_alternative<std::nullptr_t>(value); }
+inline bool is_nil(const Value &value) { return std::holds_alternative<std::nullptr_t>(value); }
 inline bool is_void(const Value &value) { return std::holds_alternative<std::monostate>(value); }
 inline bool is_native_function(const Value &value) { return std::holds_alternative<std::shared_ptr<Native_function_value>>(value); }
 inline bool is_callable(const Value &value) {
@@ -118,8 +128,8 @@ std::string value_to_string_impl(const Value &value, int indent_level)
         return get_bool(value) ? "true" : "false";
     if (is_string(value))
         return "\"" + get_string(value) + "\"";
-    if (is_null(value))
-        return "null";
+    if (is_nil(value))
+        return "nil";
     if (is_void(value))
         return "void";
 

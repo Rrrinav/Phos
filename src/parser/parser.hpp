@@ -197,10 +197,11 @@ private:
         if (!left_paren_result)
             return std::unexpected(left_paren_result.error());
 
-        std::vector<std::pair<std::string, types::Type>> parameters;
+        std::vector<ast::Function_param> parameters;
         if (!check(lex::TokenType::RightParen))
         {
             do {
+                bool is_const = match({lex::TokenType::Const});
                 auto param_name_result = consume(lex::TokenType::Identifier, "Expect parameter name");
                 if (!param_name_result)
                     return std::unexpected(param_name_result.error());
@@ -213,13 +214,13 @@ private:
                 if (!param_type_result)
                     return std::unexpected(param_type_result.error());
 
-                parameters.emplace_back(param_name_result.value().lexeme, param_type_result.value());
+                parameters.emplace_back(ast::Function_param{param_name_result.value().lexeme, param_type_result.value(), is_const});
             } while (match({lex::TokenType::Comma}));
         }
 
         auto saved_variable_types = this->variable_types;
 
-        for (const auto &param : parameters) variable_types[param.first] = param.second;
+        for (const auto &param : parameters) variable_types[param.name] = param.type;
 
         auto right_paren_result = consume(lex::TokenType::RightParen, "Expect ')' after parameters");
         if (!right_paren_result)
@@ -325,7 +326,7 @@ private:
         for (const auto &method : methods)
         {
             types::Function_type func_type;
-            for (const auto &param : method.parameters) func_type.parameter_types.push_back(param.second);
+            for (const auto &param : method.parameters) func_type.parameter_types.push_back(param.type);
             func_type.return_type = method.return_type;
             // This is safe because model_type is now guaranteed to exist in the map
             std::get<std::shared_ptr<types::Model_type>>(model_types[name.lexeme])->methods[method.name] = func_type;
@@ -381,10 +382,11 @@ private:
         if (!left_paren_result)
             return std::unexpected(left_paren_result.error());
 
-        std::vector<std::pair<std::string, types::Type>> parameters;
+        std::vector<ast::Function_param> parameters;
         if (!check(lex::TokenType::RightParen))
         {
             do {
+                bool is_const = match({lex::TokenType::Const});
                 auto param_name_result = consume(lex::TokenType::Identifier, "Expect parameter name");
                 if (!param_name_result)
                     return std::unexpected(param_name_result.error());
@@ -397,13 +399,13 @@ private:
                 if (!param_type_result)
                     return std::unexpected(param_type_result.error());
 
-                parameters.emplace_back(param_name_result.value().lexeme, param_type_result.value());
+                parameters.emplace_back(ast::Function_param{param_name_result.value().lexeme, param_type_result.value(), is_const});
             } while (match({lex::TokenType::Comma}));
         }
 
         auto saved_variable_types = this->variable_types;
         variable_types["this"] = model_types[current_model];
-        for (const auto &param : parameters) variable_types[param.first] = param.second;
+        for (const auto &param : parameters) variable_types[param.name] = param.type;
 
         auto right_paren_result = consume(lex::TokenType::RightParen, "Expect ')' after parameters");
         if (!right_paren_result)
@@ -438,6 +440,7 @@ private:
 
     Result<std::unique_ptr<ast::Stmt>> var_declaration()
     {
+        bool is_const = match({lex::TokenType::Const});
         auto name_result = consume(lex::TokenType::Identifier, "Expect variable name");
         if (!name_result)
             return std::unexpected(name_result.error());
@@ -491,7 +494,8 @@ private:
 
         variable_types[name.lexeme] = var_type;
 
-        return std::make_unique<ast::Stmt>(ast::Stmt{ast::Var_stmt{.name = name.lexeme,
+        return std::make_unique<ast::Stmt>(ast::Stmt{ast::Var_stmt{.is_const = is_const,
+                                                                   .name = name.lexeme,
                                                                    .type = var_type,
                                                                    .initializer = std::move(initializer),
                                                                    .type_inferred = type_inferred,
@@ -1145,6 +1149,11 @@ private:
         if (match({lex::TokenType::LeftBracket}))
             return parse_array_literal();
 
+        if (match({lex::TokenType::Nil}))
+        {
+            return std::make_unique<ast::Expr>(ast::Expr{ast::Literal_expr{
+                .value = Value(nullptr), .type = types::Type(types::Primitive_kind::Nil), .loc = {previous().line, previous().column}}});
+        }
         if (match({lex::TokenType::Bool}))
         {
             bool value = std::get<bool>(previous().literal);
@@ -1180,7 +1189,11 @@ private:
                 .value = Value(value), .type = types::Type(types::Primitive_kind::String), .loc = {previous().line, previous().column}};
             return expr;
         }
-
+        if (match({lex::TokenType::Nil}))
+        {
+            return std::make_unique<ast::Expr>(ast::Expr{ast::Literal_expr{
+                .value = Value(nullptr), .type = types::Type(types::Primitive_kind::Nil), .loc = {previous().line, previous().column}}});
+        }
         if (match({lex::TokenType::Identifier}))
         {
             std::string name = previous().lexeme;
@@ -1364,45 +1377,45 @@ private:
 
     Result<types::Type> parse_type()
     {
-        if (match({lex::TokenType::Pipe}))
+        types::Type base_type;
+
+        // --- Step 1: Parse the core type component ---
+        // This handles parentheses, closures, or a simple identifier.
+        if (match({lex::TokenType::LeftParen}))
+        {
+            auto type_res = parse_type();  // Fully recursive call
+            if (!type_res)
+                return type_res;
+            consume(lex::TokenType::RightParen, "Expected ')' after type in parentheses.");
+            base_type = type_res.value();
+        }
+        else if (match({lex::TokenType::Pipe}))
         {
             std::vector<types::Type> parameter_types;
-
             if (!check(lex::TokenType::Pipe))
             {
                 do {
                     auto param_type_result = parse_type();
                     if (!param_type_result)
-                        return std::unexpected(param_type_result.error());
+                        return param_type_result;
                     parameter_types.push_back(param_type_result.value());
                 } while (match({lex::TokenType::Comma}));
             }
-
-            auto right_pipe_result = consume(lex::TokenType::Pipe, "Expect '|' after closure type parameters");
-            if (!right_pipe_result)
-                return std::unexpected(right_pipe_result.error());
-
-            auto arrow_result = consume(lex::TokenType::Arrow, "Expect '->' after closure parameters");
-            if (!arrow_result)
-                return std::unexpected(arrow_result.error());
+            consume(lex::TokenType::Pipe, "Expect '|' after closure parameter types.");
+            consume(lex::TokenType::Arrow, "Expect '->' after closure parameters.");
 
             auto return_type_result = parse_type();
             if (!return_type_result)
-                return std::unexpected(return_type_result.error());
+                return return_type_result;
 
-            auto closure_type = std::make_shared<types::Closure_type>();
-            auto func_type = std::make_shared<types::Function_type>();
-            func_type->parameter_types = parameter_types;
-            func_type->return_type = return_type_result.value();
-            closure_type->function_type = *func_type;
-
-            return types::Type{closure_type};
+            auto closure_t = std::make_shared<types::Closure_type>();
+            closure_t->function_type.parameter_types = std::move(parameter_types);
+            closure_t->function_type.return_type = return_type_result.value();
+            base_type = types::Type(closure_t);
         }
-        if (match({lex::TokenType::Identifier}))
+        else if (match({lex::TokenType::Identifier}))
         {
             std::string type_name = previous().lexeme;
-
-            types::Type base_type;
             if (type_name == "i64")
                 base_type = types::Type(types::Primitive_kind::Int);
             else if (type_name == "f64")
@@ -1413,27 +1426,41 @@ private:
                 base_type = types::Type(types::Primitive_kind::String);
             else if (type_name == "void")
                 base_type = types::Type(types::Primitive_kind::Void);
+            else if (type_name == "any")
+                base_type = types::Type(types::Primitive_kind::Any);
             else
-            {
-                auto model_it = model_types.find(type_name);
-                if (model_it != model_types.end())
-                    base_type = model_it->second;
-                else
-                    return std::unexpected(create_error(previous(), "Unknown type: " + type_name));
+            {  // Assume it's a model name
+                auto model_type = std::make_shared<types::Model_type>();
+                model_type->name = type_name;
+                base_type = types::Type(model_type);
             }
-
-            if (match({lex::TokenType::LeftBracket}))
-            {
-                if (match({lex::TokenType::RightBracket}))
-                    return types::Type(std::make_shared<types::Array_type>(base_type));
-                else
-                    return std::unexpected(create_error(peek(), "Fixed-size arrays not yet supported"));
-            }
-
-            return base_type;
+        }
+        else
+        {
+            return std::unexpected(create_error(peek(), "Expected a type name or '(' for a grouped type."));
         }
 
-        return std::unexpected(create_error(peek(), "Expect type"));
+        // --- Step 2: Loop for any postfix operators (e.g., [], ?) ---
+        while (true)
+        {
+            if (match({lex::TokenType::LeftBracket}))
+            {
+                consume(lex::TokenType::RightBracket, "Expected ']' to complete array type suffix.");
+                base_type = types::Type(std::make_shared<types::Array_type>(base_type));
+            }
+            else if (match({lex::TokenType::Question}))
+            {
+                auto optional_type = std::make_shared<types::Optional_type>();
+                optional_type->base_type = base_type;
+                base_type = types::Type(optional_type);
+            }
+            else
+            {
+                break;  // No more suffixes found
+            }
+        }
+
+        return base_type;
     }
 };
 

@@ -12,8 +12,7 @@
 namespace phos::native
 {
 
-// Using these because unrodered map can't index some types because of recursive definition or something
-// This also has something to do with hashing of std::variant
+//  NOTE: (2025-09-19:08:36): Did this because variant doesnt have overloaded operators for comaprison
 inline const std::string array_type_string = "__array__";
 inline const std::string string_type_string = "__string__";
 

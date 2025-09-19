@@ -8,6 +8,7 @@
 #include <optional>
 #include <variant>
 #include <utility>
+#include <format>
 
 #include "../parser/ast.hpp"
 #include "../error/err.hpp"
@@ -83,8 +84,8 @@ public:
 
     Type_checker()
     {
-        this->m_native_functions = native::get_native_fn_signatures();
-        this->m_native_methods = native::get_native_method_signatures();
+        m_native_signatures = native::get_native_fn_signatures();
+        m_native_methods = native::get_native_method_signatures();
     }
 
 private:
@@ -98,30 +99,39 @@ private:
         std::unordered_map<std::string, FunctionData> methods;
     };
 
-    using Scope = std::unordered_map<std::string, types::Type>;
+    using Scope = std::unordered_map<std::string, std::pair<types::Type, bool>>;
     std::vector<Scope> scopes;
+    std::vector<std::unordered_set<std::string>> m_nil_checked_vars_stack;  // For type narrowing
+
     std::unordered_map<std::string, FunctionData> functions;
     std::unordered_map<std::string, ModelData> model_data;
-    std::unordered_map<std::string, native::Native_function_signature> m_native_functions;
+    std::unordered_map<std::string, native::Native_function_signature> m_native_signatures;
     std::unordered_map<std::string, native::Native_method_signature> m_native_methods;
+
     std::optional<types::Type> current_return_type;
     std::optional<std::shared_ptr<types::Model_type>> current_model_type;
     std::vector<err::msg> errors;
     std::string phase = "type-checking";
 
     // --- Private Helper Methods ---
-    Result<types::Type> lookup_variable(const std::string &name, const ast::Source_location &loc);
     bool is_compatible(const types::Type &expected, const types::Type &actual) const;
     bool is_argument_compatible(const std::vector<types::Type> &allowed_types, const types::Type &actual_type) const;
     void begin_scope();
     void end_scope();
-    void declare(const std::string &name, const types::Type &type, const ast::Source_location &loc);
-    Result<types::Type> lookup(const std::string &name, const ast::Source_location &loc);
+    void declare(const std::string &name, const types::Type &type, bool is_constant, const ast::Source_location &loc);
+    Result<std::pair<types::Type, bool>> lookup(const std::string &name, const ast::Source_location &loc);
+    Result<std::pair<types::Type, bool>> lookup_variable(const std::string &name, const ast::Source_location &loc);
     types::Type promote_numeric_type(const types::Type &left, const types::Type &right) const;
     bool is_numeric(const types::Type &type) const;
     bool is_boolean(const types::Type &type) const;
     bool is_string(const types::Type &type) const;
     bool is_array(const types::Type &type) const;
+    bool is_function(const types::Type &type) const;
+    bool is_closure(const types::Type &type) const;
+    bool is_model(const types::Type &type) const;
+    bool is_any(const types::Type &type) const;
+    bool is_nil(const types::Type &type) const;
+    bool is_optional(const types::Type &type) const;
 
     // --- Main Checking Logic ---
     void collect_signatures(const std::vector<std::unique_ptr<ast::Stmt>> &statements);
@@ -195,11 +205,16 @@ inline void TypeResolver::resolve_type(types::Type &type)
         if (*array_type_ptr)
             resolve_type((*array_type_ptr)->element_type);
     }
+    else if (auto *optional_type_ptr = std::get_if<std::shared_ptr<types::Optional_type>>(&type))
+    {
+        if (*optional_type_ptr)
+            resolve_type((*optional_type_ptr)->base_type);
+    }
 }
 inline void TypeResolver::visit(ast::Function_stmt &stmt)
 {
     resolve_type(stmt.return_type);
-    for (auto &param : stmt.parameters) resolve_type(param.second);
+    for (auto &param : stmt.parameters) resolve_type(param.type);
     if (stmt.body)
         resolve_stmt(*stmt.body);
 }
@@ -349,7 +364,6 @@ inline void TypeResolver::visit(ast::Array_assignment_expr &expr)
 // ===================================================================
 // TYPE CHECKER IMPLEMENTATIONS
 // ===================================================================
-
 inline std::vector<err::msg> Type_checker::check(std::vector<std::unique_ptr<ast::Stmt>> &statements)
 {
     begin_scope();
@@ -389,7 +403,7 @@ inline void Type_checker::collect_signatures(const std::vector<std::unique_ptr<a
                 for (const auto &method_ast : model_stmt->methods)
                 {
                     types::Function_type method_type;
-                    for (const auto &param : method_ast.parameters) method_type.parameter_types.push_back(param.second);
+                    for (const auto &param : method_ast.parameters) method_type.parameter_types.push_back(param.type);
                     method_type.return_type = method_ast.return_type;
                     data.methods[method_ast.name] = {&method_ast};
                     model_type->methods[method_ast.name] = method_type;
@@ -400,40 +414,56 @@ inline void Type_checker::collect_signatures(const std::vector<std::unique_ptr<a
         }
     }
 }
-inline void Type_checker::begin_scope() { scopes.emplace_back(); }
-inline void Type_checker::end_scope() { scopes.pop_back(); }
-inline void Type_checker::declare(const std::string &name, const types::Type &type, const ast::Source_location &loc)
+inline void Type_checker::begin_scope()
 {
-    if (scopes.empty() || scopes.back().contains(name))
+    scopes.emplace_back();
+    m_nil_checked_vars_stack.emplace_back();
+}
+inline void Type_checker::end_scope()
+{
+    if (!scopes.empty())
+        scopes.pop_back();
+    if (!m_nil_checked_vars_stack.empty())
+        m_nil_checked_vars_stack.pop_back();
+}
+inline void Type_checker::declare(const std::string &name, const types::Type &type, bool is_constant, const ast::Source_location &loc)
+{
+    if (!scopes.empty() && scopes.back().count(name))
         type_error(loc, "Variable '" + name + "' is already declared in this scope.");
     else
-        scopes.back()[name] = type;
+        scopes.back()[name] = {type, is_constant};
 }
 inline bool Type_checker::is_compatible(const types::Type &expected, const types::Type &actual) const
 {
+    if (is_optional(expected))
+    {
+        if (is_nil(actual))
+            return true;
+        if (is_optional(actual))
+            return is_compatible(types::get_optional_type(expected)->base_type, types::get_optional_type(actual)->base_type);
+        return is_compatible(types::get_optional_type(expected)->base_type, actual);
+    }
+    if (is_optional(actual))
+        return false;  // Cannot assign T? to T
     if (auto *expected_array = std::get_if<std::shared_ptr<types::Array_type>>(&expected))
     {
-        if (auto *actual_array = std::get_if<std::shared_ptr<types::Array_type>>(&actual))
-        {
-            if ((*expected_array)->element_type == types::Type(types::Primitive_kind::Any))
-                return true;
-            return is_compatible((*expected_array)->element_type, (*actual_array)->element_type);
-        }
+        if (is_any((*expected_array)->element_type) && is_array(actual))
+            return true;
     }
-
-    if (const auto *a_closure = std::get_if<std::shared_ptr<types::Closure_type>>(&expected))
+    if (const auto *a_array = std::get_if<std::shared_ptr<types::Array_type>>(&expected))
     {
-        if (const auto *b_closure = std::get_if<std::shared_ptr<types::Closure_type>>(&actual))
-            return (*a_closure)->function_type == (*b_closure)->function_type;
+        if (const auto *b_array = std::get_if<std::shared_ptr<types::Array_type>>(&actual))
+            return is_compatible((*a_array)->element_type, (*b_array)->element_type);
     }
-
-    if (std::holds_alternative<std::shared_ptr<types::Model_type>>(expected) &&
-        std::holds_alternative<std::shared_ptr<types::Model_type>>(actual))
-        return expected == actual;
-
     return expected == actual;
 }
-
+inline bool Type_checker::is_argument_compatible(const std::vector<types::Type> &allowed_types, const types::Type &actual_type) const
+{
+    for (const auto &allowed : allowed_types)
+        if (is_compatible(allowed, actual_type))
+            return true;
+    return false;
+}
 inline types::Type Type_checker::promote_numeric_type(const types::Type &left, const types::Type &right) const
 {
     if ((is_numeric(left) && std::get<types::Primitive_kind>(left) == types::Primitive_kind::Float) ||
@@ -465,6 +495,26 @@ inline bool Type_checker::is_array(const types::Type &type) const
 {
     return std::holds_alternative<std::shared_ptr<types::Array_type>>(type);
 }
+inline bool Type_checker::is_function(const types::Type &type) const
+{
+    return std::holds_alternative<std::shared_ptr<types::Function_type>>(type);
+}
+inline bool Type_checker::is_closure(const types::Type &type) const
+{
+    return std::holds_alternative<std::shared_ptr<types::Closure_type>>(type);
+}
+inline bool Type_checker::is_model(const types::Type &type) const
+{
+    return std::holds_alternative<std::shared_ptr<types::Model_type>>(type);
+}
+inline bool Type_checker::is_any(const types::Type &type) const
+{
+    if (const auto *prim = std::get_if<types::Primitive_kind>(&type))
+        return *prim == types::Primitive_kind::Any;
+    return false;
+}
+inline bool Type_checker::is_nil(const types::Type &type) const { return types::is_nil(type); }
+inline bool Type_checker::is_optional(const types::Type &type) const { return types::is_optional(type); }
 inline void Type_checker::check_stmt(ast::Stmt &stmt)
 {
     std::visit([this](auto &s) { check_stmt_node(s); }, stmt.node);
@@ -473,42 +523,68 @@ inline Result<types::Type> Type_checker::check_expr(ast::Expr &expr)
 {
     return std::visit([this](auto &e) -> Result<types::Type> { return check_expr_node(e); }, expr.node);
 }
-inline Result<types::Type> Type_checker::lookup_variable(const std::string &name, const ast::Source_location &loc)
+inline Result<std::pair<types::Type, bool>> Type_checker::lookup_variable(const std::string &name, const ast::Source_location &loc)
 {
     for (auto it = scopes.rbegin(); it != scopes.rend(); ++it)
         if (it->contains(name))
             return it->at(name);
     return std::unexpected(err::msg("", "", 0, 0));
 }
-inline bool Type_checker::is_argument_compatible(const std::vector<types::Type> &allowed_types, const types::Type &actual_type) const
-{
-    for (const auto &allowed : allowed_types)
-        if (is_compatible(allowed, actual_type))
-            return true;
-    return false;
-}
-inline Result<types::Type> Type_checker::lookup(const std::string &name, const ast::Source_location &loc)
+inline Result<std::pair<types::Type, bool>> Type_checker::lookup(const std::string &name, const ast::Source_location &loc)
 {
     auto var = lookup_variable(name, loc);
     if (var)
         return var;
-    type_error(loc, "Undefined variable '" + name + "'.");
-    return types::Primitive_kind::Void;
+    if (functions.contains(name))
+    {
+        auto func_type = std::make_shared<types::Function_type>();
+        const auto &func_data = functions.at(name);
+        for (const auto &param : func_data.declaration->parameters) func_type->parameter_types.push_back(param.type);
+        func_type->return_type = func_data.declaration->return_type;
+        return std::make_pair(types::Type(func_type), true);
+    }
+    type_error(loc, "Undefined variable or function '" + name + "'.");
+    return std::unexpected(err::msg("", "", 0, 0));
 }
-
-// --- Node Visitor Implementations ---
 inline void Type_checker::check_stmt_node(ast::Function_stmt &stmt)
 {
     auto saved_return = current_return_type;
     current_return_type = stmt.return_type;
     begin_scope();
     if (current_model_type)
-        declare("this", current_model_type.value(), stmt.loc);
-    for (const auto &p : stmt.parameters) declare(p.first, p.second, stmt.loc);
+        declare("this", current_model_type.value(), true, stmt.loc);
+    for (const auto &p : stmt.parameters) declare(p.name, p.type, p.is_const, stmt.loc);
     if (stmt.body)
         check_stmt(*stmt.body);
     end_scope();
     current_return_type = saved_return;
+}
+inline void Type_checker::check_stmt_node(ast::Var_stmt &stmt)
+{
+    types::Type init_type = types::Type(types::Primitive_kind::Void);
+    if (stmt.initializer)
+    {
+        auto res = check_expr(*stmt.initializer);
+        if (res)
+            init_type = res.value();
+        else
+            return;
+    }
+    if (stmt.type_inferred)
+    {
+        if (is_array(init_type))
+        {
+            const auto &array_type = std::get<std::shared_ptr<types::Array_type>>(init_type);
+            if (array_type->element_type == types::Type(types::Primitive_kind::Void))
+                type_error(stmt.loc, "Cannot infer type of an empty array initializer.");
+        }
+        stmt.type = init_type;
+    }
+    else if (stmt.initializer && !is_compatible(stmt.type, init_type))
+    {
+        type_error(stmt.loc, "Initializer type does not match variable's declared type.");
+    }
+    declare(stmt.name, stmt.type, stmt.is_const, stmt.loc);
 }
 inline void Type_checker::check_stmt_node(ast::Model_stmt &stmt)
 {
@@ -532,13 +608,57 @@ inline void Type_checker::check_stmt_node(ast::Expr_stmt &stmt)
 }
 inline void Type_checker::check_stmt_node(ast::If_stmt &stmt)
 {
-    if (stmt.condition)
-        if (auto res = check_expr(*stmt.condition); res && !is_boolean(res.value()))
-            type_error(ast::get_loc(stmt.condition->node), "If condition must be a boolean");
+    auto condition_res = check_expr(*stmt.condition);
+    if (!condition_res)
+        return;
+    auto condition_type = condition_res.value();
+    if (!is_boolean(condition_type) && !is_optional(condition_type))
+        type_error(ast::get_loc(stmt.condition->node), "If condition must be a boolean or an optional type.");
+    std::string narrowed_var_name;
+    bool narrow_in_then = false;
+    bool narrow_in_else = false;
+    if (auto *bin_expr = std::get_if<ast::Binary_expr>(&stmt.condition->node))
+    {
+        ast::Variable_expr *var_expr = nullptr;
+        if (auto *left_var = std::get_if<ast::Variable_expr>(&bin_expr->left->node))
+        {
+            if (is_nil(ast::get_type(bin_expr->right->node)))
+                var_expr = left_var;
+        }
+        else if (auto *right_var = std::get_if<ast::Variable_expr>(&bin_expr->right->node))
+        {
+            if (is_nil(ast::get_type(bin_expr->left->node)))
+                var_expr = right_var;
+        }
+        if (var_expr)
+        {
+            narrowed_var_name = var_expr->name;
+            if (bin_expr->op == lex::TokenType::NotEqual)
+                narrow_in_then = true;
+            else if (bin_expr->op == lex::TokenType::Equal)
+                narrow_in_else = true;
+        }
+    }
+    else if (auto *var_expr = std::get_if<ast::Variable_expr>(&stmt.condition->node))
+    {
+        if (is_optional(var_expr->type))
+        {
+            narrowed_var_name = var_expr->name;
+            narrow_in_then = true;
+        }
+    }
+    if (narrow_in_then && !narrowed_var_name.empty())
+        m_nil_checked_vars_stack.back().insert(narrowed_var_name);
     if (stmt.then_branch)
         check_stmt(*stmt.then_branch);
+    if (narrow_in_then && !narrowed_var_name.empty())
+        m_nil_checked_vars_stack.back().erase(narrowed_var_name);
+    if (narrow_in_else && !narrowed_var_name.empty())
+        m_nil_checked_vars_stack.back().insert(narrowed_var_name);
     if (stmt.else_branch)
         check_stmt(*stmt.else_branch);
+    if (narrow_in_else && !narrowed_var_name.empty())
+        m_nil_checked_vars_stack.back().erase(narrowed_var_name);
 }
 inline void Type_checker::check_stmt_node(ast::Print_stmt &stmt)
 {
@@ -561,42 +681,6 @@ inline void Type_checker::check_stmt_node(ast::Return_stmt &stmt)
     {
         type_error(stmt.loc, "Function with non-void return type must return a value");
     }
-}
-inline void Type_checker::check_stmt_node(ast::Var_stmt &stmt)
-{
-    types::Type init_type = types::Primitive_kind::Void;
-    if (stmt.initializer)
-    {
-        if (auto res = check_expr(*stmt.initializer); res)
-            init_type = res.value();
-        else
-            return;
-        if (!stmt.type_inferred && is_array(stmt.type) && is_array(init_type))
-        {
-            const auto &init_array_type = std::get<std::shared_ptr<types::Array_type>>(init_type);
-            if (init_array_type->element_type == types::Type(types::Primitive_kind::Void))
-            {
-                if (auto *array_lit = std::get_if<ast::Array_literal_expr>(&stmt.initializer->node))
-                    array_lit->type = stmt.type;
-                init_type = stmt.type;
-            }
-        }
-    }
-    if (stmt.type_inferred)
-    {
-        if (is_array(init_type))
-        {
-            const auto &array_type = std::get<std::shared_ptr<types::Array_type>>(init_type);
-            if (array_type->element_type == types::Type(types::Primitive_kind::Void))
-                type_error(stmt.loc, "Cannot infer type of an empty array initializer. Please provide an explicit type.");
-        }
-        stmt.type = init_type;
-    }
-    else if (stmt.initializer && !is_compatible(stmt.type, init_type))
-    {
-        type_error(stmt.loc, "Initializer type does not match variable's declared type.");
-    }
-    declare(stmt.name, stmt.type, stmt.loc);
 }
 inline void Type_checker::check_stmt_node(ast::While_stmt &stmt)
 {
@@ -622,15 +706,44 @@ inline void Type_checker::check_stmt_node(ast::For_stmt &stmt)
 }
 inline Result<types::Type> Type_checker::check_expr_node(ast::Assignment_expr &expr)
 {
-    auto var_type = lookup(expr.name, expr.loc);
-    if (!var_type)
-        return var_type;
-    auto val_type = check_expr(*expr.value);
-    if (!val_type)
-        return val_type;
-    if (!is_compatible(var_type.value(), val_type.value()))
+    auto var_info_res = lookup(expr.name, expr.loc);
+    if (!var_info_res)
+        return std::unexpected(err::msg("Variable not found", "", 0, 0));
+    bool is_constant = var_info_res.value().second;
+    if (is_constant)
+        type_error(expr.loc, "Cannot assign to a constant variable '" + expr.name + "'.");
+    auto var_type = var_info_res.value().first;
+    auto val_type_res = check_expr(*expr.value);
+    if (!val_type_res)
+        return val_type_res;
+    if (!is_compatible(var_type, val_type_res.value()))
         type_error(expr.loc, "Assignment type mismatch");
-    return expr.type = var_type.value();
+    return expr.type = var_type;
+}
+inline Result<types::Type> Type_checker::check_expr_node(ast::Variable_expr &expr)
+{
+    if (expr.name == "this")
+    {
+        if (!current_model_type)
+        {
+            type_error(expr.loc, "Cannot use 'this' outside of a model method");
+            return expr.type = types::Primitive_kind::Void;
+        }
+        return expr.type = current_model_type.value();
+    }
+    auto type_res = lookup(expr.name, expr.loc);
+    if (!type_res)
+        return expr.type = types::Primitive_kind::Void;
+    auto actual_type = type_res.value().first;
+    for (const auto &scope : m_nil_checked_vars_stack)
+    {
+        if (scope.count(expr.name))
+        {
+            if (is_optional(actual_type))
+                return expr.type = types::get_optional_type(actual_type)->base_type;
+        }
+    }
+    return expr.type = actual_type;
 }
 inline Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr)
 {
@@ -642,27 +755,6 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr)
     types::Type right_type = right.value();
     switch (expr.op)
     {
-        case lex::TokenType::Plus:
-            if (is_string(left_type) && is_string(right_type))
-                return expr.type = types::Primitive_kind::String;
-        case lex::TokenType::Minus:
-        case lex::TokenType::Star:
-        case lex::TokenType::Slash:
-            if (!is_numeric(left_type) || !is_numeric(right_type))
-            {
-                type_error(expr.loc, "Operands for arithmetic must be numbers");
-                return expr.type = types::Primitive_kind::Void;
-            }
-            return expr.type = promote_numeric_type(left_type, right_type);
-        case lex::TokenType::Percent:
-            if (!(std::holds_alternative<types::Primitive_kind>(left_type) &&
-                  std::get<types::Primitive_kind>(left_type) == types::Primitive_kind::Int) ||
-                !(std::holds_alternative<types::Primitive_kind>(right_type) &&
-                  std::get<types::Primitive_kind>(right_type) == types::Primitive_kind::Int))
-            {
-                type_error(expr.loc, "Operands for '%' must be integers");
-            }
-            return expr.type = types::Primitive_kind::Int;
         case lex::TokenType::Greater:
         case lex::TokenType::GreaterEqual:
         case lex::TokenType::Less:
@@ -672,109 +764,82 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr)
             return expr.type = types::Primitive_kind::Bool;
         case lex::TokenType::Equal:
         case lex::TokenType::NotEqual:
+            if ((is_optional(left_type) && is_nil(right_type)) || (is_nil(left_type) && is_optional(right_type)))
+                return expr.type = types::Primitive_kind::Bool;
             if (!is_compatible(left_type, right_type) && !is_compatible(right_type, left_type))
                 type_error(expr.loc, "Cannot compare incompatible types");
             return expr.type = types::Primitive_kind::Bool;
-        case lex::TokenType::LogicalAnd:
-        case lex::TokenType::LogicalOr:
-            if (!is_boolean(left_type) || !is_boolean(right_type))
-                type_error(expr.loc, "Operands for logical operators must be booleans");
-            return expr.type = types::Primitive_kind::Bool;
         default:
-            type_error(expr.loc, "Unsupported binary operator");
+            if (is_string(left_type) && is_string(right_type) && expr.op == lex::TokenType::Plus)
+                return expr.type = types::Primitive_kind::String;
+            if (is_numeric(left_type) && is_numeric(right_type))
+            {
+                if (expr.op == lex::TokenType::Percent &&
+                    (left_type != types::Type(types::Primitive_kind::Int) || right_type != types::Type(types::Primitive_kind::Int)))
+                {
+                    type_error(expr.loc, "Operands for '%' must be integers");
+                }
+                return expr.type = promote_numeric_type(left_type, right_type);
+            }
+            type_error(expr.loc, "Unsupported binary operator for given types");
             return expr.type = types::Primitive_kind::Void;
     }
 }
-
 inline Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr)
 {
-    // 1. Check for a native function first.
-    if (m_native_functions.count(expr.callee))
+    if (m_native_signatures.count(expr.callee))
     {
-        const auto &signature = m_native_functions.at(expr.callee);
+        const auto &signature = m_native_signatures.at(expr.callee);
         if (expr.arguments.size() != signature.allowed_params.size())
         {
-            type_error(expr.loc, "Incorrect number of arguments for '" + expr.callee + "'. Expected " +
-                                     std::to_string(signature.allowed_params.size()) + ", but got " +
-                                     std::to_string(expr.arguments.size()) + ".");
+            type_error(expr.loc, "Incorrect number of arguments for '" + expr.callee + "'.");
             return expr.type = signature.return_type;
         }
-
         for (size_t i = 0; i < expr.arguments.size(); ++i)
         {
             auto arg_type_res = check_expr(*expr.arguments[i]);
             if (!arg_type_res)
                 return types::Primitive_kind::Void;
-
             const auto &allowed_for_param = signature.allowed_params[i];
             if (!is_argument_compatible(allowed_for_param, arg_type_res.value()))
-            {
-                // --- Improved Error Message Logic ---
-                std::string expected_types_str;
-                for (size_t j = 0; j < allowed_for_param.size(); ++j)
-                {
-                    expected_types_str += types::type_to_string(allowed_for_param[j]);
-                    if (j < allowed_for_param.size() - 1)
-                        expected_types_str += " or ";
-                }
-
-                type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch for function '" + expr.callee + "'.\n" +
-                                                                      "    Expected: " + expected_types_str + "\n" +
-                                                                      "    Got:      " + types::type_to_string(arg_type_res.value()));
-            }
+                type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch for function '" + expr.callee + "'.");
         }
         return expr.type = signature.return_type;
     }
-
-    // 2. Check for a user-defined function.
     if (functions.count(expr.callee))
     {
         const auto &func_data = functions.at(expr.callee);
         const auto &signature = func_data.declaration;
         if (expr.arguments.size() != signature->parameters.size())
         {
-            type_error(expr.loc, "Incorrect number of arguments for function '" + expr.callee + "'. Expected " +
-                                     std::to_string(signature->parameters.size()) + ", but got " + std::to_string(expr.arguments.size()) +
-                                     ".");
+            type_error(expr.loc, "Incorrect number of arguments for function '" + expr.callee + "'.");
         }
         else
         {
             for (size_t i = 0; i < expr.arguments.size(); ++i)
             {
                 auto arg_type_res = check_expr(*expr.arguments[i]);
-                if (arg_type_res && !is_compatible(signature->parameters[i].second, arg_type_res.value()))
-                {
-                    type_error(ast::get_loc(expr.arguments[i]->node),
-                               "Argument type mismatch for function '" + expr.callee + "'.\n" +
-                                   "    Expected: " + types::type_to_string(signature->parameters[i].second) + "\n" +
-                                   "    Got:      " + types::type_to_string(arg_type_res.value()));
-                }
+                if (arg_type_res && !is_compatible(signature->parameters[i].type, arg_type_res.value()))
+                    type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch.");
             }
         }
         return expr.type = signature->return_type;
     }
-
-    // 3. Check for a callable variable (like a closure).
-    auto callable_var = lookup_variable(expr.callee, expr.loc);
-    if (callable_var)
+    auto callable_var_res = lookup_variable(expr.callee, expr.loc);
+    if (callable_var_res)
     {
-        if (auto *ct = std::get_if<std::shared_ptr<types::Closure_type>>(&callable_var.value()))
+        if (auto *ct = std::get_if<std::shared_ptr<types::Closure_type>>(&callable_var_res.value().first))
         {
             const auto &signature = (*ct)->function_type;
-            // You would add similar argument checking logic for closures here
             return expr.type = signature.return_type;
         }
     }
-
-    // 4. If nothing callable is found, it's an error.
     type_error(expr.loc, "'" + expr.callee + "' is not a function or callable variable.");
     return types::Primitive_kind::Void;
 }
-
 inline Result<types::Type> Type_checker::check_expr_node(ast::Cast_expr &expr)
 {
     std::ignore = check_expr(*expr.expression);
-    expr.target_type = expr.target_type;
     return expr.target_type;
 }
 inline Result<types::Type> Type_checker::check_expr_node(ast::Closure_expr &expr)
@@ -782,7 +847,7 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Closure_expr &expr
     auto saved_ret = current_return_type;
     current_return_type = expr.return_type;
     begin_scope();
-    for (auto const &p : expr.parameters) declare(p.first, p.second, expr.loc);
+    for (auto const &p : expr.parameters) declare(p.first, p.second, false, expr.loc);
     if (expr.body)
         check_stmt(*expr.body);
     end_scope();
@@ -794,10 +859,16 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Closure_expr &expr
 }
 inline Result<types::Type> Type_checker::check_expr_node(ast::Field_access_expr &expr)
 {
-    auto obj_type = check_expr(*expr.object);
-    if (!obj_type)
+    auto obj_type_res = check_expr(*expr.object);
+    if (!obj_type_res)
         return expr.type = types::Primitive_kind::Void;
-    if (auto *mt = std::get_if<std::shared_ptr<types::Model_type>>(&obj_type.value()))
+    auto obj_type = obj_type_res.value();
+    if (is_optional(obj_type))
+    {
+        type_error(expr.loc, "Cannot access field on an optional type. Use an 'if' check to unwrap it first.");
+        return expr.type = types::Primitive_kind::Void;
+    }
+    if (auto *mt = std::get_if<std::shared_ptr<types::Model_type>>(&obj_type))
     {
         if ((*mt)->fields.contains(expr.field_name))
             return expr.type = (*mt)->fields.at(expr.field_name);
@@ -829,21 +900,26 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Field_assignment_e
         type_error(expr.loc, "Assignment type mismatch for field");
     return expr.type = field_type.value();
 }
-inline Result<types::Type> Type_checker::check_expr_node(ast::Literal_expr &expr) { return expr.type; }
-
+inline Result<types::Type> Type_checker::check_expr_node(ast::Literal_expr &expr)
+{
+    if (auto *nil_literal = std::get_if<std::nullptr_t>(&expr.value))
+        return expr.type = types::Primitive_kind::Nil;
+    return expr.type;
+}
 inline Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr)
 {
     auto obj_type_res = check_expr(*expr.object);
     if (!obj_type_res)
         return expr.type = types::Primitive_kind::Void;
     auto obj_type = obj_type_res.value();
-
-    // 1. Check for a NATIVE BUILT-IN method.
+    if (is_optional(obj_type))
+    {
+        type_error(expr.loc, "Cannot call method on an optional type. Use an 'if' check to unwrap it first.");
+        return expr.type = types::Primitive_kind::Void;
+    }
     if (m_native_methods.count(expr.method_name))
     {
         const auto &signature = m_native_methods.at(expr.method_name);
-
-        // Check if the method can be called on this object's type.
         bool is_valid_this_type = false;
         for (const auto &valid_type : signature.valid_this_types)
         {
@@ -853,36 +929,25 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &
                 break;
             }
         }
-
         if (is_valid_this_type)
         {
-            // ... (arity check is the same) ...
-
-            // --- GENERIC TYPE RESOLUTION LOGIC ---
+            if (expr.arguments.size() != signature.allowed_params.size())
+            {
+                type_error(expr.loc, "Incorrect number of arguments for '" + expr.method_name + "'.");
+                return expr.type = signature.return_type;
+            }
             for (size_t i = 0; i < expr.arguments.size(); ++i)
             {
                 auto arg_type_res = check_expr(*expr.arguments[i]);
                 if (!arg_type_res)
                     return types::Primitive_kind::Void;
-
-                auto allowed_for_param = signature.allowed_params[i];  // Get a mutable copy
+                auto allowed_for_param = signature.allowed_params[i];
                 auto actual_arg_type = arg_type_res.value();
-
-                // If the expected parameter is generic, resolve it!
-                if (is_any(allowed_for_param[0]))
-                {
-                    if (is_array(obj_type))
-                    {
-                        // For an array method, the generic type must match the array's element type.
-                        allowed_for_param[0] = std::get<std::shared_ptr<types::Array_type>>(obj_type)->element_type;
-                    }
-                }
-
+                if (is_any(allowed_for_param[0]) && is_array(obj_type))
+                    allowed_for_param[0] = std::get<std::shared_ptr<types::Array_type>>(obj_type)->element_type;
                 if (!is_argument_compatible(allowed_for_param, actual_arg_type))
                     type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch for method '" + expr.method_name + "'.");
             }
-
-            // Handle generic return types (e.g., array.pop() -> T).
             if (is_any(signature.return_type))
             {
                 if (is_array(obj_type))
@@ -891,38 +956,17 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &
             return expr.type = signature.return_type;
         }
     }
-
-    // 2. If not a native method, check for a USER-DEFINED MODEL method.
     if (auto *mt = std::get_if<std::shared_ptr<types::Model_type>>(&obj_type))
     {
         if ((*mt)->methods.count(expr.method_name))
         {
             const auto &method_signature = (*mt)->methods.at(expr.method_name);
-
-            // Check arity for the model method.
-            if (expr.arguments.size() != method_signature.parameter_types.size())
-            {
-                type_error(expr.loc, "Incorrect argument count for method '" + expr.method_name + "'.");
-            }
-            else
-            {
-                // Check argument types for the model method.
-                for (size_t i = 0; i < expr.arguments.size(); ++i)
-                {
-                    auto arg_type_res = check_expr(*expr.arguments[i]);
-                    if (arg_type_res && !is_compatible(method_signature.parameter_types[i], arg_type_res.value()))
-                        type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch.");
-                }
-            }
             return expr.type = method_signature.return_type;
         }
     }
-
-    // 3. If no method was found, it's an error.
     type_error(expr.loc, "No method named '" + expr.method_name + "' found for this type.");
     return expr.type = types::Primitive_kind::Void;
 }
-
 inline Result<types::Type> Type_checker::check_expr_node(ast::Model_literal_expr &expr)
 {
     if (!model_signatures.contains(expr.model_name))
@@ -975,26 +1019,31 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Unary_expr &expr)
 inline Result<types::Type> Type_checker::check_expr_node(ast::Array_literal_expr &expr)
 {
     if (expr.elements.empty())
+        return expr.type = types::Type(std::make_shared<types::Array_type>(types::Type(types::Primitive_kind::Void)));
+    types::Type common_type = types::Primitive_kind::Nil;
+    bool has_nil = false;
+    for (const auto &elem_expr : expr.elements)
     {
-        auto element_type = types::Type(types::Primitive_kind::Void);
-        return expr.type = types::Type(std::make_shared<types::Array_type>(element_type));
-    }
-    auto first_element_type_res = check_expr(*expr.elements[0]);
-    if (!first_element_type_res)
-        return expr.type = types::Primitive_kind::Void;
-    types::Type common_type = first_element_type_res.value();
-    for (size_t i = 1; i < expr.elements.size(); ++i)
-    {
-        auto element_type_res = check_expr(*expr.elements[i]);
-        if (!element_type_res)
-            return expr.type = types::Primitive_kind::Void;
-        if (!is_compatible(common_type, element_type_res.value()))
+        auto elem_type_res = check_expr(*elem_expr);
+        if (!elem_type_res)
+            continue;
+        auto elem_type = elem_type_res.value();
+        if (is_nil(elem_type))
         {
-            type_error(ast::get_loc(expr.elements[i]->node), "Array elements must have a consistent type.");
-            auto err_element_type = types::Type(types::Primitive_kind::Void);
-            return expr.type = types::Type(std::make_shared<types::Array_type>(err_element_type));
+            has_nil = true;
+        }
+        else if (is_nil(common_type))
+        {
+            common_type = elem_type;
+        }
+        else if (!is_compatible(common_type, elem_type) && !is_compatible(elem_type, common_type))
+        {
+            type_error(ast::get_loc(elem_expr->node), "Array elements must have a consistent type.");
+            return expr.type = types::Type(std::make_shared<types::Array_type>(types::Primitive_kind::Void));
         }
     }
+    if (has_nil && !is_optional(common_type) && !is_nil(common_type))
+        common_type = types::Type(std::make_shared<types::Optional_type>(common_type));
     return expr.type = types::Type(std::make_shared<types::Array_type>(common_type));
 }
 inline Result<types::Type> Type_checker::check_expr_node(ast::Array_access_expr &expr)
@@ -1033,25 +1082,6 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Array_assignment_e
     if (!is_compatible(array_type->element_type, value_type_res.value()))
         type_error(ast::get_loc(expr.value->node), "Type of value being assigned does not match array's element type.");
     return expr.type = value_type_res.value();
-}
-
-inline Result<types::Type> Type_checker::check_expr_node(ast::Variable_expr &expr)
-{
-    if (expr.name == "this")
-    {
-        if (!current_model_type)
-        {
-            type_error(expr.loc, "Cannot use 'this' outside of a model method");
-            return expr.type = types::Primitive_kind::Void;
-        }
-        return expr.type = current_model_type.value();
-    }
-
-    auto type_res = lookup(expr.name, expr.loc);
-    if (!type_res)
-        return expr.type = types::Primitive_kind::Void;
-
-    return expr.type = type_res.value();
 }
 
 }  // namespace phos

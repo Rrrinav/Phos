@@ -9,15 +9,7 @@
 
 namespace types
 {
-enum class Primitive_kind : uint8_t
-{
-    Int,
-    Float,
-    Bool,
-    String,
-    Void,
-    Any
-};
+enum class Primitive_kind : uint8_t { Int, Float, Bool, String, Void, Any, Nil };
 
 // Forward declarations
 struct Function_type;
@@ -25,10 +17,11 @@ struct Closure_type;
 struct Model_type;
 struct Array_type;
 struct Native_function_type;
+struct Optional_type;
 
 // Modern type representation using variant
 using Type = std::variant<Primitive_kind, std::shared_ptr<Function_type>, std::shared_ptr<Closure_type>, std::shared_ptr<Model_type>,
-                          std::shared_ptr<Array_type>, std::shared_ptr<Native_function_type>>;
+                          std::shared_ptr<Array_type>, std::shared_ptr<Native_function_type>, std::shared_ptr<Optional_type>>;
 
 struct Function_type
 {
@@ -78,29 +71,52 @@ struct Array_type
     bool operator==(const Array_type &other) const { return this->element_type == other.element_type; }
 };
 
+struct Optional_type
+{
+    Type base_type;  // The underlying type (e.g., 'string' in 'string?')
+
+    bool operator==(const Optional_type &other) const { return base_type == other.base_type; }
+};
+
 // Helper functions for type manipulation
-inline bool is_primitive(const Type &type)                                { return std::holds_alternative<Primitive_kind>(type); }
+inline bool is_primitive(const Type &type) { return std::holds_alternative<Primitive_kind>(type); }
 
-inline Primitive_kind get_primitive_kind(const Type &type)                { return std::get<Primitive_kind>(type); }
+inline Primitive_kind get_primitive_kind(const Type &type) { return std::get<Primitive_kind>(type); }
 
-inline bool is_function(const Type &type)                                 { return std::holds_alternative<std::shared_ptr<Function_type>>(type); }
+inline bool is_function(const Type &type) { return std::holds_alternative<std::shared_ptr<Function_type>>(type); }
 
 inline std::shared_ptr<Function_type> get_function_type(const Type &type) { return std::get<std::shared_ptr<Function_type>>(type); }
 
-inline bool is_closure(const Type &type)                                  { return std::holds_alternative<std::shared_ptr<Closure_type>>(type); }
+inline bool is_closure(const Type &type) { return std::holds_alternative<std::shared_ptr<Closure_type>>(type); }
 
-inline std::shared_ptr<Closure_type> get_closure_type(const Type &type)   { return std::get<std::shared_ptr<Closure_type>>(type); }
+inline std::shared_ptr<Closure_type> get_closure_type(const Type &type) { return std::get<std::shared_ptr<Closure_type>>(type); }
 
-inline bool is_model(const Type &type)                                    { return std::holds_alternative<std::shared_ptr<Model_type>>(type); }
+inline bool is_model(const Type &type) { return std::holds_alternative<std::shared_ptr<Model_type>>(type); }
 
-inline std::shared_ptr<Model_type> get_model_type(const Type &type)       { return std::get<std::shared_ptr<Model_type>>(type); }
+inline std::shared_ptr<Model_type> get_model_type(const Type &type) { return std::get<std::shared_ptr<Model_type>>(type); }
 
-inline bool is_array(const Type &type)                                    { return std::holds_alternative<std::shared_ptr<Array_type>>(type); }
+inline bool is_array(const Type &type) { return std::holds_alternative<std::shared_ptr<Array_type>>(type); }
 
-inline std::shared_ptr<Array_type> get_array_type(const Type &type)       { return std::get<std::shared_ptr<Array_type>>(type); }
+inline std::shared_ptr<Array_type> get_array_type(const Type &type) { return std::get<std::shared_ptr<Array_type>>(type); }
 
-inline bool is_any(const Type &type)                                       { if (is_primitive(type)) return get_primitive_kind(type) == types::Primitive_kind::Any; else return false; }
+inline bool is_any(const Type &type)
+{
+    if (is_primitive(type))
+        return get_primitive_kind(type) == types::Primitive_kind::Any;
+    else
+        return false;
+}
 
+inline bool is_nil(const Type &type)
+{
+    if (is_primitive(type))
+        return get_primitive_kind(type) == types::Primitive_kind::Nil;
+    else
+        return false;
+}
+
+inline bool is_optional(const Type &type) { return std::holds_alternative<std::shared_ptr<Optional_type>>(type); }
+inline std::shared_ptr<Optional_type> get_optional_type(const Type &type) { return std::get<std::shared_ptr<Optional_type>>(type); }
 // Type conversion to string
 std::string type_to_string(const Type &type)
 {
@@ -118,6 +134,8 @@ std::string type_to_string(const Type &type)
                 return "string";
             case Primitive_kind::Void:
                 return "void";
+            case Primitive_kind::Nil:
+                return "nil";
             case Primitive_kind::Any:
                 return "any";
         }
@@ -162,8 +180,9 @@ std::string type_to_string(const Type &type)
     {
         return types::type_to_string(get_array_type(type)->element_type) + "[]";
     }
+    else if (is_optional(type)) return type_to_string(get_optional_type(type)->base_type) + "?";
 
-    return "unknown";
+    return "unknown: bro what are you coding?";
 }
 
 // Helper function to create primitive types
@@ -173,4 +192,4 @@ inline Type make_bool_type() { return Primitive_kind::Bool; }
 inline Type make_string_type() { return Primitive_kind::String; }
 inline Type make_void_type() { return Primitive_kind::Void; }
 
-}  // namespace phos::types
+}  // namespace types

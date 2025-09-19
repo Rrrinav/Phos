@@ -65,6 +65,8 @@ private:
                 return Token(TokenType::Newline, "\n", 0, line - 1, start_col);
             case '.':
                 return Token(TokenType::Dot, ".", 0, line, start_col);
+            case '?':
+                return Token(TokenType::Question, "?", 0, line, start_col);
             case '[':
                 return Token(TokenType::LeftBracket, "[", 0, line, start_col);
             case ']':
