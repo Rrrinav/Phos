@@ -418,78 +418,66 @@ private:
                             return arg_result;
                         arguments.push_back(arg_result.value());
                     }
-                    //std::cout << "--- Registered Native Methods ---" << std::endl;
-                    //for (const auto &[type, methods_map] : native_methods)
-                    //{
-                    //    std::cout << "Type: " << types::type_to_string(type) << " | Methods Registered: " << methods_map.size()
-                    //              << std::endl;
-                    //    for (const auto &[method_name, method_impl] : methods_map) std::cout << "  - " << method_name << "()" << std::endl;
-                    //}
-                    //std::cout << "---------------------------------" << std::endl;
 
-                    // 1. Check for a NATIVE method on an array.
+                    // 1. Check for NATIVE methods on OPTIONAL types first.
+                    if (is_optional(ast::get_type(arg.object->node)))
+                    {
+                        if (native_methods.count(native::optional_type_string) &&
+                            native_methods.at(native::optional_type_string).count(arg.method_name))
+                        {
+                            return native_methods.at(native::optional_type_string).at(arg.method_name)(object, arguments);
+                        }
+                    }
+
+                    // 2. Check for NATIVE methods on ARRAYS.
                     if (is_array(object))
                     {
-                        // CORRECTED: Use the same generic "any array" type as the key for the map.
-                        auto any_array_type = types::Type(std::make_shared<types::Array_type>(types::Primitive_kind::Any));
-
-                        //for (const auto &[registered_type, methods] : native_methods)
-                        //{
-                        //    if (types::type_to_string(registered_type) == "any[]")
-                        //    {
-                        //        std::println("Found registered any[] type");
-                        //        std::println("Are they equal? {}", registered_type == any_array_type);
-                        //        std::println("Hash of registered: {}", std::hash<types::Type>{}(registered_type));
-                        //        std::println("Hash of lookup: {}", std::hash<types::Type>{}(any_array_type));
-                        //    }
-                        //}
-
-                        //std::println("count at array type ({}): {}", types::type_to_string(any_array_type),
-                        //             native_methods.count(any_array_type));
-                        //std::println("count of method: {}", native_methods.at(any_array_type).count(arg.method_name));
                         if (native_methods.count(native::array_type_string) &&
                             native_methods.at(native::array_type_string).count(arg.method_name))
                         {
-                            std::println("count of method: {}", native_methods.at(native::array_type_string).count(arg.method_name));
-                            // This will now find the method correctly.
                             return native_methods.at(native::array_type_string).at(arg.method_name)(object, arguments);
                         }
                     }
-                    // 2. ELSE, check for a NATIVE method on a string.
-                    else if (is_string(object))
+
+                    // 3. Check for NATIVE methods on STRINGS.
+                    if (is_string(object))
                     {
-                        auto string_type = types::Type(types::Primitive_kind::String);
                         if (native_methods.count(native::string_type_string) &&
                             native_methods.at(native::string_type_string).count(arg.method_name))
+                        {
                             return native_methods.at(native::string_type_string).at(arg.method_name)(object, arguments);
+                        }
                     }
-                    // 3. ELSE, check for a USER-DEFINED method on a model.
-                    else if (is_model(object))
+
+                    // 4. Check for USER-DEFINED methods on MODELS.
+                    if (is_model(object))
                     {
-                        auto model_val = get_model(object);  // Use 'object', not 'object_result.value()'
+                        auto model_val = get_model(object);
                         const auto &model_name = model_val->signature.name;
 
                         if (model_data.contains(model_name) && model_data.at(model_name).methods.contains(arg.method_name))
                         {
                             const auto &method_data = model_data.at(model_name).methods.at(arg.method_name);
-                            auto new_env = std::make_shared<Environment>(method_data.definition_environment);
-                            new_env->define("this", object);
 
+                            // Create a new environment for the method call that inherits from the method's definition environment.
+                            auto new_env = std::make_shared<Environment>(method_data.definition_environment);
+                            new_env->define("this", object);  // Define 'this'
+
+                            // Define parameters
                             for (size_t i = 0; i < method_data.declaration->parameters.size(); ++i)
                                 new_env->define(method_data.declaration->parameters[i].name, arguments[i]);
 
                             auto result = executeBlock(std::get<ast::Block_stmt>(method_data.declaration->body->node).statements, new_env);
                             if (!result)
                                 return std::unexpected(result.error());
-
                             if (result.value().is_return)
                                 return result.value().value;
 
-                            return Value(std::monostate{});
+                            return Value(std::monostate{});  // Return void if no explicit return
                         }
                     }
 
-                    // 4. If nothing is found, it's an error.
+                    // 5. If no method was found, it's a runtime error.
                     return std::unexpected(err::msg("No method named '" + arg.method_name + "' found for this type.", "interpreter",
                                                     arg.loc.line, arg.loc.column));
                 }

@@ -9,12 +9,15 @@
 #include "../value/value.hpp"  // Includes Native_function_value, Result, etc.
 #include "native_signatures.hpp"
 
+namespace phos { class Interpreter; }
+
 namespace phos::native
 {
 
 //  NOTE: (2025-09-19:08:36): Did this because variant doesnt have overloaded operators for comaprison
 inline const std::string array_type_string = "__array__";
 inline const std::string string_type_string = "__string__";
+inline const std::string optional_type_string = "__optional__";
 
 struct Native_method_definition
 {
@@ -74,13 +77,14 @@ inline std::array<std::shared_ptr<Native_function_value>, NUM_NATIVE_FUNCS> get_
     return functions;
 }
 
-inline constexpr int NUM_NATIVE_METHODS = 13;
+inline constexpr int NUM_NATIVE_METHODS = 16;
 // Returns a fixed-size array of all native METHOD implementations.
 inline std::array<Native_method_definition, NUM_NATIVE_METHODS> get_native_methods()
 {
     std::array<Native_method_definition, NUM_NATIVE_METHODS> methods;
     auto any_array_type = array_type_string;
     auto string_type = string_type_string;
+    auto any_optional_type = optional_type_string;
     int i = 0;
 
     // ===================================
@@ -199,6 +203,19 @@ inline std::array<Native_method_definition, NUM_NATIVE_METHODS> get_native_metho
                             pos += replace.length();
                         }
                         return Value(str);
+                    }};
+    methods[i++] = {any_optional_type, "exists", 0, [](Value &s, const auto &a) -> Result<Value> { return Value(!is_nil(s)); }};
+    methods[i++] = {any_optional_type, "value", 0, [](Value &s, const auto &a) -> Result<Value>
+                    {
+                        if (is_nil(s))
+                            return std::unexpected(err::msg("Runtime Panic: Called .value() on a nil optional.", "interpreter", 0, 0));
+                        return s;  // The interpreter just returns the underlying value
+                    }};
+    methods[i++] = {any_optional_type, "value_or", 1, [](Value &s, const auto &a) -> Result<Value>
+                    {
+                        if (is_nil(s))
+                            return a[0];  // Return the default value
+                        return s;
                     }};
 
     return methods;

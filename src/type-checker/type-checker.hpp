@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cmath>
 #include <memory>
+#include <print>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -101,7 +103,7 @@ private:
 
     using Scope = std::unordered_map<std::string, std::pair<types::Type, bool>>;
     std::vector<Scope> scopes;
-    std::vector<std::unordered_set<std::string>> m_nil_checked_vars_stack;  // For type narrowing
+    std::vector<std::unordered_set<std::string>> m_nil_checked_vars_stack;
 
     std::unordered_map<std::string, FunctionData> functions;
     std::unordered_map<std::string, ModelData> model_data;
@@ -114,13 +116,13 @@ private:
     std::string phase = "type-checking";
 
     // --- Private Helper Methods ---
+    Result<std::pair<types::Type, bool>> lookup_variable(const std::string &name, const ast::Source_location &loc);
     bool is_compatible(const types::Type &expected, const types::Type &actual) const;
     bool is_argument_compatible(const std::vector<types::Type> &allowed_types, const types::Type &actual_type) const;
     void begin_scope();
     void end_scope();
     void declare(const std::string &name, const types::Type &type, bool is_constant, const ast::Source_location &loc);
     Result<std::pair<types::Type, bool>> lookup(const std::string &name, const ast::Source_location &loc);
-    Result<std::pair<types::Type, bool>> lookup_variable(const std::string &name, const ast::Source_location &loc);
     types::Type promote_numeric_type(const types::Type &left, const types::Type &right) const;
     bool is_numeric(const types::Type &type) const;
     bool is_boolean(const types::Type &type) const;
@@ -433,18 +435,33 @@ inline void Type_checker::declare(const std::string &name, const types::Type &ty
     else
         scopes.back()[name] = {type, is_constant};
 }
+
 inline bool Type_checker::is_compatible(const types::Type &expected, const types::Type &actual) const
 {
+    if (is_any(expected))
+        return true;
+
     if (is_optional(expected))
     {
+        auto base_expected = types::get_optional_type(expected)->base_type;
+        if (is_any(base_expected) && is_optional(actual))
+            return true;
+    }
+    if (is_optional(expected))
+    {
+        // Rule 1: T? <- nil
         if (is_nil(actual))
             return true;
+        // Rule 2: T? <- U? (Check if base types are compatible)
         if (is_optional(actual))
             return is_compatible(types::get_optional_type(expected)->base_type, types::get_optional_type(actual)->base_type);
+        // Rule 3: T? <- T (Check if base type is compatible with actual)
         return is_compatible(types::get_optional_type(expected)->base_type, actual);
     }
-    if (is_optional(actual))
-        return false;  // Cannot assign T? to T
+
+    // A non-optional type cannot be assigned an optional or nil value.
+    if (is_optional(actual) || is_nil(actual))
+        return false;
     if (auto *expected_array = std::get_if<std::shared_ptr<types::Array_type>>(&expected))
     {
         if (is_any((*expected_array)->element_type) && is_array(actual))
@@ -455,8 +472,11 @@ inline bool Type_checker::is_compatible(const types::Type &expected, const types
         if (const auto *b_array = std::get_if<std::shared_ptr<types::Array_type>>(&actual))
             return is_compatible((*a_array)->element_type, (*b_array)->element_type);
     }
+    if (is_any(expected) || is_any(actual))
+        return true;
     return expected == actual;
 }
+
 inline bool Type_checker::is_argument_compatible(const std::vector<types::Type> &allowed_types, const types::Type &actual_type) const
 {
     for (const auto &allowed : allowed_types)
@@ -515,14 +535,6 @@ inline bool Type_checker::is_any(const types::Type &type) const
 }
 inline bool Type_checker::is_nil(const types::Type &type) const { return types::is_nil(type); }
 inline bool Type_checker::is_optional(const types::Type &type) const { return types::is_optional(type); }
-inline void Type_checker::check_stmt(ast::Stmt &stmt)
-{
-    std::visit([this](auto &s) { check_stmt_node(s); }, stmt.node);
-}
-inline Result<types::Type> Type_checker::check_expr(ast::Expr &expr)
-{
-    return std::visit([this](auto &e) -> Result<types::Type> { return check_expr_node(e); }, expr.node);
-}
 inline Result<std::pair<types::Type, bool>> Type_checker::lookup_variable(const std::string &name, const ast::Source_location &loc)
 {
     for (auto it = scopes.rbegin(); it != scopes.rend(); ++it)
@@ -545,6 +557,14 @@ inline Result<std::pair<types::Type, bool>> Type_checker::lookup(const std::stri
     }
     type_error(loc, "Undefined variable or function '" + name + "'.");
     return std::unexpected(err::msg("", "", 0, 0));
+}
+inline void Type_checker::check_stmt(ast::Stmt &stmt)
+{
+    std::visit([this](auto &s) { check_stmt_node(s); }, stmt.node);
+}
+inline Result<types::Type> Type_checker::check_expr(ast::Expr &expr)
+{
+    return std::visit([this](auto &e) -> Result<types::Type> { return check_expr_node(e); }, expr.node);
 }
 inline void Type_checker::check_stmt_node(ast::Function_stmt &stmt)
 {
@@ -611,12 +631,16 @@ inline void Type_checker::check_stmt_node(ast::If_stmt &stmt)
     auto condition_res = check_expr(*stmt.condition);
     if (!condition_res)
         return;
+
     auto condition_type = condition_res.value();
     if (!is_boolean(condition_type) && !is_optional(condition_type))
         type_error(ast::get_loc(stmt.condition->node), "If condition must be a boolean or an optional type.");
+
     std::string narrowed_var_name;
     bool narrow_in_then = false;
-    bool narrow_in_else = false;
+    bool narrow_in_else = false;  // ✅ NEW: Track narrowing for the else block
+
+    // --- Analyze the condition ---
     if (auto *bin_expr = std::get_if<ast::Binary_expr>(&stmt.condition->node))
     {
         ast::Variable_expr *var_expr = nullptr;
@@ -630,13 +654,14 @@ inline void Type_checker::check_stmt_node(ast::If_stmt &stmt)
             if (is_nil(ast::get_type(bin_expr->left->node)))
                 var_expr = right_var;
         }
+
         if (var_expr)
         {
             narrowed_var_name = var_expr->name;
             if (bin_expr->op == lex::TokenType::NotEqual)
-                narrow_in_then = true;
+                narrow_in_then = true;  // if (var != nil) -> then is safe
             else if (bin_expr->op == lex::TokenType::Equal)
-                narrow_in_else = true;
+                narrow_in_else = true;  // if (var == nil) -> else is safe
         }
     }
     else if (auto *var_expr = std::get_if<ast::Variable_expr>(&stmt.condition->node))
@@ -644,19 +669,26 @@ inline void Type_checker::check_stmt_node(ast::If_stmt &stmt)
         if (is_optional(var_expr->type))
         {
             narrowed_var_name = var_expr->name;
-            narrow_in_then = true;
+            narrow_in_then = true;  // if (var) -> then is safe
         }
     }
+
+    // --- Check branches with correct narrowing context ---
     if (narrow_in_then && !narrowed_var_name.empty())
         m_nil_checked_vars_stack.back().insert(narrowed_var_name);
+
     if (stmt.then_branch)
         check_stmt(*stmt.then_branch);
+
     if (narrow_in_then && !narrowed_var_name.empty())
         m_nil_checked_vars_stack.back().erase(narrowed_var_name);
+
     if (narrow_in_else && !narrowed_var_name.empty())
         m_nil_checked_vars_stack.back().insert(narrowed_var_name);
+
     if (stmt.else_branch)
         check_stmt(*stmt.else_branch);
+
     if (narrow_in_else && !narrowed_var_name.empty())
         m_nil_checked_vars_stack.back().erase(narrowed_var_name);
 }
@@ -685,8 +717,11 @@ inline void Type_checker::check_stmt_node(ast::Return_stmt &stmt)
 inline void Type_checker::check_stmt_node(ast::While_stmt &stmt)
 {
     if (stmt.condition)
-        if (auto res = check_expr(*stmt.condition); res && !is_boolean(res.value()))
+    {
+        auto res = check_expr(*stmt.condition);
+        if (res && !is_boolean(res.value()))
             type_error(ast::get_loc(stmt.condition->node), "While condition must be a boolean");
+    }
     if (stmt.body)
         check_stmt(*stmt.body);
 }
@@ -696,8 +731,11 @@ inline void Type_checker::check_stmt_node(ast::For_stmt &stmt)
     if (stmt.initializer)
         check_stmt(*stmt.initializer);
     if (stmt.condition)
-        if (auto res = check_expr(*stmt.condition); res && !is_boolean(res.value()))
+    {
+        auto res = check_expr(*stmt.condition);
+        if (res && !is_boolean(res.value()))
             type_error(ast::get_loc(stmt.condition->node), "For loop condition must be a boolean");
+    }
     if (stmt.increment)
         std::ignore = check_expr(*stmt.increment);
     if (stmt.body)
@@ -755,13 +793,6 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr)
     types::Type right_type = right.value();
     switch (expr.op)
     {
-        case lex::TokenType::Greater:
-        case lex::TokenType::GreaterEqual:
-        case lex::TokenType::Less:
-        case lex::TokenType::LessEqual:
-            if (!is_numeric(left_type) || !is_numeric(right_type))
-                type_error(expr.loc, "Operands for comparison must be numbers");
-            return expr.type = types::Primitive_kind::Bool;
         case lex::TokenType::Equal:
         case lex::TokenType::NotEqual:
             if ((is_optional(left_type) && is_nil(right_type)) || (is_nil(left_type) && is_optional(right_type)))
@@ -792,7 +823,9 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr)
         const auto &signature = m_native_signatures.at(expr.callee);
         if (expr.arguments.size() != signature.allowed_params.size())
         {
-            type_error(expr.loc, "Incorrect number of arguments for '" + expr.callee + "'.");
+            type_error(expr.loc, "Incorrect number of arguments for '" + expr.callee + "'. Expected " +
+                                     std::to_string(signature.allowed_params.size()) + ", but got " +
+                                     std::to_string(expr.arguments.size()) + ".");
             return expr.type = signature.return_type;
         }
         for (size_t i = 0; i < expr.arguments.size(); ++i)
@@ -839,8 +872,59 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr)
 }
 inline Result<types::Type> Type_checker::check_expr_node(ast::Cast_expr &expr)
 {
-    std::ignore = check_expr(*expr.expression);
-    return expr.target_type;
+    auto original_type_res = check_expr(*expr.expression);
+    if (!original_type_res)
+        return std::unexpected(original_type_res.error());
+
+    auto original_type = original_type_res.value();
+    auto &target_type = expr.target_type;
+
+    // --- Validation Logic ---
+
+    // Rule 1: Check for unsafe unwrapping
+    if (is_optional(original_type) && !is_optional(target_type))
+    {
+        // This cast is only safe if the variable has been nil-checked.
+        if (auto *var_expr = std::get_if<ast::Variable_expr>(&expr.expression->node))
+        {
+            bool is_checked = false;
+            for (const auto &scope : m_nil_checked_vars_stack)
+            {
+                if (scope.count(var_expr->name))
+                {
+                    is_checked = true;
+                    break;
+                }
+            }
+            if (!is_checked)
+            {
+                type_error(expr.loc, "Cannot cast optional type '" + types::type_to_string(original_type) + "' to non-optional type '" +
+                                         types::type_to_string(target_type) + "' without a nil check.");
+            }
+        }
+        else
+        {
+            // It's some other expression, which we can't prove is safe.
+            type_error(expr.loc, "Cannot cast an optional expression to a non-optional type.");
+        }
+    }
+
+    // Rule 2: Check for invalid nil cast
+    if (is_nil(original_type) && !is_optional(target_type))
+        type_error(expr.loc, "Cannot cast a 'nil' value to a non-optional type.");
+
+    // Rule 3: Add other valid casting rules here (e.g., numeric to string)
+    // For now, we'll just check if the base types are compatible.
+    auto base_original = is_optional(original_type) ? types::get_optional_type(original_type)->base_type : original_type;
+    auto base_target = is_optional(target_type) ? types::get_optional_type(target_type)->base_type : target_type;
+
+    if (base_original != base_target && !(is_numeric(base_original) && is_string(base_target)))
+    {
+        // You can add more specific rules here, like i64 -> f64, etc.
+        // For now, we only allow casting between identical base types or number-to-string.
+    }
+
+    return target_type;
 }
 inline Result<types::Type> Type_checker::check_expr_node(ast::Closure_expr &expr)
 {
@@ -911,16 +995,15 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &
     auto obj_type_res = check_expr(*expr.object);
     if (!obj_type_res)
         return expr.type = types::Primitive_kind::Void;
+
     auto obj_type = obj_type_res.value();
-    if (is_optional(obj_type))
-    {
-        type_error(expr.loc, "Cannot call method on an optional type. Use an 'if' check to unwrap it first.");
-        return expr.type = types::Primitive_kind::Void;
-    }
+
+    // 1. Check for NATIVE methods first, as they can operate on optionals.
     if (m_native_methods.count(expr.method_name))
     {
         const auto &signature = m_native_methods.at(expr.method_name);
         bool is_valid_this_type = false;
+
         for (const auto &valid_type : signature.valid_this_types)
         {
             if (is_compatible(valid_type, obj_type))
@@ -929,8 +1012,10 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &
                 break;
             }
         }
+
         if (is_valid_this_type)
         {
+            // Arity and argument checking...
             if (expr.arguments.size() != signature.allowed_params.size())
             {
                 type_error(expr.loc, "Incorrect number of arguments for '" + expr.method_name + "'.");
@@ -941,29 +1026,53 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &
                 auto arg_type_res = check_expr(*expr.arguments[i]);
                 if (!arg_type_res)
                     return types::Primitive_kind::Void;
+
                 auto allowed_for_param = signature.allowed_params[i];
                 auto actual_arg_type = arg_type_res.value();
+
                 if (is_any(allowed_for_param[0]) && is_array(obj_type))
-                    allowed_for_param[0] = std::get<std::shared_ptr<types::Array_type>>(obj_type)->element_type;
+                    allowed_for_param[0] = types::get_array_type(obj_type)->element_type;
+
                 if (!is_argument_compatible(allowed_for_param, actual_arg_type))
                     type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch for method '" + expr.method_name + "'.");
             }
+
+            // Handle generic return types for optionals
+            if (is_optional(obj_type))
+            {
+                if (expr.method_name == "value" || expr.method_name == "value_or")
+                    return expr.type = types::get_optional_type(obj_type)->base_type;
+            }
+
+            // Handle other generic return types
             if (is_any(signature.return_type))
             {
                 if (is_array(obj_type))
-                    return expr.type = std::get<std::shared_ptr<types::Array_type>>(obj_type)->element_type;
+                    return expr.type = types::get_array_type(obj_type)->element_type;
             }
             return expr.type = signature.return_type;
         }
     }
+
+    // 2. If it's not a valid native method, THEN enforce nil-safety.
+    if (is_optional(obj_type))
+    {
+        type_error(expr.loc, "Cannot call method on an optional type. Use an 'if' check to unwrap it first.");
+        return expr.type = types::Primitive_kind::Void;
+    }
+
+    // 3. Fallback to user-defined MODEL methods.
     if (auto *mt = std::get_if<std::shared_ptr<types::Model_type>>(&obj_type))
     {
         if ((*mt)->methods.count(expr.method_name))
         {
             const auto &method_signature = (*mt)->methods.at(expr.method_name);
+            // Argument checking for model methods would go here.
             return expr.type = method_signature.return_type;
         }
     }
+
+    // 4. If nothing was found, it's an error.
     type_error(expr.loc, "No method named '" + expr.method_name + "' found for this type.");
     return expr.type = types::Primitive_kind::Void;
 }
