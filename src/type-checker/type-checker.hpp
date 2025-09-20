@@ -966,6 +966,44 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &
     if (!obj_type_res)
         return expr.type = types::Primitive_kind::Void;
     auto obj_type = obj_type_res.value();
+    if (expr.method_name == "map")
+    {
+        if (expr.arguments.size() != 1) { /* error */ }
+        auto closure_type_res = check_expr(*expr.arguments[0]);
+        if (!closure_type_res || !is_closure(closure_type_res.value()))
+        {
+            type_error(ast::get_loc(expr.arguments[0]->node), "Argument to 'map' must be a closure.");
+            return expr.type = types::Primitive_kind::Void;
+        }
+
+        auto closure_type = types::get_closure_type(closure_type_res.value());
+
+        if (is_array(obj_type))
+        {
+            // Check if closure parameter is compatible with array element type T
+            auto element_type = types::get_array_type(obj_type)->element_type;
+            if (closure_type->function_type.parameter_types.size() != 1 ||
+                !is_compatible(closure_type->function_type.parameter_types[0], element_type))
+            {
+                type_error(ast::get_loc(expr.arguments[0]->node), "Closure parameter type is not compatible with array element type.");
+            }
+            // map on T[] with closure |T|->U returns U[]
+            return expr.type = types::Type(std::make_shared<types::Array_type>(closure_type->function_type.return_type));
+        }
+
+        if (is_optional(obj_type))
+        {
+            // Check if closure parameter is compatible with optional base type T
+            auto base_type = types::get_optional_type(obj_type)->base_type;
+            if (closure_type->function_type.parameter_types.size() != 1 ||
+                !is_compatible(closure_type->function_type.parameter_types[0], base_type))
+            {
+                type_error(ast::get_loc(expr.arguments[0]->node), "Closure parameter type is not compatible with optional's base type.");
+            }
+            // map on T? with closure |T|->U returns U?
+            return expr.type = types::Type(std::make_shared<types::Optional_type>(closure_type->function_type.return_type));
+        }
+    }
     if (m_native_methods.count(expr.method_name))
     {
         const auto &signature = m_native_methods.at(expr.method_name);

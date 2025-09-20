@@ -38,6 +38,15 @@ Returns the number of milliseconds that have passed since the Unix epoch.
 
 Array methods are called directly on an array variable (e.g., `my_array.push(1)`).
 
+#### **Higher-Order Functions**
+
+#### map(cl)
+
+Applies a closure to every element of the array. Mutates the array.
+-   **Parameters:**
+    - `cl(T)`: The closure to apply to every element
+-   Returns: Modified array.
+
 #### **Mutations (Modify the array)**
 
 ##### `push(element)`
@@ -172,10 +181,11 @@ These methods are available on any optional type (e.g., `string?`, `User?`). Let
 | **`exists()`** | `() -> bool` | Returns `true` if the optional contains a value, `false` if it is `nil`. |
 | **`value_or(default: T)`** | `(default: T) -> T` | Returns the contained value if one exists, otherwise returns the `default` value. |
 | **`value()`** | `() -> T` | Returns the contained value. **Panics** with a runtime error if the optional is `nil`. |
-
+| `**map()**` | `(cl) -> T` | Applies closure to value if not `nil` and returns the return of closure |
 **Example**:
 ```js
 let maybe_name: string? = find_user(1).map(|u| u.name);
 let display_name := maybe_name.value_or("Guest");
 print(display_name);
 ```
+

@@ -418,6 +418,34 @@ private:
                             return arg_result;
                         arguments.push_back(arg_result.value());
                     }
+                    if (arg.method_name == "map")
+                    {
+                        auto object_result = evaluate(*arg.object);
+                        if (!object_result)
+                            return object_result;
+                        Value object = object_result.value();
+
+                        if (arg.arguments.size() != 1)
+                        {
+                            return std::unexpected(
+                                err::msg("map() expects exactly one argument.", "interpreter", arg.loc.line, arg.loc.column));
+                        }
+
+                        auto closure_res = evaluate(*arg.arguments[0]);
+                        if (!closure_res || !is_closure(closure_res.value()))
+                        {
+                            return std::unexpected(
+                                err::msg("map() expects a closure as its argument.", "interpreter", arg.loc.line, arg.loc.column));
+                        }
+
+                        if (is_array(object))
+                            return this->map_array(object, closure_res.value());
+                        if (is_optional(ast::get_type(arg.object->node)))
+                            return this->map_optional(object, closure_res.value());
+
+                        return std::unexpected(
+                            err::msg(".map() is not supported for this type.", "interpreter", arg.loc.line, arg.loc.column));
+                    }
 
                     // 1. Check for NATIVE methods on OPTIONAL types first.
                     if (is_optional(ast::get_type(arg.object->node)))
@@ -915,6 +943,39 @@ private:
         if (types::is_primitive(t) && types::get_primitive_kind(t) == types::Primitive_kind::String)
             return Value(value_to_string(v));
         return v;
+    }
+
+    Result<Value> map_array(Value &array_val, const Value &closure)
+    {
+        auto arr = get_array(array_val);
+        auto result_arr = std::make_shared<Array_value>();
+
+        // Get the closure ID just once.
+        size_t closure_id = get_closure(closure)->id;
+
+        for (const auto &element : arr->elements)
+        {
+            auto mapped_res = this->call_closure(closure_id, {element}, {});
+            if (!mapped_res)
+                return mapped_res;
+            result_arr->elements.push_back(mapped_res.value());
+        }
+        return Value(result_arr);
+    }
+
+    Result<Value> map_optional(Value &optional_val, const Value &closure)
+    {
+        if (is_nil(optional_val))
+            return Value(nullptr);
+
+        // Get the closure ID.
+        size_t closure_id = get_closure(closure)->id;
+
+        auto mapped_res = this->call_closure(closure_id, {optional_val}, {});
+        if (!mapped_res)
+            return mapped_res;
+
+        return mapped_res.value();
     }
 };
 
