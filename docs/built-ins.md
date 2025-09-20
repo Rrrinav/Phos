@@ -162,3 +162,20 @@ Returns a new string with all occurrences of the `search` string replaced by the
     -   `replacement` (`string`): The string to substitute.
 -   **Returns**: `string`
 -   **Example**: `let new_str := "hello world".replace("world", "phos"); // "hello phos"`
+
+### Optional Methods
+
+These methods are available on any optional type (e.g., `string?`, `User?`). Let `T` be the base type of the optional.
+
+| Method | Signature | Description |
+| :--- | :--- | :--- |
+| **`exists()`** | `() -> bool` | Returns `true` if the optional contains a value, `false` if it is `nil`. |
+| **`value_or(default: T)`** | `(default: T) -> T` | Returns the contained value if one exists, otherwise returns the `default` value. |
+| **`value()`** | `() -> T` | Returns the contained value. **Panics** with a runtime error if the optional is `nil`. |
+
+**Example**:
+```js
+let maybe_name: string? = find_user(1).map(|u| u.name);
+let display_name := maybe_name.value_or("Guest");
+print(display_name);
+```

@@ -11,11 +11,12 @@ declaration          = function_declaration
 
 function_declaration = "fn" identifier "(" [ parameter_list ] ")" [ "->" type ] block_statement ;
 model_declaration    = "model" identifier "{" { field_declaration | function_declaration } "}" ;
-field_declaration    = "let" identifier ":" type [ "=" expression ] ";" ;
-variable_declaration = "let" identifier ( ":" type [ "=" expression ] | ":=" expression ) ";" ;
+field_declaration    = "let" [ "const" ] identifier ":" type [ "=" expression ] ";" ;
+variable_declaration = "let" [ "const" ] identifier ( ":" type [ "=" expression ] | ":=" expression ) ";" ;
 
 parameter_list       = parameter { "," parameter } ;
-parameter            = identifier ":" type ;
+parameter            = [ "const" ] identifier ":" type ;
+
 
 (* ======================================== *)
 (* 2. Statements                            *)
@@ -34,11 +35,9 @@ print_statement      = ( "print" | "print_err" ) "(" expression ")" ";" ;
 block_statement      = "{" { declaration } "}" ;
 if_statement         = "if" "(" expression ")" statement [ "else" statement ] ;
 while_statement      = "while" "(" expression ")" statement ;
-for_statement        = "for" "(" ( variable_declaration | expression_statement | ";" )
-                             [ expression ] ";"
-                             [ expression ]
-                           ")" statement ;
+for_statement        = "for" "(" ( variable_declaration | expression_statement | ";" ) [ expression ] ";" [ expression ] ")" statement ;
 return_statement     = "return" [ expression ] ";" ;
+
 
 (* ======================================== *)
 (* 3. Expressions (by precedence)           *)
@@ -74,21 +73,26 @@ primary              = literal
 
 argument_list        = expression { "," expression } ;
 
+
 (* ======================================== *)
 (* 4. Literals & Types                      *)
 (* ======================================== *)
 
-literal              = "true" | "false" | integer | float | string ;
+literal              = "true" | "false" | "nil" | integer | float | string ;
 array_literal        = "[" [ argument_list ] "]" ;
 model_literal        = identifier "{" [ field_initializer { "," field_initializer } ] "}" ;
 field_initializer    = "." identifier "=" expression ;
 closure_expression   = "|" [ parameter_list ] "|" [ "->" type ] block_statement ;
 
-type                 = ( primitive_type | identifier ) { "[]" }
-                     | closure_type ;
+type                 = base_type { "[]" | "?" } ;
+base_type            = primitive_type 
+                     | identifier
+                     | closure_type
+                     | "(" type ")" ;
 
-primitive_type       = "i64" | "f64" | "bool" | "string" | "void" ;
+primitive_type       = "i64" | "f64" | "bool" | "string" | "void" | "any" ;
 closure_type         = "|" [ type { "," type } ] "|" "->" type ;
+
 
 (* ======================================== *)
 (* 5. Terminals (Lexer Tokens)              *)
