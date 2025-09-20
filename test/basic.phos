@@ -1,0 +1,20 @@
+let const GREETING: string = "Hello";
+let mutable_value := 10;
+
+let uninitialized: i64;
+
+print(GREETING);
+print(mutable_value);
+
+mutable_value = 20;
+uninitialized = mutable_value;
+
+print(mutable_value);
+print(uninitialized);
+
+{
+    let mutable_value := "shadow"; // Shadowing
+    print("Inner scope: " + mutable_value);
+}
+
+print("Outer scope: " + (mutable_value as string));

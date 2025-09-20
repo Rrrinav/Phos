@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <memory>
 #include <map>
+#include <ostream>
 #include <unordered_map>
 #include <vector>
 #include <variant>
@@ -644,7 +645,18 @@ private:
                     auto value_result = evaluate(*arg.expression);
                     if (!value_result)
                         return std::unexpected(value_result.error());
-                    std::cout << value_to_string(value_result.value()) << std::endl;
+
+                    auto value = value_result.value();
+                    std::string str = "";
+                    if (is_string(value))
+                        str = unescape_string(get_string(value));
+                    else
+                        str = value_to_string(value);
+                    if (arg.stream == ast::Print_stream::STDOUT)
+                        std::println("{}", str);
+                    else
+                        std::println(stderr, "{}", str);
+
                     return ReturnValue{};
                 }
 
@@ -735,6 +747,31 @@ private:
                 return std::unexpected(err::msg("Unhandled statement type", "interpreter", 0, 0));
             },
             stmt.node);
+    }
+    std::string unescape_string(const std::string &s)
+    {
+        std::string res;
+        res.reserve(s.length());
+        for (std::string::size_type i = 0; i < s.length(); ++i)
+        {
+            if (s[i] == '\\' && i + 1 < s.length())
+            {
+                switch (s[++i])
+                {
+                    case 'n': res += '\n'; break;
+                    case 't': res += '\t'; break;
+                    case 'r': res += '\r'; break;
+                    case '\\': res += '\\'; break;
+                    case '"': res += '"'; break;
+                    default: res += '\\'; res += s[i]; break;  // Keep unrecognized sequences
+                }
+            }
+            else
+            {
+                res += s[i];
+            }
+        }
+        return res;
     }
 
     Result<ReturnValue> executeBlock(const std::vector<std::unique_ptr<ast::Stmt>> &statements, std::shared_ptr<Environment> block_env)

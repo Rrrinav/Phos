@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Test Details: {{TEST_FILE_PATH}}</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            line-height: 1.6;
+            margin: 0;
+            padding: 2em;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        h1,
+        h2 {
+            color: #58a6ff;
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 0.3em;
+        }
+
+        h3 {
+            font-size: 1.4em;
+            color: #79c0ff;
+            border-top: 1px solid #30363d;
+            padding-top: 1em;
+            margin-top: 2em;
+        }
+
+        pre {
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 1em;
+            overflow-x: auto;
+        }
+
+        code {
+            font-family: "SF Mono", "Consolas", "Liberation Mono", Menlo, monospace;
+        }
+
+        .diff {
+            color: #ff7b72;
+            white-space: pre-wrap;
+        }
+
+        .back-link {
+            display: inline-block;
+            margin-bottom: 2em;
+            color: #58a6ff;
+            text-decoration: none;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <a href="index.html" class="back-link">&larr; Back to Summary</a>
+        <h1>Test Details</h1>
+        <h2>{{TEST_FILE_PATH}}</h2>
+
+        <h3>Source Code:</h3>
+        <pre><code class="language-phos">{{SOURCE_CODE}}</code></pre>
+
+        <h3>Expected Output:</h3>
+        <pre><code>{{EXPECTED_OUTPUT}}</code></pre>
+
+        <h3>Actual Output:</h3>
+        <pre><code>{{ACTUAL_OUTPUT}}</code></pre>
+
+        <h3>Difference:</h3>
+        <pre class="diff">{{DIFF}}</pre>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script>
+        hljs.registerLanguage('phos', function (hljs) {
+            return {
+                name: 'Phos',
+                keywords: {
+                    keyword: 'let const fn model if else while for return as nil true false print print_err',
+                    type: 'i64 f64 bool string void any'
+                },
+                contains: [hljs.C_LINE_COMMENT_MODE, hljs.QUOTE_STRING_MODE, hljs.C_NUMBER_MODE]
+            };
+        });
+        hljs.highlightAll();
+    </script>
+</body>
+
+</html>

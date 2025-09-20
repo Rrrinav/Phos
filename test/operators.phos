@@ -1,0 +1,28 @@
+// 1. Arithmetic
+print("Arithmetic:");
+print(10 + -5);
+print(10.5 - 15.5);
+print(-5 * -2);
+print(10.0 / 4.0);
+print(10 % 3);
+
+// 2. String Concatenation
+print("\nString Concat:");
+print("Phos " + "Language");
+
+// 3. Comparison
+print("\nComparison:");
+print(5 > 3);
+print("a" != "b");
+print("a" == "b");
+print("a" == "a");
+
+// 4. Logical
+print("\nLogical:");
+print(true && (false || true));
+print(!false);
+
+// 5. Precedence and Casting
+let result : f64 = (2 + 3) * (10 - 6) / 2; // 5 * 4 / 2 = 10
+print("\nPrecedence (5 * 4 / 2): " + (result as string));
+print("Cast to string: " + (42 as string));

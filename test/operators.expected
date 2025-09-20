@@ -1,0 +1,22 @@
+Arithmetic:
+5
+-5.000000
+10
+2.500000
+1
+
+String Concat:
+Phos Language
+
+Comparison:
+true
+true
+false
+true
+
+Logical:
+true
+true
+
+Precedence (5 * 4 / 2): 10.000000
+Cast to string: 42

@@ -1,0 +1,6 @@
+Hello
+10
+20
+20
+Inner scope: shadow
+Outer scope: 20

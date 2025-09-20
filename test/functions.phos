@@ -1,0 +1,18 @@
+fn factorial(n: i64) -> i64 {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+print("Factorial of 5 is " + (factorial(5) as string));
+
+let multiplier := 10;
+let multiply_by_ten: |i64| -> i64 = |x: i64| -> i64 {
+    return x * multiplier;
+};
+
+fn apply(const op: |i64| -> i64, value: i64) {
+    print("Applying closure: " + (op(value) as string));
+}
+
+apply(multiply_by_ten, 7);

@@ -1,0 +1,25 @@
+model Item { let name: string; }
+
+fn get_item(id: i64) -> Item? {
+    if (id == 1) {
+        return Item{ .name = "Phos" };
+    }
+    return nil;
+}
+
+fn process_item(item: Item) {
+    print("Processing: " + item.name);
+}
+
+let item1 := get_item(1);
+let item2 := get_item(2);
+
+if (item1 != nil) {
+    print("Item 1 is not nil.");
+    process_item(item1 as Item); // Safe cast
+}
+
+if (item2 == nil) {
+    print("Item 2 is nil.");
+    // process_item(item2 as Item); // Would be a type error
+}

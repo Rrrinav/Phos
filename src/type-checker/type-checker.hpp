@@ -761,50 +761,77 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Variable_expr &exp
 }
 inline Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr)
 {
-    auto left = check_expr(*expr.left);
-    auto right = check_expr(*expr.right);
-    if (!left || !right)
+    auto left_res = check_expr(*expr.left);
+    auto right_res = check_expr(*expr.right);
+    if (!left_res || !right_res)
         return expr.type = types::Primitive_kind::Void;
-    types::Type left_type = left.value();
-    types::Type right_type = right.value();
+
+    types::Type left_type = left_res.value();
+    types::Type right_type = right_res.value();
+
     switch (expr.op)
     {
-        case lex::TokenType::Less:
-        case lex::TokenType::LessEqual:
-        case lex::TokenType::Greater:
-        case lex::TokenType::GreaterEqual:
-            if (is_numeric(left_type) && is_numeric(right_type))
-                return expr.type = types::Primitive_kind::Bool;
-            type_error(expr.loc, "Comparison operators require numeric operands");
-            return expr.type = types::Primitive_kind::Void;
-        case lex::TokenType::Equal:
-        case lex::TokenType::NotEqual:
-            if ((is_optional(left_type) && is_nil(right_type)) || (is_nil(left_type) && is_optional(right_type)))
-                return expr.type = types::Primitive_kind::Bool;
-            if (!is_compatible(left_type, right_type) && !is_compatible(right_type, left_type))
-                type_error(expr.loc, "Cannot compare incompatible types");
-            return expr.type = types::Primitive_kind::Bool;
+        // --- Arithmetic Operators ---
         case lex::TokenType::Plus:
             if (is_string(left_type) && is_string(right_type))
                 return expr.type = types::Primitive_kind::String;
-            if (!is_numeric(left_type) || !is_numeric(right_type))
-            {
-                type_error(expr.loc, "Operands for '+' must be numbers or strings");
+            // Fallthrough for numeric addition
+        case lex::TokenType::Minus:
+        case lex::TokenType::Star:
+            if (!is_numeric(left_type) || !is_numeric(right_type)) {
+                type_error(expr.loc, "Operands must be two numbers or two strings for '+'");
                 return expr.type = types::Primitive_kind::Void;
             }
             return expr.type = promote_numeric_type(left_type, right_type);
+
+        case lex::TokenType::Slash:
+            if (!is_numeric(left_type) || !is_numeric(right_type)) {
+                type_error(expr.loc, "Operands for division must be numbers.");
+                return expr.type = types::Primitive_kind::Void;
+            }
+            // Division always results in a float.
+            return expr.type = types::Primitive_kind::Float;
+
+        case lex::TokenType::Percent:
+            if (left_type != types::Type(types::Primitive_kind::Int) || right_type != types::Type(types::Primitive_kind::Int)) {
+                type_error(expr.loc, "Operands for '%' must be integers.");
+                return expr.type = types::Primitive_kind::Void;
+            }
+            return expr.type = types::Primitive_kind::Int;
+
+        // --- Comparison Operators ---
+        case lex::TokenType::Greater:
+        case lex::TokenType::GreaterEqual:
+        case lex::TokenType::Less:
+        case lex::TokenType::LessEqual:
+            if (!is_numeric(left_type) || !is_numeric(right_type)) {
+                type_error(expr.loc, "Comparison operators require numeric operands.");
+            }
+            return expr.type = types::Primitive_kind::Bool;
+
+        // --- Equality Operators ---
+        case lex::TokenType::Equal:
+        case lex::TokenType::NotEqual:
+            // Allow comparison of an optional with nil
+            if ((is_optional(left_type) && is_nil(right_type)) || (is_nil(left_type) && is_optional(right_type))) {
+                return expr.type = types::Primitive_kind::Bool;
+            }
+            if (!is_compatible(left_type, right_type) && !is_compatible(right_type, left_type)) {
+                type_error(expr.loc, "Cannot compare incompatible types.");
+            }
+            return expr.type = types::Primitive_kind::Bool;
+
+        // --- Logical Operators ---
+        case lex::TokenType::LogicalAnd:
+        case lex::TokenType::LogicalOr:
+            if (!is_boolean(left_type) || !is_boolean(right_type)) {
+                type_error(expr.loc, "Operands for logical operators must be booleans.");
+            }
+            return expr.type = types::Primitive_kind::Bool;
+        
         default:
-            if (!is_numeric(left_type) || !is_numeric(right_type))
-            {
-                type_error(expr.loc, "Unsupported binary operator for given types");
-                return expr.type = types::Primitive_kind::Void;
-            }
-            if (expr.op == lex::TokenType::Percent &&
-                (left_type != types::Type(types::Primitive_kind::Int) || right_type != types::Type(types::Primitive_kind::Int)))
-            {
-                type_error(expr.loc, "Operands for '%' must be integers");
-            }
-            return expr.type = promote_numeric_type(left_type, right_type);
+            type_error(expr.loc, "Unsupported binary operator.");
+            return expr.type = types::Primitive_kind::Void;
     }
 }
 inline Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr)

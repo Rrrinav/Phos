@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Phos Test Suite Report</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            line-height: 1.6;
+            margin: 0;
+            padding: 2em;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        h1,
+        h2 {
+            color: #58a6ff;
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 0.3em;
+        }
+
+        .summary {
+            padding: 1.5em;
+            border-radius: 6px;
+            margin: 2em 0;
+            text-align: center;
+        }
+
+        .summary-passed {
+            background-color: rgba(35, 134, 54, 0.2);
+            border: 1px solid #2ea043;
+        }
+
+        .summary-failed {
+            background-color: rgba(248, 81, 73, 0.2);
+            border: 1px solid #f85149;
+        }
+
+        .summary p {
+            margin: 0;
+            font-size: 1.5em;
+            font-weight: bold;
+        }
+
+        .summary .counts {
+            font-size: 1em;
+            font-weight: normal;
+            margin-top: 0.5em;
+            opacity: 0.8;
+        }
+
+        .test-list {
+            list-style-type: none;
+            padding: 0;
+        }
+
+        .test-list li {
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            padding: 0.8em 1.2em;
+            margin-bottom: 0.5em;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+        }
+
+        .test-list a {
+            color: #58a6ff;
+            text-decoration: none;
+            font-weight: bold;
+        }
+
+        .test-list a:hover {
+            text-decoration: underline;
+        }
+
+        .status-passed,
+        .status-failed {
+            font-size: 1.2em;
+            margin-right: 0.8em;
+        }
+
+        .status-passed {
+            color: #2ea043;
+        }
+
+        .status-failed {
+            color: #f85149;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>Phos Test Suite Report (Template is AI generated)</h1>
+        <p>Generated on: {{TIMESTAMP}}</p>
+
+        <div class="summary {{SUMMARY_CLASS}}">
+            <p>{{SUMMARY_MESSAGE}}</p>
+            <div class="counts">
+                Total: {{TOTAL_COUNT}} | Passed: {{PASSED_COUNT}} | Failed: {{FAILED_COUNT}}
+            </div>
+        </div>
+
+        <h2>All Tests</h2>
+        <ul class="test-list">
+            {{TEST_RESULTS_LIST}}
+        </ul>
+    </div>
+</body>
+
+</html>

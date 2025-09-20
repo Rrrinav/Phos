@@ -8,6 +8,7 @@
 #define B_LDR_IMPLEMENTATION
 #define BLD_USE_CONFIG
 #include "b_ldr.hpp"
+#include "report_gen.hpp"
 
 auto &cfg = bld::Config::get();
 
@@ -47,7 +48,7 @@ void build_interpreter(bool release = false)
     // Step 1: compile each .cpp -> .o (if outdated)
     for (auto f : cpp_files)
     {
-        std::string out_p = bld::fs::get_stem( bld::str::replace(f, SRC, BIN), true) + ".o";
+        std::string out_p = bld::fs::get_stem(bld::str::replace(f, SRC, BIN), true) + ".o";
 
         bld::fs::create_dir_if_not_exists(std::filesystem::path(out_p).parent_path().string());
         objs.emplace_back(out_p);
@@ -63,8 +64,10 @@ void build_interpreter(bool release = false)
         {
             bld::log(bld::Log_type::INFO, "Building: " + f);
             auto p = bld::execute_async(cmp_cmd);
-            if (p) builds.push_back(p);
-            else bld::log(bld::Log_type::ERR, "Building " + f + " failed.");
+            if (p)
+                builds.push_back(p);
+            else
+                bld::log(bld::Log_type::ERR, "Building " + f + " failed.");
         }
     }
 
@@ -72,7 +75,7 @@ void build_interpreter(bool release = false)
 
     // Step 2: link all .o files -> final binary
     bld::Command link_cmd = {"g++", "-o", TARGET};
-    for (auto o: objs) link_cmd.add_parts(o);
+    for (auto o : objs) link_cmd.add_parts(o);
     link_cmd.add_parts("--std=c++23");
 
     if (release)
@@ -87,7 +90,7 @@ void build_interpreter(bool release = false)
     }
 }
 
-std::tuple<int, int, std::vector<std::pair<std::string, std::string>>> run_tests()
+std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::string>>> run_tests()
 {
     std::string dir = cfg["test"];
     if (dir.empty())
@@ -96,13 +99,15 @@ std::tuple<int, int, std::vector<std::pair<std::string, std::string>>> run_tests
         std::exit(EXIT_FAILURE);
     }
 
-    if (!std::filesystem::exists(TARGET)) build_interpreter();
+    if (!std::filesystem::exists(TARGET))
+        build_interpreter();
 
     auto files = bld::fs::get_all_files_with_extensions(dir, {"phos"});
 
     int tests_passed = 0;
     int tests_failed = 0;
     std::vector<std::pair<std::string, std::string>> failed;
+    std::vector<std::string> passed_files;
 
     for (const auto &f : files)
     {
@@ -124,7 +129,7 @@ std::tuple<int, int, std::vector<std::pair<std::string, std::string>>> run_tests
 
         if (output == expected)
         {
-            tests_passed++;
+            passed_files.push_back(f);
         }
         else
         {
@@ -134,7 +139,7 @@ std::tuple<int, int, std::vector<std::pair<std::string, std::string>>> run_tests
         }
     }
 
-    return {tests_passed, tests_failed, failed};
+    return {passed_files, failed};
 }
 
 int main(int argc, char *argv[])
@@ -143,15 +148,21 @@ int main(int argc, char *argv[])
 
     if (cfg["test"])
     {
-        auto [passed, failed, info] = run_tests();
-        bld::log(bld::Log_type::INFO, "Tests passed: " + std::to_string(passed) + ", failed: " + std::to_string(failed));
+        auto [passed_files, failed_info] = run_tests();
+        int passed_count = passed_files.size();
+        int failed_count = failed_info.size();
 
-        for (auto &[file, diff] : info)
+        bld::log(bld::Log_type::INFO, "Tests passed: " + std::to_string(passed_count) + ", failed: " + std::to_string(failed_count));
+
+        // Call the new report generator with the separated lists
+        report_gen::generate_html_report(passed_files, failed_info);
+
+        for (auto &[file, diff] : failed_info)
         {
             bld::log(bld::Log_type::ERR, "Test failed: " + file);
             std::cerr << diff << "\n";
         }
-        return 0;
+        return failed_count > 0 ? 1 : 0;
     }
     else if (cfg["clean"])
     {
