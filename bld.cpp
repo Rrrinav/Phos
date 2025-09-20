@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include <filesystem>
+#include <print>
 #include <vector>
 #include <tuple>
 #include <string>
@@ -39,14 +40,49 @@ std::string string_diff(const std::string &got, const std::string &expected)
 void build_interpreter(bool release = false)
 {
     bld::fs::create_dir_if_not_exists(BIN);
-    bld::Command cmd = {"g++", "-o", TARGET, SRC + "main.cpp", "--std=c++23"};
+    auto cpp_files = bld::fs::get_all_files_with_extensions(SRC, {"cpp"}, true);
+    std::vector<std::string> objs;
+    std::vector<bld::Proc> builds;
 
-    if (release) cmd.add_parts("-O2");
-    else cmd.add_parts("-ggdb","-O0");
-
-    if (!bld::execute(cmd))
+    // Step 1: compile each .cpp -> .o (if outdated)
+    for (auto f : cpp_files)
     {
-        bld::log(bld::Log_type::ERR, "Building failed.");
+        std::string out_p = bld::fs::get_stem( bld::str::replace(f, SRC, BIN), true) + ".o";
+
+        bld::fs::create_dir_if_not_exists(std::filesystem::path(out_p).parent_path().string());
+        objs.emplace_back(out_p);
+
+        bld::Command cmp_cmd = {"g++", "-c", f, "-o", out_p, "--std=c++23"};
+
+        if (release)
+            cmp_cmd.add_parts("-O2");
+        else
+            cmp_cmd.add_parts("-ggdb", "-O0");
+
+        if (bld::is_executable_outdated(f, out_p))
+        {
+            bld::log(bld::Log_type::INFO, "Building: " + f);
+            auto p = bld::execute_async(cmp_cmd);
+            if (p) builds.push_back(p);
+            else bld::log(bld::Log_type::ERR, "Building " + f + " failed.");
+        }
+    }
+
+    bld::wait_procs(builds);
+
+    // Step 2: link all .o files -> final binary
+    bld::Command link_cmd = {"g++", "-o", TARGET};
+    for (auto o: objs) link_cmd.add_parts(o);
+    link_cmd.add_parts("--std=c++23");
+
+    if (release)
+        link_cmd.add_parts("-O2");
+    else
+        link_cmd.add_parts("-ggdb", "-O0");
+
+    if (!bld::execute(link_cmd))
+    {
+        bld::log(bld::Log_type::ERR, "Linking failed.");
         std::exit(EXIT_FAILURE);
     }
 }
@@ -116,6 +152,10 @@ int main(int argc, char *argv[])
             std::cerr << diff << "\n";
         }
         return 0;
+    }
+    else if (cfg["clean"])
+    {
+        bld::fs::remove_dir(BIN);
     }
     else
     {

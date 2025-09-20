@@ -5,7 +5,8 @@
 #include <vector>
 #include <cstddef>
 
-namespace phos {
+namespace phos
+{
 
 class Arena
 {
@@ -13,14 +14,14 @@ class Arena
 
     struct _block
     {
-        char       *data;
+        char *data;
         std::size_t size;
         std::size_t capacity;
 
         _block(std::size_t _sz) : size(0), capacity(_sz) { data = new char[_sz]; }
         ~_block() { delete this->data; }
     };
-    std::vector<_block*> blocks_;
+    std::vector<_block *> blocks_;
 
     void add_block(std::size_t min_sz)
     {
@@ -29,7 +30,11 @@ class Arena
     }
 
 public:
-    ~Arena() { for ( auto * b : this->blocks_ ) delete b; }
+    ~Arena()
+    {
+        for (auto &block : blocks_) delete block;
+        blocks_.clear();
+    }
     Arena() { add_block(this->DEF_BLOCK_SIZE); }
 
     Arena(const Arena &) = delete;
@@ -47,23 +52,23 @@ public:
         return *this;
     }
 
-    template<typename T>
-    T* allocate(std::size_t count = 1)
+    template <typename T>
+    T *allocate(std::size_t count = 1)
     {
-        std::size_t bytes   = sizeof(T) * count;
+        std::size_t bytes = sizeof(T) * count;
         std::size_t aligned = (bytes + alignof(T) - 1) & ~(alignof(T) - 1);
 
-        _block * back = this->blocks_.back();
+        _block *back = this->blocks_.back();
 
-        if ( back->size + aligned > back->capacity)
+        if (back->size + aligned > back->capacity)
         {
             add_block(aligned);
             back = this->blocks_.back();
         }
 
-        char * ptr = back->data + back->size;
+        char *ptr = back->data + back->size;
         back->size += aligned;
-        return reinterpret_cast<T*>(ptr);
+        return reinterpret_cast<T *>(ptr);
     }
 
     template <typename T, typename... Args>
@@ -78,6 +83,6 @@ public:
     }
 };
 
-} //phos
+}  // namespace phos
 
-#endif // _ARENA_HPP_
+#endif  // _ARENA_HPP_

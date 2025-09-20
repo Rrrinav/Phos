@@ -1139,6 +1139,24 @@ bld::Exit_status bld::wait_proc(bld::Proc proc)
   return status;
 }
 
+void print_progress(size_t completed, size_t total)
+{
+    int width = 40;  // progress bar width
+    float progress = float(completed) / total;
+    int pos = int(width * progress);
+
+    std::cout << "[";
+    for (int i = 0; i < width; ++i)
+        if (i < pos)
+            std::cout << "=";
+        else if (i == pos)
+            std::cout << ">";
+        else
+            std::cout << " ";
+    std::cout << "] " << int(progress * 100.0) << "% (" << completed << "/" << total << ")\r";
+    std::cout.flush();
+}
+
 bld::Par_exec_res bld::wait_procs(std::vector<bld::Proc> procs, int sleep_ms)
 {
   bld::Par_exec_res result;
@@ -1175,6 +1193,8 @@ bld::Par_exec_res bld::wait_procs(std::vector<bld::Proc> procs, int sleep_ms)
           result.failed_indices.push_back(i);
 
         bld::cleanup_process(procs[i]);
+
+        print_progress(result.completed, procs.size());
       }
       // If !status.exited, process is still running, continue polling
     }
@@ -2029,7 +2049,7 @@ void bld::rebuild_yourself_onchange_and_run(const std::string &filename, const s
 
   // Set up the compile command
   bld::Command cmd;
-  cmd.parts = {compiler, source_path.string(), "-o", exec_path.string()};
+  cmd.parts = {compiler, source_path.string(), "-o", exec_path.string(), "--std=c++2b"};
 
   // Execute the compile command
   int compile_result = bld::execute(cmd);
@@ -2804,10 +2824,7 @@ bool bld::fs::create_directory(const std::string &path)
 bool bld::fs::create_dir_if_not_exists(const std::string &path)
 {
   if (std::filesystem::exists(path))
-  {
-    bld::internal_log(bld::Log_type::WARNING, "Directory ' " + path + " ' already exists, manage it yourself to not lose data!");
     return true;
-  }
 
   try
   {
