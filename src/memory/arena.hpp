@@ -5,7 +5,7 @@
 #include <vector>
 #include <cstddef>
 
-namespace phos
+namespace phos::mem
 {
 
 class Arena
@@ -77,12 +77,19 @@ public:
         T *mem = allocate<T>();
         return new (mem) T(std::forward<Args>(args)...);
     }
+
+    template <typename T, typename... Args>
+    T *operator()(Args &&...args)
+    {
+        return create<T>(std::forward<Args>(args)...);
+    }
+
     void reset()
     {
         for (auto *b : blocks_) b->size = 0;
     }
 };
 
-}  // namespace phos
+}  // namespace phos::mem
 
 #endif  // _ARENA_HPP_

@@ -3,52 +3,43 @@
 #include <string>
 #include <utility>
 #include <vector>
-#include <variant>
 #include <unordered_map>
 #include <memory>
-#include <expected>
 
 #include "../lexer/token.hpp"
 #include "../value/type.hpp"
 #include "../error/err.hpp"
 #include "../error/result.hpp"
-#include "ast.hpp"
+#include "./ast.hpp"
+#include "../memory/arena.hpp"
 
 namespace phos
 {
 
 class Parser
 {
-    std::vector<lex::Token> tokens;
-    size_t current = 0;
-    std::unordered_map<std::string, types::Type> variable_types;
-    std::unordered_map<std::string, types::Type> function_types;
-    std::unordered_map<std::string, types::Type> model_types;
-    std::string current_model;
-    std::string stage = "parsing";
+    mem::Arena& arena_;
+    std::vector<lex::Token> tokens_;
+    size_t current_ = 0;
+    std::unordered_map<std::string, types::Type> variable_types_;
+    std::unordered_map<std::string, types::Type> function_types_;
+    std::unordered_map<std::string, types::Type> model_types_;
+    std::string current_model_;
+    std::string stage_ = "parsing";
 
 public:
-    explicit Parser(std::vector<lex::Token> t) : tokens(std::move(t)) {}
-
-    void skip_newlines();
-
+    explicit Parser(std::vector<lex::Token> t, mem::Arena &arena) : tokens_(std::move(t)), arena_(arena) {}
     Result<std::vector<std::unique_ptr<ast::Stmt>>> parse();
 
 private:
-    bool is_at_end() const { return current >= tokens.size() || peek().type == lex::TokenType::Eof; }
-
+    void skip_newlines();
+    bool is_at_end() const { return current_ >= tokens_.size() || peek().type == lex::TokenType::Eof; }
     const lex::Token &peek() const;
-
     const lex::Token &previous() const;
-
     lex::Token advance();
-
     bool check(lex::TokenType type) const { return !is_at_end() && peek().type == type; }
-
     bool match(std::initializer_list<lex::TokenType> types);
-
     Result<lex::Token> consume(lex::TokenType type, const std::string &message);
-
     err::msg create_error(const lex::Token &token, const std::string &message);
 
     void synchronize();

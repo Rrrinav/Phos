@@ -5,7 +5,6 @@
 ## Example
 
 ```rust
-
 model User {
   let id: i64;
   let name: string;

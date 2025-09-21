@@ -44,9 +44,9 @@ struct Variable_expr
 
 struct Binary_expr
 {
-    std::unique_ptr<struct Expr> left;
+    struct Expr* left;
     lex::TokenType op;
-    std::unique_ptr<struct Expr> right;
+    struct Expr* right;
     types::Type type;
     Source_location loc;
 };
@@ -54,7 +54,7 @@ struct Binary_expr
 struct Unary_expr
 {
     lex::TokenType op;
-    std::unique_ptr<struct Expr> right;
+    struct Expr* right;
     types::Type type;
     Source_location loc;
 };
@@ -62,7 +62,7 @@ struct Unary_expr
 struct Call_expr
 {
     std::string callee;
-    std::vector<std::unique_ptr<struct Expr>> arguments;
+    std::vector<struct Expr*> arguments;
     types::Type type;
     Source_location loc;
 };
@@ -70,21 +70,21 @@ struct Call_expr
 struct Assignment_expr
 {
     std::string name;
-    std::unique_ptr<struct Expr> value;
+    struct Expr* value;
     types::Type type;
     Source_location loc;
 };
 
 struct Cast_expr
 {
-    std::unique_ptr<struct Expr> expression;
+    struct Expr* expression;
     types::Type target_type;
     Source_location loc;
 };
 
 struct Field_access_expr
 {
-    std::unique_ptr<struct Expr> object;
+    struct Expr* object;
     std::string field_name;
     types::Type type;
     Source_location loc;
@@ -92,18 +92,18 @@ struct Field_access_expr
 
 struct Field_assignment_expr
 {
-    std::unique_ptr<Expr> object;
+    Expr* object;
     std::string field_name;
-    std::unique_ptr<Expr> value;
+    Expr* value;
     types::Type type;
     Source_location loc;
 };
 
 struct Method_call_expr
 {
-    std::unique_ptr<struct Expr> object;
+    struct Expr* object;
     std::string method_name;
-    std::vector<std::unique_ptr<struct Expr>> arguments;
+    std::vector<struct Expr*> arguments;
     types::Type type;
     Source_location loc;
 };
@@ -111,7 +111,7 @@ struct Method_call_expr
 struct Model_literal_expr
 {
     std::string model_name;
-    std::vector<std::pair<std::string, std::unique_ptr<struct Expr>>> fields;
+    std::vector<std::pair<std::string, struct Expr*>> fields;
     types::Type type;
     Source_location loc;
 };
@@ -120,31 +120,31 @@ struct Closure_expr
 {
     std::vector<Function_param> parameters;
     types::Type return_type;
-    std::shared_ptr<struct Stmt> body;
+    struct Stmt* body;
     types::Type type;
     Source_location loc;
 };
 
 struct Array_literal_expr
 {
-    std::vector<std::shared_ptr<Expr>> elements;
+    std::vector<Expr*> elements;
     types::Type type;
     Source_location loc;
 };
 
 struct Array_access_expr
 {
-    std::shared_ptr<Expr> array;
-    std::shared_ptr<Expr> index;
+    Expr* array;
+    Expr* index;
     types::Type type;
     Source_location loc;
 };
 
 struct Array_assignment_expr
 {
-    std::shared_ptr<Expr> array;
-    std::shared_ptr<Expr> index;
-    std::shared_ptr<Expr> value;
+    Expr* array;
+    Expr* index;
+    Expr* value;
     types::Type type;
     Source_location loc;
 };
@@ -166,7 +166,7 @@ struct Expr
 // =================================
 struct Return_stmt
 {
-    std::unique_ptr<Expr> expression;
+    Expr* expression;
     Source_location loc;
 };
 
@@ -175,7 +175,7 @@ struct Function_stmt
     std::string name;
     std::vector<Function_param> parameters;
     types::Type return_type;
-    std::shared_ptr<struct Stmt> body;
+    struct Stmt* body;
     Source_location loc;
 };
 
@@ -192,7 +192,7 @@ struct Var_stmt
     bool is_const;
     std::string name;
     types::Type type;
-    std::unique_ptr<Expr> initializer;
+    Expr* initializer;
     bool type_inferred = false;
     Source_location loc;
 };
@@ -202,43 +202,43 @@ enum class Print_stream { STDOUT, STDERR };
 struct Print_stmt
 {
     Print_stream stream;
-    std::unique_ptr<Expr> expression;
+    Expr* expression;
     Source_location loc;
 };
 
 struct Expr_stmt
 {
-    std::unique_ptr<Expr> expression;
+    Expr* expression;
     Source_location loc;
 };
 
 struct Block_stmt
 {
-    std::vector<std::unique_ptr<struct Stmt>> statements;
+    std::vector<struct Stmt*> statements;
     Source_location loc;
 };
 
 struct If_stmt
 {
-    std::unique_ptr<Expr> condition;
-    std::unique_ptr<struct Stmt> then_branch;
-    std::unique_ptr<struct Stmt> else_branch;
+    Expr* condition;
+    struct Stmt* then_branch;
+    struct Stmt* else_branch;
     Source_location loc;
 };
 
 struct While_stmt
 {
-    std::unique_ptr<Expr> condition;
-    std::unique_ptr<struct Stmt> body;
+    Expr* condition;
+    struct Stmt* body;
     Source_location loc;
 };
 
 struct For_stmt
 {
-    std::unique_ptr<struct Stmt> initializer;
-    std::unique_ptr<Expr> condition;
-    std::unique_ptr<Expr> increment;
-    std::unique_ptr<struct Stmt> body;
+    struct Stmt* initializer;
+    Expr* condition;
+    Expr* increment;
+    struct Stmt* body;
     Source_location loc;
 };
 

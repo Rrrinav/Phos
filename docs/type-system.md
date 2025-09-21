@@ -67,7 +67,9 @@ Variables can hold functions. The type of a function is defined by its parameter
 
 -----
 
-### Safety Features: Optionals and `nil`
+### Sag++ -o bld ./bld.cpp
+./bld
+./bld runfety Features: Optionals and `nil`
 
 To prevent runtime errors, Phos requires you to be explicit about values that can be absent.
 
