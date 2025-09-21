@@ -1,0 +1,139 @@
+print("--- Phos Language Feature Validation ---");
+
+// ==========================================================
+// Section 1: Models and Functions
+// ==========================================================
+
+model Point {
+    let x: f64;
+    let y: f64;
+}
+
+// Function requiring a non-optional parameter
+fn print_point(p: Point) {
+    print("Point: (" + (p.x as string) + ", " + (p.y as string) + ")");
+}
+
+// Function with an optional parameter and optional return
+fn get_point_name(p: Point?) -> string? {
+    if (p == nil) {
+        return nil;
+    } else {
+        return "Point(" + (p.x as string) + ")";
+    }
+}
+
+
+// ==========================================================
+// Section 2: Const Correctness
+// ==========================================================
+
+let const PI: f64 = 3.14159;
+// PI = 3.0; // ✅ ERROR: Cannot assign to a constant variable 'PI'.
+
+fn test_const_params(const config: Point?, mutable_id: i64) {
+    // config = nil; // ✅ ERROR: Cannot assign to a constant variable 'config'.
+    mutable_id = 100; // OK
+    print("Mutable ID updated.");
+}
+
+test_const_params(nil, 99);
+
+
+// ==========================================================
+// Section 3: Optional Types and Nil Safety
+// ==========================================================
+
+print("\n--- Optional Type Validation ---");
+
+let p1: Point? = Point{ .x = 1.0, .y = 2.0 };
+let p2: Point? = nil;
+
+// Test .exists()
+print("p1 exists: " + (p1.exists() as string));
+print("p2 exists: " + (p2.exists() as string));
+
+// Test .value_or()
+let p2_defaulted := p2.value_or(Point{ .x = 0.0, .y = 0.0 });
+print_point(p2_defaulted);
+
+// Test .value()
+let p1_unwrapped := p1.value();
+print_point(p1_unwrapped);
+// let p2_unwrapped := p2.value(); // ✅ RUNTIME PANIC: Calling .value() on nil.
+
+// --- Type Narrowing ---
+
+// Test truthiness check
+if (p1) {
+    print("p1 is not nil (truthiness check).");
+    print_point(p1 as Point);
+}
+
+// Test nil comparison
+if (p2 == nil) {
+    print("p2 is nil (equality check).");
+    // print_point(p2 as Point); // ✅ TYPE ERROR: Cannot cast nil to non-optional 'Point'.
+}
+
+
+// ==========================================================
+// Section 4: Advanced Collections
+// ==========================================================
+
+print("\n--- Advanced Collections Validation ---");
+
+let matrix: (Point?)[] = [
+    Point{ .x = 10.0, .y = 20.0 },
+    nil,
+    Point{ .x = 30.0, .y = 40.0 }
+];
+
+for (let i := 0; i < len(matrix); i = i + 1) {
+    let p := matrix[i];
+    if (p != nil) {
+        print("Point found at index " + (i as string));
+        print_point(p as Point);
+    } else {
+        print("Nil found at index " + (i as string));
+    }
+}
+
+
+// ==========================================================
+// Section 5: Closures and Higher-Order Functions
+// ==========================================================
+
+print("\n--- Closure and Higher-Order Function Validation ---");
+
+// Closure with zero arguments
+let get_magic_number: | | -> i64 = | | -> i64 {
+    return 42;
+};
+print("Magic number: " + (get_magic_number() as string));
+
+
+// Closure capturing a variable
+let multiplier := 10;
+let multiply_by_ten: |i64| -> i64 = |x: i64| -> i64 {
+    return x * multiplier;
+};
+
+fn apply(const op: |i64| -> i64, value: i64) {
+    print("apply = " + (op(value) as string));
+}
+
+apply(multiply_by_ten, 7);
+
+// Returning closures
+fn make_adder(n: i64) -> |i64| -> i64 {
+    return |x: i64| -> i64 { return x + n; };
+}
+
+let add5 := make_adder(5);
+print("add5(10) = " + (add5(10) as string));
+
+// --- Final: complex expression precedence and boolean combos
+print("\n--- Final Checks ---");
+print("expr = " + (((1 + 2) * (3 + 4) / 7.0) as string));
+print("bool combo = " + (((true || false) && (!false)) as string));

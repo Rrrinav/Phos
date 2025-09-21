@@ -19,6 +19,12 @@ struct Source_location
     size_t column = 0;
 };
 
+struct Function_param
+{
+    std::string name;
+    types::Type type;
+    bool is_const;
+};
 // =================================
 // Expression node types
 // =================================
@@ -112,7 +118,7 @@ struct Model_literal_expr
 
 struct Closure_expr
 {
-    std::vector<std::pair<std::string, types::Type>> parameters;
+    std::vector<Function_param> parameters;
     types::Type return_type;
     std::shared_ptr<struct Stmt> body;
     types::Type type;
@@ -155,46 +161,6 @@ struct Expr
     Node node;
 };
 
-// Helper functions for accessing expression properties
-inline types::Type &get_type(Expr::Node &node)
-{
-    return std::visit(
-        [](auto &expr) -> types::Type &
-        {
-            using T = std::decay_t<decltype(expr)>;
-            if constexpr (std::is_same_v<T, Cast_expr>)
-                return expr.target_type;
-            else
-                return expr.type;
-        },
-        node);
-}
-
-// const version
-inline const types::Type &get_type(const Expr::Node &node)
-{
-    return std::visit(
-        [](auto const &expr) -> const types::Type &
-        {
-            using T = std::decay_t<decltype(expr)>;
-            if constexpr (std::is_same_v<T, Cast_expr>)
-                return expr.target_type;
-            else
-                return expr.type;
-        },
-        node);
-}
-
-inline Source_location &get_loc(Expr::Node &node)
-{
-    return std::visit([](auto &expr) -> Source_location & { return expr.loc; }, node);
-}
-
-inline Source_location &loc_copy(Expr::Node node)
-{
-    return std::visit([](auto &expr) -> Source_location & { return expr.loc; }, node);
-}
-
 // =================================
 // Statement node types
 // =================================
@@ -202,13 +168,6 @@ struct Return_stmt
 {
     std::unique_ptr<Expr> expression;
     Source_location loc;
-};
-
-struct Function_param
-{
-    std::string name;
-    types::Type type;
-    bool is_const;
 };
 
 struct Function_stmt
@@ -294,7 +253,45 @@ struct Stmt
     Node node;
 };
 
-// Helper functions for accessing statement properties
+inline types::Type &get_type(Expr::Node &node)
+{
+    return std::visit(
+        [](auto &expr) -> types::Type &
+        {
+            using T = std::decay_t<decltype(expr)>;
+            if constexpr (std::is_same_v<T, Cast_expr>)
+                return expr.target_type;
+            else
+                return expr.type;
+        },
+        node);
+}
+
+// const version
+inline const types::Type &get_type(const Expr::Node &node)
+{
+    return std::visit(
+        [](auto const &expr) -> const types::Type &
+        {
+            using T = std::decay_t<decltype(expr)>;
+            if constexpr (std::is_same_v<T, Cast_expr>)
+                return expr.target_type;
+            else
+                return expr.type;
+        },
+        node);
+}
+
+inline Source_location &get_loc(Expr::Node &node)
+{
+    return std::visit([](auto &expr) -> Source_location & { return expr.loc; }, node);
+}
+
+inline Source_location &loc_copy(Expr::Node node)
+{
+    return std::visit([](auto &expr) -> Source_location & { return expr.loc; }, node);
+}
+
 inline Source_location &get_loc(Stmt::Node &node)
 {
     return std::visit([](auto &stmt) -> Source_location & { return stmt.loc; }, node);

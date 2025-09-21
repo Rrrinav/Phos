@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Phos Test Suite Report</title>
+    <style>
+        body {
+            font-family: "Segoe UI", Roboto, sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            margin: 0;
+            padding: 2em;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            margin-bottom: 0.3em;
+            color: #58a6ff;
+        }
+
+        p.timestamp {
+            font-size: 0.9rem;
+            color: #8b949e;
+            margin-bottom: 2em;
+        }
+
+        .summary {
+            padding: 1.2em;
+            border-radius: 8px;
+            text-align: center;
+            margin-bottom: 2em;
+            font-weight: bold;
+            font-size: 1.1rem;
+        }
+
+        .summary-passed {
+            background-color: #161b22;
+            border: 1px solid #2ea043;
+            color: #2ea043;
+        }
+
+        .summary-failed {
+            background-color: #161b22;
+            border: 1px solid #f85149;
+            color: #f85149;
+        }
+
+        .counts {
+            font-weight: normal;
+            font-size: 0.9rem;
+            margin-top: 0.5em;
+            color: #8b949e;
+        }
+
+        h2 {
+            font-size: 1.3rem;
+            margin-bottom: 1em;
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 0.3em;
+        }
+
+        .test-list {
+            list-style: none;
+            padding: 0;
+            display: grid;
+            gap: 0.6em;
+        }
+
+        .test-list li {
+            display: flex;
+            align-items: center;
+            padding: 0.8em 1em;
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+
+        .test-list li:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+        }
+
+        .status-passed {
+            color: #2ea043;
+            font-weight: bold;
+            margin-right: 0.8em;
+        }
+
+        .status-failed {
+            color: #f85149;
+            font-weight: bold;
+            margin-right: 0.8em;
+        }
+
+        .test-list a {
+            color: #58a6ff;
+            font-weight: 500;
+            text-decoration: none;
+        }
+
+        .test-list a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>Phos Test Suite Report</h1>
+        <p class="timestamp">Generated on: {{TIMESTAMP}}</p>
+
+        <div class="summary {{SUMMARY_CLASS}}">
+            {{SUMMARY_MESSAGE}}
+            <div class="counts">
+                Total: {{TOTAL_COUNT}} | Passed: {{PASSED_COUNT}} | Failed: {{FAILED_COUNT}}
+            </div>
+        </div>
+
+        <h2>All Tests</h2>
+        <ul class="test-list">
+            {{TEST_RESULTS_LIST}}
+        </ul>
+    </div>
+</body>
+
+</html>
+

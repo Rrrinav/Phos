@@ -6,9 +6,8 @@
 #include <sstream>
 #include <chrono>
 #include <format>
-#include "b_ldr.hpp"
+#include "../b_ldr.hpp"
 
-// Forward declaration from bld.cpp
 extern const std::string TARGET;
 
 namespace report_gen
@@ -83,8 +82,8 @@ void generate_detail_page(const std::string &file_path, const std::string &diff,
 
 // Generates the main HTML report from test results
 void generate_html_report(const std::vector<std::string> &passed_files, const std::vector<std::pair<std::string, std::string>> &failed_info,
-                          const std::string &report_dir = "report", const std::string &index_template_path = "./rep-templates/index.html",
-                          const std::string &details_template_path = "./rep-templates/details_template.html")
+                          const std::string &report_dir = "report", const std::string &index_template_path = "./rep-gen/index.html",
+                          const std::string &details_template_path = "./rep-gen/details_template.html")
 {
     bld::fs::create_dir_if_not_exists(report_dir);
 

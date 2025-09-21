@@ -2,58 +2,49 @@
 
 #include <unordered_map>
 #include <memory>
-#include <string>
+#include <expected>
+
 #include "../value/value.hpp"
+#include "../error/err.hpp"
 
-namespace phos
+namespace phos {
+
+class Environment
 {
+private:
+    std::unordered_map<std::string, Value> values;
+    std::shared_ptr<Environment> enclosing;
 
-struct Environment : public std::enable_shared_from_this<Environment>
-{
-    std::unordered_map<std::string, Value> variables;
-    std::shared_ptr<Environment> parent;
+public:
+    Environment() : enclosing(nullptr) {}
+    Environment(std::shared_ptr<Environment> enclosing) : enclosing(std::move(enclosing)) {}
 
-    Environment(std::shared_ptr<Environment> p = nullptr) : parent(std::move(p)) {}
-
-    bool define(const std::string &name, Value value)
+    Result<void> define(const std::string &name, const Value &value)
     {
-        if (variables.find(name) != variables.end())
-            return false;
-        variables[name] = std::move(value);
-        return true;
+        values[name] = value;
+        return {};
     }
 
-    bool assign(const std::string &name, Value value)
+    Result<Value> get(const std::string &name) const
     {
-        if (variables.find(name) != variables.end())
+        if (values.contains(name))
+            return values.at(name);
+        if (enclosing != nullptr)
+            return enclosing->get(name);
+        return std::unexpected(err::msg("Undefined variable '" + name + "'", "interpreter", 0, 0));
+    }
+
+    Result<void> assign(const std::string &name, const Value &value)
+    {
+        if (values.contains(name))
         {
-            variables[name] = std::move(value);
-            return true;
+            values[name] = value;
+            return {};
         }
-        if (parent)
-            return parent->assign(name, std::move(value));
-        return false;
-    }
-
-    Value *lookup(const std::string &name)
-    {
-        auto it = variables.find(name);
-        if (it != variables.end())
-            return &it->second;
-        if (parent)
-            return parent->lookup(name);
-        return nullptr;
-    }
-
-    std::shared_ptr<Environment> create_child() { return std::make_shared<Environment>(shared_from_this()); }
-
-    // Capture current environment state for closures
-    std::unordered_map<std::string, Value> capture_environment() const
-    {
-        std::unordered_map<std::string, Value> captured;
-        for (const auto &[name, value] : variables) captured[name] = value;
-        return captured;
+        if (enclosing != nullptr)
+            return enclosing->assign(name, value);
+        return std::unexpected(err::msg("Undefined variable '" + name + "'", "interpreter", 0, 0));
     }
 };
 
-}  // namespace phos
+} //namespace phos 

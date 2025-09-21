@@ -7,6 +7,8 @@
 namespace phos {
 namespace err {
 
+enum Phase { Parsing, TypeChecking, Runtime };
+
 struct msg
 {
     std::string message;

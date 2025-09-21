@@ -1,6 +1,6 @@
 #include <cstdlib>
 #include <filesystem>
-#include <print>
+#include <format>
 #include <vector>
 #include <tuple>
 #include <string>
@@ -8,7 +8,7 @@
 #define B_LDR_IMPLEMENTATION
 #define BLD_USE_CONFIG
 #include "b_ldr.hpp"
-#include "report_gen.hpp"
+#include "rep-gen/report_gen.hpp"
 
 auto &cfg = bld::Config::get();
 
@@ -40,42 +40,84 @@ std::string string_diff(const std::string &got, const std::string &expected)
 
 void build_interpreter(bool release = false)
 {
+    using namespace std::filesystem;
+
     bld::fs::create_dir_if_not_exists(BIN);
+
+    // Gather all source files
     auto cpp_files = bld::fs::get_all_files_with_extensions(SRC, {"cpp"}, true);
+    auto hpp_files = bld::fs::get_all_files_with_extensions(SRC, {"hpp"}, true);
+
     std::vector<std::string> objs;
     std::vector<bld::Proc> builds;
+    std::vector<std::string> files_to_build;
 
-    // Step 1: compile each .cpp -> .o (if outdated)
+    // Step 1: Determine which .cpp files actually need rebuilding
     for (auto f : cpp_files)
     {
         std::string out_p = bld::fs::get_stem(bld::str::replace(f, SRC, BIN), true) + ".o";
+        objs.push_back(out_p);
 
-        bld::fs::create_dir_if_not_exists(std::filesystem::path(out_p).parent_path().string());
-        objs.emplace_back(out_p);
+        bld::fs::create_dir_if_not_exists(path(out_p).parent_path().string());
+
+        bool needs_rebuild = bld::is_executable_outdated(f, out_p);
+
+        // Dependency logic
+        if (!needs_rebuild)
+        {
+            if (f.find("main.cpp") != std::string::npos)
+            {
+                // main.cpp depends on ALL headers
+                for (auto &hpp : hpp_files)
+                {
+                    if (bld::is_executable_outdated(hpp, out_p))
+                    {
+                        needs_rebuild = true;
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                // other .cpp depends only on matching header (if present)
+                std::string header = bld::str::replace(f, ".cpp", ".hpp");
+                if (exists(header) && bld::is_executable_outdated(header, out_p))
+                    needs_rebuild = true;
+            }
+        }
+
+        if (needs_rebuild)
+            files_to_build.push_back(f);
+    }
+
+    // Step 2: Compile all files that need rebuilding asynchronously
+    if (!files_to_build.empty())
+        bld::log(bld::Log_type::INFO, "Rebuilding " + std::to_string(files_to_build.size()) + " files...");
+
+    for (auto &f : files_to_build)
+    {
+        std::string out_p = bld::fs::get_stem(bld::str::replace(f, SRC, BIN), true) + ".o";
 
         bld::Command cmp_cmd = {"g++", "-c", f, "-o", out_p, "--std=c++23"};
-
         if (release)
             cmp_cmd.add_parts("-O2");
         else
             cmp_cmd.add_parts("-ggdb", "-O0");
 
-        if (bld::is_executable_outdated(f, out_p))
-        {
-            bld::log(bld::Log_type::INFO, "Building: " + f);
-            auto p = bld::execute_async(cmp_cmd);
-            if (p)
-                builds.push_back(p);
-            else
-                bld::log(bld::Log_type::ERR, "Building " + f + " failed.");
-        }
+        bld::log(bld::Log_type::INFO, std::format("Building: {}", f));
+        auto p = bld::execute_async(cmp_cmd);
+        if (p)
+            builds.push_back(p);
+        else
+            bld::log(bld::Log_type::ERR, "Failed to spawn build for " + f);
     }
 
     bld::wait_procs(builds);
 
-    // Step 2: link all .o files -> final binary
+    // Step 3: Link all .o files into final binary
     bld::Command link_cmd = {"g++", "-o", TARGET};
-    for (auto o : objs) link_cmd.add_parts(o);
+    for (auto &o : objs)
+        link_cmd.add_parts(o);
     link_cmd.add_parts("--std=c++23");
 
     if (release)
@@ -88,6 +130,8 @@ void build_interpreter(bool release = false)
         bld::log(bld::Log_type::ERR, "Linking failed.");
         std::exit(EXIT_FAILURE);
     }
+
+    bld::log(bld::Log_type::INFO, "Build complete.");
 }
 
 std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::string>>> run_tests()

@@ -11,7 +11,7 @@
 
 namespace util {
 
-std::string operator_token_to_string(phos::lex::TokenType type)
+inline std::string operator_token_to_string(phos::lex::TokenType type)
 {
     static const std::unordered_map<phos::lex::TokenType, std::string> token_names = {
         {phos::lex::TokenType::Plus, "+"},       {phos::lex::TokenType::Minus, "-"},      {phos::lex::TokenType::Star, "*"},          {phos::lex::TokenType::Slash, "/"},
@@ -22,7 +22,7 @@ std::string operator_token_to_string(phos::lex::TokenType type)
     return it != token_names.end() ? it->second : "unknown";
 }
 
-std::string value_to_string(const phos::Value &value)
+inline std::string value_to_string(const phos::Value &value)
 {
     return std::visit(
         [](const auto &v) -> std::string {

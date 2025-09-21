@@ -114,7 +114,6 @@ inline bool is_nil(const Type &type)
 inline bool is_optional(const Type &type) { return std::holds_alternative<std::shared_ptr<Optional_type>>(type); }
 inline std::shared_ptr<Optional_type> get_optional_type(const Type &type) { return std::get<std::shared_ptr<Optional_type>>(type); }
 
-// The declaration for our main conversion function. Its body will be in the .cpp file.
 std::string type_to_string(const Type &type);
 
 }  // namespace phos::types

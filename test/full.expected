@@ -1,0 +1,27 @@
+--- Phos Language Feature Validation ---
+Mutable ID updated.
+
+--- Optional Type Validation ---
+p1 exists: true
+p2 exists: false
+Point: (0.000000, 0.000000)
+Point: (1.000000, 2.000000)
+p1 is not nil (truthiness check).
+Point: (1.000000, 2.000000)
+p2 is nil (equality check).
+
+--- Advanced Collections Validation ---
+Point found at index 0
+Point: (10.000000, 20.000000)
+Nil found at index 1
+Point found at index 2
+Point: (30.000000, 40.000000)
+
+--- Closure and Higher-Order Function Validation ---
+Magic number: 42
+apply = 70
+add5(10) = 15
+
+--- Final Checks ---
+expr = 3.000000
+bool combo = true
