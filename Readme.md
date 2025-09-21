@@ -4,7 +4,8 @@
 
 ## Example
 
-```js
+```rust
+
 model User {
   let id: i64;
   let name: string;
@@ -12,7 +13,9 @@ model User {
 }
 
 fn find_first(users: (User?)[], predicate: (| User | -> bool) ?) -> User ? {
+
   let const default_predicate: | User | -> bool = | u: User | -> bool { return u.is_active; };
+
   let p:= predicate.value_or(default_predicate);
 
   for (let i:= 0; i < len(users); i = i + 1) {
@@ -25,6 +28,7 @@ fn find_first(users: (User?)[], predicate: (| User | -> bool) ?) -> User ? {
       }
     }
   }
+
   return nil; // Return nil if no user matches
 }
 
@@ -44,7 +48,6 @@ if (first_active_user.exists()) {
 
 ## TODO
 
-- [ ] Implement const and 'nil'
 - [ ] Proper I/O (reading input, file streams)
 - [ ] Have proper command line args for it
 - [ ] Imports
