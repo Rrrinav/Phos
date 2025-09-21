@@ -12,6 +12,9 @@ Phos is a modern, statically-typed language. This means every variable's type mu
 -   **`void`**: Represents the absence of a value, used as the return type for functions that do not return anything.
 -   **`any`**: A special type that can hold a value of any other type. It is primarily used for defining generic built-in functions.
 
+> [!WARNING]
+> You can't use any in code, it is for native functions only
+
 ---
 
 ## Types as Expressions
@@ -84,7 +87,7 @@ An optional type is a wrapper that can hold either a value of its base type or `
 
     // 'name' cannot hold nil.
     let name: string = "Alex"; 
-    // let name: string = nil; // ✅ COMPILE ERROR
+    // let name: string = nil; // COMPILE ERROR
     ```
 
 -----
@@ -98,6 +101,6 @@ Phos supports powerful type inference using the `:=` operator. The compiler will
   - `let point := Point{ .x = 1, .y = 2 };`      // Inferred as `Point`
   - `let scores := [99, 85, 100];`               // Inferred as `i64[]`
   - `let data := [[1, 2], nil, [3]];`            // Inferred as `(i64[]?)[]`
-  - `let user := find_user(1);`                // Inferred as `User?`
+  - `let user := find_user(1);`                  // Inferred as `User?` if find user returns User?
 
 An explicit type annotation is only required when a variable is not initialized or when initializing an empty array (`let empty: i64[] = [];`).

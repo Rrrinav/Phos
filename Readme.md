@@ -51,7 +51,6 @@ if (first_active_user.exists()) {
 - [ ] Proper I/O (reading input, file streams)
 - [ ] Have proper command line args for it
 - [ ] Imports
-- [ ] Type Inference
 - [ ] C/C++ FFI
 
 ## TODO 2
