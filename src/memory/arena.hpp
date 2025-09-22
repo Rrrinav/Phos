@@ -1,13 +1,11 @@
-#ifndef _ARENA_HPP_
-#define _ARENA_HPP_
-
+#ifndef ARENA_HPP_
+#define ARENA_HPP_
 #include <algorithm>
 #include <vector>
 #include <cstddef>
 
 namespace phos::mem
 {
-
 class Arena
 {
     static constexpr std::size_t DEF_BLOCK_SIZE = 6 * 1024;
@@ -18,9 +16,11 @@ class Arena
         std::size_t size;
         std::size_t capacity;
 
-        _block(std::size_t _sz) : size(0), capacity(_sz) { data = new char[_sz]; }
-        ~_block() { delete this->data; }
+        _block(std::size_t sz) : size(0), capacity(sz) { data = new char[sz]; }
+
+        ~_block() { delete[] data; }
     };
+
     std::vector<_block *> blocks_;
 
     void add_block(std::size_t min_sz)
@@ -35,12 +35,14 @@ public:
         for (auto &block : blocks_) delete block;
         blocks_.clear();
     }
+
     Arena() { add_block(this->DEF_BLOCK_SIZE); }
 
     Arena(const Arena &) = delete;
     Arena &operator=(const Arena &) = delete;
 
     Arena(Arena &&other) noexcept : blocks_(std::move(other.blocks_)) { other.blocks_.clear(); }
+
     Arena &operator=(Arena &&other) noexcept
     {
         if (this != &other)
@@ -59,7 +61,6 @@ public:
         std::size_t aligned = (bytes + alignof(T) - 1) & ~(alignof(T) - 1);
 
         _block *back = this->blocks_.back();
-
         if (back->size + aligned > back->capacity)
         {
             add_block(aligned);
@@ -78,18 +79,34 @@ public:
         return new (mem) T(std::forward<Args>(args)...);
     }
 
-    template <typename T, typename... Args>
-    T *operator()(Args &&...args)
-    {
-        return create<T>(std::forward<Args>(args)...);
-    }
-
     void reset()
     {
         for (auto *b : blocks_) b->size = 0;
     }
+
+    // Static method for creating objects with constructor arguments
+    template <typename T, typename... Args>
+    static T *alloc(Arena &arena, Args &&...args)
+    {
+        return arena.create<T>(std::forward<Args>(args)...);
+    }
+
+    // Static method for move/copy constructing from an existing object
+    template <typename T>
+    static T *alloc(Arena &arena, T obj)
+    {
+        T *mem = arena.allocate<T>();
+        return new (mem) T(std::forward<T>(obj));
+    }
+
+    // Operator for convenient object creation
+    template <typename T>
+    T *operator<<(T &&obj)
+    {
+        T *mem = this->allocate<std::decay_t<T>>();
+        return new (mem) std::decay_t<T>(std::forward<T>(obj));
+    }
 };
 
 }  // namespace phos::mem
-
-#endif  // _ARENA_HPP_
+#endif  // ARENA_HPP_

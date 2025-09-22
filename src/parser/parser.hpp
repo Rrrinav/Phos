@@ -29,7 +29,7 @@ class Parser
 
 public:
     explicit Parser(std::vector<lex::Token> t, mem::Arena &arena) : tokens_(std::move(t)), arena_(arena) {}
-    Result<std::vector<std::unique_ptr<ast::Stmt>>> parse();
+    Result<std::vector<ast::Stmt*>> parse();
 
 private:
     void skip_newlines();
@@ -44,36 +44,38 @@ private:
 
     void synchronize();
 
-    Result<std::optional<std::unique_ptr<ast::Stmt>>> declaration();
-    Result<std::unique_ptr<ast::Stmt>>                function_declaration();
-    Result<std::unique_ptr<ast::Stmt>>                model_declaration();
-    Result<std::pair<std::string, types::Type>>       parse_model_field();
-    Result<ast::Function_stmt>                        parse_model_method();
-    Result<std::unique_ptr<ast::Stmt>>                var_declaration();
-    Result<std::unique_ptr<ast::Stmt>>                statement();
-    Result<std::unique_ptr<ast::Stmt>>                print_statement(ast::Print_stream stream = ast::Print_stream::STDOUT);
-    Result<std::unique_ptr<ast::Stmt>>                block_statement();
-    Result<std::unique_ptr<ast::Stmt>>                if_statement();
-    Result<std::unique_ptr<ast::Stmt>>                while_statement();
-    Result<std::unique_ptr<ast::Stmt>>                for_statement();
-    Result<std::unique_ptr<ast::Stmt>>                return_statement();
-    Result<std::unique_ptr<ast::Stmt>>                expression_statement();
+    Result<std::optional<ast::Stmt*>> declaration();
 
-    Result<std::unique_ptr<ast::Expr>> expression();
-    Result<std::unique_ptr<ast::Expr>> assignment();
-    Result<std::unique_ptr<ast::Expr>> logical_or();
-    Result<std::unique_ptr<ast::Expr>> logical_and();
-    Result<std::unique_ptr<ast::Expr>> equality();
-    Result<std::unique_ptr<ast::Expr>> comparison();
-    Result<std::unique_ptr<ast::Expr>> term();
-    Result<std::unique_ptr<ast::Expr>> factor();
-    Result<std::unique_ptr<ast::Expr>> cast();
-    Result<std::unique_ptr<ast::Expr>> unary();
-    Result<std::unique_ptr<ast::Expr>> call();
-    Result<std::unique_ptr<ast::Expr>> primary();
-    Result<std::unique_ptr<ast::Expr>> parse_closure_expression();
-    Result<std::unique_ptr<ast::Expr>> parse_array_literal();
-    Result<std::unique_ptr<ast::Expr>> parse_model_literal(const std::string &model_name);
+    Result<ast::Stmt*> function_declaration();
+    Result<ast::Stmt*> var_declaration();
+    Result<ast::Stmt*> statement();
+    Result<ast::Stmt*> print_statement(ast::Print_stream stream = ast::Print_stream::STDOUT);
+    Result<ast::Stmt*> block_statement();
+    Result<ast::Stmt*> if_statement();
+    Result<ast::Stmt*> while_statement();
+    Result<ast::Stmt*> for_statement();
+    Result<ast::Stmt*> return_statement();
+    Result<ast::Stmt*> expression_statement();
+    Result<ast::Stmt*> model_declaration();
+
+    Result<std::pair<std::string, types::Type>> parse_model_field();
+    Result<ast::Function_stmt> parse_model_method();
+
+    Result<ast::Expr*> expression();
+    Result<ast::Expr*> assignment();
+    Result<ast::Expr*> logical_or();
+    Result<ast::Expr*> logical_and();
+    Result<ast::Expr*> equality();
+    Result<ast::Expr*> comparison();
+    Result<ast::Expr*> term();
+    Result<ast::Expr*> factor();
+    Result<ast::Expr*> cast();
+    Result<ast::Expr*> unary();
+    Result<ast::Expr*> call();
+    Result<ast::Expr*> primary();
+    Result<ast::Expr*> parse_closure_expression();
+    Result<ast::Expr*> parse_array_literal();
+    Result<ast::Expr*> parse_model_literal(const std::string &model_name);
 
     Result<types::Type> parse_type();
 };

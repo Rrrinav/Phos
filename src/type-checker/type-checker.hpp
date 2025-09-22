@@ -26,7 +26,7 @@ class TypeResolver
 {
 public:
     TypeResolver(Type_checker &checker) : checker(checker) {}
-    void resolve(std::vector<std::unique_ptr<ast::Stmt>> &statements);
+    void resolve(std::vector<ast::Stmt*> &statements);
 
 private:
     Type_checker &checker;
@@ -76,7 +76,7 @@ public:
         errors.push_back({message, this->phase, loc.line, loc.column});
     }
 
-    std::vector<err::msg> check(std::vector<std::unique_ptr<ast::Stmt>> &statements);
+    std::vector<err::msg> check(std::vector<ast::Stmt*> &statements);
 
     Type_checker()
     {
@@ -89,6 +89,7 @@ private:
     {
         const ast::Function_stmt *declaration;
     };
+
     struct ModelData
     {
         std::shared_ptr<types::Model_type> signature;
@@ -130,7 +131,7 @@ private:
     bool is_optional(const types::Type &type) const;
 
     // --- Main Checking Logic ---
-    void collect_signatures(const std::vector<std::unique_ptr<ast::Stmt>> &statements);
+    void collect_signatures(const std::vector<ast::Stmt*> &statements);
     void check_stmt(ast::Stmt &stmt);
     Result<types::Type> check_expr(ast::Expr &expr);
 

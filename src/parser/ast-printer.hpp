@@ -29,13 +29,10 @@ public:
     bool use_unicode = true;
     explicit AstPrinter(bool unicode = true);
 
-    void print_statements(const std::vector<std::unique_ptr<Stmt>>& statements);
+    void print_statements(const std::vector<Stmt*>& statements);
 
-    void print_expr_ptr(const std::unique_ptr<Expr>& expr);
-    void print_expr_ptr(const std::shared_ptr<Expr>& expr);
-
-    void print_stmt_ptr(const std::unique_ptr<Stmt>& stmt);
-    void print_stmt_ptr(const std::shared_ptr<Stmt>& stmt);
+    void print_expr_ptr(const Expr* expr);
+    void print_stmt_ptr(const Stmt* stmt);
 
     void print_expr(const Expr& expr);
     void print_stmt(const Stmt& stmt);

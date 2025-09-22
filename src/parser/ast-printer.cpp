@@ -1,5 +1,6 @@
 #include "ast-printer.hpp"
 #include "../utility/utility.hpp"
+#include "ast.hpp"
 
 #include <print>
 #include <memory>
@@ -32,54 +33,30 @@ void AstPrinter::print_str(const std::string &s) const { std::println("{}", s); 
 
 AstPrinter::AstPrinter(bool unicode) : use_unicode(unicode) {}
 
-void AstPrinter::print_statements(const std::vector<std::unique_ptr<Stmt>> &statements)
+void AstPrinter::print_statements(const std::vector<Stmt*> &statements)
 {
     for (size_t i = 0; i < statements.size(); ++i)
         with_child(i + 1 < statements.size(), [&] { print_stmt_ptr(statements[i]); });
 }
 
-void AstPrinter::print_expr_ptr(const std::unique_ptr<Expr> &expr)
+void AstPrinter::print_expr_ptr(const Expr* expr)
 {
-    if (expr)
-        print_expr(*expr);
-    else
+    if (!expr)
     {
-        indent();
-        print_str("null");
+        print_str("<nullptr>");
+        return;
     }
+    std::visit([this](auto const& e) { this->print_expr_node(e); }, expr->node);
 }
 
-void AstPrinter::print_expr_ptr(const std::shared_ptr<Expr> &expr)
+void AstPrinter::print_stmt_ptr(const Stmt* stmt)
 {
-    if (expr)
-        print_expr(*expr);
-    else
+    if (!stmt)
     {
-        indent();
-        print_str("null");
+        print_str("<nullptr>");
+        return;
     }
-}
-
-void AstPrinter::print_stmt_ptr(const std::unique_ptr<Stmt> &stmt)
-{
-    if (stmt)
-        print_stmt(*stmt);
-    else
-    {
-        indent();
-        print_str("null");
-    }
-}
-
-void AstPrinter::print_stmt_ptr(const std::shared_ptr<Stmt> &stmt)
-{
-    if (stmt)
-        print_stmt(*stmt);
-    else
-    {
-        indent();
-        print_str("null");
-    }
+    std::visit([this](auto const& s) { this->print_stmt_node(s); }, stmt->node);
 }
 
 void AstPrinter::print_expr(const Expr &expr)
@@ -502,30 +479,55 @@ void AstPrinter::print_stmt_node(const Model_stmt &node)
 {
     indent();
     print_str("Model: " + node.name);
+
     with_child(true,
                [&]
                {
                    indent();
                    print_str("Fields");
-                   for (size_t i = 0; i < node.fields.size(); ++i)
+                   if (node.fields.empty())
                    {
-                       with_child(i + 1 < node.fields.size(),
+                       with_child(false,
                                   [&]
                                   {
                                       indent();
-                                      print_str(node.fields[i].first + " : " + types::type_to_string(node.fields[i].second));
+                                      print_str("<none>");
                                   });
                    }
+                   else
+                   {
+                       for (size_t i = 0; i < node.fields.size(); ++i)
+                       {
+                           with_child(i + 1 < node.fields.size(),
+                                      [&]
+                                      {
+                                          indent();
+                                          print_str(node.fields[i].first + " : " + types::type_to_string(node.fields[i].second));
+                                      });
+                       }
+                   }
                });
+
     with_child(false,
                [&]
                {
                    indent();
                    print_str("Methods");
-                   for (size_t i = 0; i < node.methods.size(); ++i)
+                   if (node.methods.empty())
                    {
-                       auto temp_stmt = std::make_unique<Stmt>(node.methods[i]);
-                       with_child(i + 1 < node.methods.size(), [&] { print_stmt_ptr(temp_stmt); });
+                       with_child(false,
+                                  [&]
+                                  {
+                                      indent();
+                                      print_str("<none>");
+                                  });
+                   }
+                   else
+                   {
+                       for (size_t i = 0; i < node.methods.size(); ++i)
+                       {
+                           with_child(i + 1 < node.methods.size(), [&] { print_stmt_node(*node.methods[i]); });
+                       }
                    }
                });
 }

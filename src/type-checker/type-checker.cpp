@@ -1,36 +1,43 @@
 #include "type-checker.hpp"
+#include <print>
 
 namespace phos
 {
 
-inline void TypeResolver::resolve(std::vector<std::unique_ptr<ast::Stmt>> &statements)
+void TypeResolver::resolve(std::vector<ast::Stmt *> &statements)
 {
-    for (auto &stmt : statements)
+    for (auto *stmt : statements)
         if (stmt)
             resolve_stmt(*stmt);
 }
 
-inline void TypeResolver::resolve_stmt(ast::Stmt &stmt)
+void TypeResolver::resolve_stmt(ast::Stmt &stmt)
 {
     std::visit([this](auto &s) { visit(s); }, stmt.node);
 }
 
-inline void TypeResolver::resolve_expr(ast::Expr &expr)
+void TypeResolver::resolve_expr(ast::Expr &expr)
 {
     std::visit([this](auto &e) { visit(e); }, expr.node);
 }
 
-inline void TypeResolver::resolve_type(types::Type &type)
+void TypeResolver::resolve_type(types::Type &type)
 {
     if (auto *model_type_ptr = std::get_if<std::shared_ptr<types::Model_type>>(&type))
     {
         if ((*model_type_ptr)->name.empty())
             return;
-        const std::string name = (*model_type_ptr)->name;
-        if (checker.model_signatures.contains(name))
+
+        const std::string &name = (*model_type_ptr)->name;
+        if (checker.model_signatures.count(name))
+        {
+            // Replace the placeholder type with the fully resolved signature
             type = checker.model_signatures.at(name);
+        }
         else
+        {
             checker.type_error({}, "Unknown model type '" + name + "'.");
+        }
     }
     else if (auto *closure_type_ptr = std::get_if<std::shared_ptr<types::Closure_type>>(&type))
     {
@@ -49,7 +56,7 @@ inline void TypeResolver::resolve_type(types::Type &type)
     }
 }
 
-inline void TypeResolver::visit(ast::Function_stmt &stmt)
+void TypeResolver::visit(ast::Function_stmt &stmt)
 {
     resolve_type(stmt.return_type);
     for (auto &param : stmt.parameters) resolve_type(param.type);
@@ -57,38 +64,40 @@ inline void TypeResolver::visit(ast::Function_stmt &stmt)
         resolve_stmt(*stmt.body);
 }
 
-inline void TypeResolver::visit(ast::Model_stmt &stmt)
+void TypeResolver::visit(ast::Model_stmt &stmt)
 {
-    for (auto &method : stmt.methods) visit(method);
+    for (auto *method : stmt.methods)
+        if (method)
+            visit(*method);
 }
 
-inline void TypeResolver::visit(ast::Block_stmt &stmt)
+void TypeResolver::visit(ast::Block_stmt &stmt)
 {
-    for (auto &s : stmt.statements)
+    for (auto *s : stmt.statements)
         if (s)
             resolve_stmt(*s);
 }
 
-inline void TypeResolver::visit(ast::Var_stmt &stmt)
+void TypeResolver::visit(ast::Var_stmt &stmt)
 {
     resolve_type(stmt.type);
     if (stmt.initializer)
         resolve_expr(*stmt.initializer);
 }
 
-inline void TypeResolver::visit(ast::Print_stmt &stmt)
+void TypeResolver::visit(ast::Print_stmt &stmt)
 {
     if (stmt.expression)
         resolve_expr(*stmt.expression);
 }
 
-inline void TypeResolver::visit(ast::Expr_stmt &stmt)
+void TypeResolver::visit(ast::Expr_stmt &stmt)
 {
     if (stmt.expression)
         resolve_expr(*stmt.expression);
 }
 
-inline void TypeResolver::visit(ast::If_stmt &stmt)
+void TypeResolver::visit(ast::If_stmt &stmt)
 {
     if (stmt.condition)
         resolve_expr(*stmt.condition);
@@ -98,7 +107,7 @@ inline void TypeResolver::visit(ast::If_stmt &stmt)
         resolve_stmt(*stmt.else_branch);
 }
 
-inline void TypeResolver::visit(ast::While_stmt &stmt)
+void TypeResolver::visit(ast::While_stmt &stmt)
 {
     if (stmt.condition)
         resolve_expr(*stmt.condition);
@@ -106,7 +115,7 @@ inline void TypeResolver::visit(ast::While_stmt &stmt)
         resolve_stmt(*stmt.body);
 }
 
-inline void TypeResolver::visit(ast::For_stmt &stmt)
+void TypeResolver::visit(ast::For_stmt &stmt)
 {
     if (stmt.initializer)
         resolve_stmt(*stmt.initializer);
@@ -118,19 +127,19 @@ inline void TypeResolver::visit(ast::For_stmt &stmt)
         resolve_stmt(*stmt.body);
 }
 
-inline void TypeResolver::visit(ast::Return_stmt &stmt)
+void TypeResolver::visit(ast::Return_stmt &stmt)
 {
     if (stmt.expression)
         resolve_expr(*stmt.expression);
 }
 
-inline void TypeResolver::visit(ast::Assignment_expr &expr)
+void TypeResolver::visit(ast::Assignment_expr &expr)
 {
     if (expr.value)
         resolve_expr(*expr.value);
 }
 
-inline void TypeResolver::visit(ast::Binary_expr &expr)
+void TypeResolver::visit(ast::Binary_expr &expr)
 {
     if (expr.left)
         resolve_expr(*expr.left);
@@ -138,21 +147,21 @@ inline void TypeResolver::visit(ast::Binary_expr &expr)
         resolve_expr(*expr.right);
 }
 
-inline void TypeResolver::visit(ast::Call_expr &expr)
+void TypeResolver::visit(ast::Call_expr &expr)
 {
-    for (auto &arg : expr.arguments)
+    for (auto *arg : expr.arguments)
         if (arg)
             resolve_expr(*arg);
 }
 
-inline void TypeResolver::visit(ast::Cast_expr &expr)
+void TypeResolver::visit(ast::Cast_expr &expr)
 {
     if (expr.expression)
         resolve_expr(*expr.expression);
     resolve_type(expr.target_type);
 }
 
-inline void TypeResolver::visit(ast::Closure_expr &expr)
+void TypeResolver::visit(ast::Closure_expr &expr)
 {
     resolve_type(expr.return_type);
     for (auto &param : expr.parameters) resolve_type(param.type);
@@ -160,13 +169,13 @@ inline void TypeResolver::visit(ast::Closure_expr &expr)
         resolve_stmt(*expr.body);
 }
 
-inline void TypeResolver::visit(ast::Field_access_expr &expr)
+void TypeResolver::visit(ast::Field_access_expr &expr)
 {
     if (expr.object)
         resolve_expr(*expr.object);
 }
 
-inline void TypeResolver::visit(ast::Field_assignment_expr &expr)
+void TypeResolver::visit(ast::Field_assignment_expr &expr)
 {
     if (expr.object)
         resolve_expr(*expr.object);
@@ -174,36 +183,36 @@ inline void TypeResolver::visit(ast::Field_assignment_expr &expr)
         resolve_expr(*expr.value);
 }
 
-inline void TypeResolver::visit(ast::Method_call_expr &expr)
+void TypeResolver::visit(ast::Method_call_expr &expr)
 {
     if (expr.object)
         resolve_expr(*expr.object);
-    for (auto &arg : expr.arguments)
+    for (auto *arg : expr.arguments)
         if (arg)
             resolve_expr(*arg);
 }
 
-inline void TypeResolver::visit(ast::Model_literal_expr &expr)
+void TypeResolver::visit(ast::Model_literal_expr &expr)
 {
     for (auto &field : expr.fields)
         if (field.second)
             resolve_expr(*field.second);
 }
 
-inline void TypeResolver::visit(ast::Unary_expr &expr)
+void TypeResolver::visit(ast::Unary_expr &expr)
 {
     if (expr.right)
         resolve_expr(*expr.right);
 }
 
-inline void TypeResolver::visit(ast::Array_literal_expr &expr)
+void TypeResolver::visit(ast::Array_literal_expr &expr)
 {
-    for (auto &element : expr.elements)
+    for (auto *element : expr.elements)
         if (element)
             resolve_expr(*element);
 }
 
-inline void TypeResolver::visit(ast::Array_access_expr &expr)
+void TypeResolver::visit(ast::Array_access_expr &expr)
 {
     if (expr.array)
         resolve_expr(*expr.array);
@@ -211,12 +220,11 @@ inline void TypeResolver::visit(ast::Array_access_expr &expr)
         resolve_expr(*expr.index);
 }
 
-inline void TypeResolver::visit(ast::Array_assignment_expr &expr)
+void TypeResolver::visit(ast::Array_assignment_expr &expr)
 {
     if (expr.array)
         resolve_expr(*expr.array);
     if (expr.index)
-
         resolve_expr(*expr.index);
     if (expr.value)
         resolve_expr(*expr.value);
@@ -225,7 +233,7 @@ inline void TypeResolver::visit(ast::Array_assignment_expr &expr)
 // ===================================================================
 // TYPE CHECKER IMPLEMENTATIONS
 // ===================================================================
-std::vector<err::msg> Type_checker::check(std::vector<std::unique_ptr<ast::Stmt>> &statements)
+std::vector<err::msg> Type_checker::check(std::vector<ast::Stmt*> &statements)
 {
     begin_scope();
     collect_signatures(statements);
@@ -238,7 +246,7 @@ std::vector<err::msg> Type_checker::check(std::vector<std::unique_ptr<ast::Stmt>
     return errors;
 }
 
-inline void Type_checker::collect_signatures(const std::vector<std::unique_ptr<ast::Stmt>> &statements)
+inline void Type_checker::collect_signatures(const std::vector<ast::Stmt*> &statements)
 {
     for (const auto &stmt : statements)
     {
@@ -265,10 +273,10 @@ inline void Type_checker::collect_signatures(const std::vector<std::unique_ptr<a
                 for (const auto &method_ast : model_stmt->methods)
                 {
                     types::Function_type method_type;
-                    for (const auto &param : method_ast.parameters) method_type.parameter_types.push_back(param.type);
-                    method_type.return_type = method_ast.return_type;
-                    data.methods[method_ast.name] = {&method_ast};
-                    model_type->methods[method_ast.name] = method_type;
+                    for (const auto &param : method_ast->parameters) method_type.parameter_types.push_back(param.type);
+                    method_type.return_type = method_ast->return_type;
+                    data.methods[method_ast->name] = {method_ast};
+                    model_type->methods[method_ast->name] = method_type;
                 }
                 model_signatures[model_stmt->name] = model_type;
                 model_data[model_stmt->name] = std::move(data);
@@ -472,7 +480,7 @@ inline void Type_checker::check_stmt_node(ast::Var_stmt &stmt)
     }
     else if (stmt.initializer && !is_compatible(stmt.type, init_type))
     {
-        type_error(stmt.loc, "Initializer type does not match variable's declared type.");
+        type_error(stmt.loc, std::string("Initializer type does not match variable's declared type.") + "expected: " + types::type_to_string(stmt.type) + " got: " + types::type_to_string(init_type));
     }
     declare(stmt.name, stmt.type, stmt.is_const, stmt.loc);
 }
@@ -481,7 +489,7 @@ inline void Type_checker::check_stmt_node(ast::Model_stmt &stmt)
 {
     auto saved_model = current_model_type;
     current_model_type = model_signatures.at(stmt.name);
-    for (auto &method : stmt.methods) check_stmt_node(method);
+    for (auto &method : stmt.methods) check_stmt_node(*method);
     current_model_type = saved_model;
 }
 

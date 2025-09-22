@@ -33,7 +33,7 @@ Interpreter::Interpreter()
     for (auto &a : native_mthds) this->define_native_method(a.this_type, a.name, a.arity, a.code);
 }
 
-Result<void> Interpreter::interpret(const std::vector<std::unique_ptr<ast::Stmt>> &statements)
+Result<void> Interpreter::interpret(const std::vector<ast::Stmt*> &statements)
 {
     for (const auto &statement : statements)
     {
@@ -471,7 +471,7 @@ Result<ReturnValue> Interpreter::execute(const ast::Stmt &stmt)
                 for (const auto &param : arg.parameters) func_type.parameter_types.push_back(param.type);
                 func_type.return_type = arg.return_type;
 
-                functions[arg.name] = {func_type, std::make_shared<ast::Function_stmt>(arg), environment};
+                functions[arg.name] = {func_type, std::make_shared<ast::Function_stmt>(std::move(arg)) , environment};
 
                 // PERF: This is slow, maybe straight away move it?
                 std::vector<std::pair<std::string, types::Type>> param_data;
@@ -513,11 +513,11 @@ Result<ReturnValue> Interpreter::execute(const ast::Stmt &stmt)
                 for (const auto &method_ast : arg.methods)
                 {
                     types::Function_type method_type;
-                    for (const auto &param : method_ast.parameters) method_type.parameter_types.push_back(param.type);
-                    method_type.return_type = method_ast.return_type;
+                    for (const auto &param : method_ast->parameters) method_type.parameter_types.push_back(param.type);
+                    method_type.return_type = method_ast->return_type;
 
-                    data.methods[method_ast.name] = {method_type, std::make_shared<ast::Function_stmt>(method_ast), environment};
-                    model_type->methods[method_ast.name] = method_type;
+                    data.methods[method_ast->name] = {method_type, std::make_shared<ast::Function_stmt>(*method_ast), environment};
+                    model_type->methods[method_ast->name] = method_type;
                 }
 
                 model_data[arg.name] = std::move(data);
@@ -671,7 +671,7 @@ std::string Interpreter::unescape_string(const std::string &s)
     return res;
 }
 
-Result<ReturnValue> Interpreter::executeBlock(const std::vector<std::unique_ptr<ast::Stmt>> &statements,
+Result<ReturnValue> Interpreter::executeBlock(const std::vector<ast::Stmt*> &statements,
                                               std::shared_ptr<Environment> block_env)
 {
     auto previous = this->environment;

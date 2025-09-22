@@ -11,6 +11,7 @@
 #include "parser/parser.hpp"
 #include "lexer/lexer.hpp"
 #include "lexer/token.hpp"
+#include "./memory/arena.hpp"
 //#include "repl.hpp"
 
 int main(int argc, char *argv[])
@@ -85,6 +86,7 @@ int main(int argc, char *argv[])
     std::string source = buffer.str();
     file.close();
 
+    phos::mem::Arena arena;
     try
     {
         phos::lex::Lexer lexer(source);
@@ -98,7 +100,7 @@ int main(int argc, char *argv[])
             }
         }
 
-        phos::Parser parser(tokens);
+        phos::Parser parser(tokens, arena);
         auto parse_result = parser.parse();
         if (!parse_result)
         {
@@ -121,7 +123,6 @@ int main(int argc, char *argv[])
             if (print_only_print)
                 return 0;
         }
-
         auto statements = std::move(*parse_result);
         phos::Interpreter interpreter;
         auto interpret_result = interpreter.interpret(statements);

@@ -183,7 +183,7 @@ struct Model_stmt
 {
     std::string name;
     std::vector<std::pair<std::string, types::Type>> fields;
-    std::vector<Function_stmt> methods;
+    std::vector<Function_stmt *> methods;
     Source_location loc;
 };
 

@@ -61,7 +61,7 @@ public:
     // Constructor & Public Interface
     // ========================================================================
     Interpreter();
-    Result<void> interpret(const std::vector<std::unique_ptr<ast::Stmt>> &statements);
+    Result<void> interpret(const std::vector<ast::Stmt*> &statements);
     void define_native(const std::string &name, int arity, types::Function_type signature,
                        std::vector<std::pair<std::string, types::Type>> parameters,
                        std::function<Result<Value>(const std::vector<Value> &)> code);
@@ -78,7 +78,7 @@ private:
     // ========================================================================
     Result<ReturnValue> execute(const ast::Stmt &stmt);
     std::string unescape_string(const std::string &s);
-    Result<ReturnValue> executeBlock(const std::vector<std::unique_ptr<ast::Stmt>> &statements, std::shared_ptr<Environment> block_env);
+    Result<ReturnValue> executeBlock(const std::vector<ast::Stmt*> &statements, std::shared_ptr<Environment> block_env);
     // ========================================================================
     // Function & Closure Calling
     // ========================================================================

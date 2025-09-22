@@ -17,4 +17,4 @@ print(uninitialized);
     print("Inner scope: " + mutable_value);
 }
 
-print("Outer scope: " + (mutable_value as string));
+print("Outer scope: " + mutable_value as string);
