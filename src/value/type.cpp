@@ -1,8 +1,32 @@
 #include "type.hpp"
-#include <sstream>
 
 namespace phos::types
 {
+
+bool operator==(const Type& lhs, const Type& rhs)
+{
+    if (lhs.index() != rhs.index())
+        return false;
+
+    return std::visit(
+    [&](auto &&l_val) -> bool
+    {
+        auto &&r_val = std::get<std::decay_t<decltype(l_val)>>(rhs);
+        using T = std::decay_t<decltype(l_val)>;
+
+        if constexpr (std::is_same_v<T, Primitive_kind>)
+        {
+            return l_val == r_val;
+        }
+        else
+        {
+            if (!l_val || !r_val)
+                return l_val == r_val;
+            return *l_val == *r_val;
+        }
+    },
+    lhs);
+}
 
 std::string type_to_string(const Type &type)
 {
@@ -34,7 +58,7 @@ std::string type_to_string(const Type &type)
     }
     else if (is_closure(type))
     {
-        std::shared_ptr<Closure_type> closure_type = get_closure_type(type);
+        phos::mem::rc_ptr<Closure_type> closure_type = get_closure_type(type);
         std::string result = "|";
         for (int i = 0; i < closure_type->function_type.parameter_types.size(); i++)
         {

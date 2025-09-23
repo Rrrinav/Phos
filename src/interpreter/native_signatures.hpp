@@ -29,7 +29,7 @@ inline std::unordered_map<std::string, Native_function_signature> get_native_fn_
     std::unordered_map<std::string, Native_function_signature> signatures;
 
     // --- Helper Types for Readability ---
-    auto any_array_type = types::Type(std::make_shared<types::Array_type>(types::Primitive_kind::Any));
+    auto any_array_type = types::Type(mem::make_rc<types::Array_type>(types::Primitive_kind::Any));
     auto string_type = types::Type(types::Primitive_kind::String);
     auto i64_type = types::Type(types::Primitive_kind::Int);
 
@@ -48,8 +48,8 @@ inline std::unordered_map<std::string, Native_method_signature> get_native_metho
     std::unordered_map<std::string, Native_method_signature> signatures;
 
     // --- Helper Types for Readability ---
-    auto any_array_type    = types::Type(std::make_shared<types::Array_type>(types::Primitive_kind::Any));
-    auto any_optional_type = types::Type(std::make_shared<types::Optional_type>(types::Primitive_kind::Any));
+    auto any_array_type    = types::Type(mem::make_rc<types::Array_type>(types::Primitive_kind::Any));
+    auto any_optional_type = types::Type(mem::make_rc<types::Optional_type>(types::Primitive_kind::Any));
     auto string_type       = types::Type(types::Primitive_kind::String);
     auto i64_type          = types::Type(types::Primitive_kind::Int);
     auto bool_type         = types::Type(types::Primitive_kind::Bool);
@@ -100,7 +100,7 @@ inline std::unordered_map<std::string, Native_method_signature> get_native_metho
     signatures["split"]    = {
         .valid_this_types = {string_type},
         .allowed_params   = {{string_type}},
-        .return_type      = types::Type(std::make_shared<types::Array_type>(string_type))
+        .return_type      = types::Type(mem::make_rc<types::Array_type>(string_type))
     };
     signatures["replace"] = { .valid_this_types = {string_type}, .allowed_params = {{string_type}, {string_type}}, .return_type = string_type};
 
@@ -111,7 +111,7 @@ inline std::unordered_map<std::string, Native_method_signature> get_native_metho
     signatures["value"] = {{any_optional_type}, {}, types::Primitive_kind::Any}; // Returns generic T
     signatures["value_or"] = {{any_optional_type}, {{types::Primitive_kind::Any}}, types::Primitive_kind::Any}; // Param and return are generic T
 
-    auto map_closure_type = types::Type(std::make_shared<types::Closure_type>());
+    auto map_closure_type = types::Type(mem::make_rc<types::Closure_type>());
     signatures["map"] = {{any_array_type, any_optional_type}, {{map_closure_type}}, types::Primitive_kind::Any};
 
     return signatures;

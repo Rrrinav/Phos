@@ -271,7 +271,7 @@ Result<ast::Stmt*> Parser::model_declaration()
             {
                 model_type.name = name.lexeme;
                 for (const auto &field : fields) model_type.fields[field.first] = field.second;
-                model_types_[name.lexeme] = types::Type(std::make_shared<types::Model_type>(model_type));
+                model_types_[name.lexeme] = types::Type(mem::make_rc<types::Model_type>(model_type));
             }
             parsing_fields = false;
             advance();
@@ -304,7 +304,7 @@ Result<ast::Stmt*> Parser::model_declaration()
     {
         model_type.name = name.lexeme;
         for (const auto &field : fields) model_type.fields[field.first] = field.second;
-        model_types_[name.lexeme] = types::Type(std::make_shared<types::Model_type>(model_type));
+        model_types_[name.lexeme] = types::Type(mem::make_rc<types::Model_type>(model_type));
     }
 
     for (const auto &method : methods)
@@ -313,7 +313,7 @@ Result<ast::Stmt*> Parser::model_declaration()
         for (const auto &param : method->parameters) func_type.parameter_types.push_back(param.type);
         func_type.return_type = method->return_type;
         // This is safe because model_type is now guaranteed to exist in the map
-        std::get<std::shared_ptr<types::Model_type>>(model_types_[name.lexeme])->methods[method->name] = func_type;
+        std::get<mem::rc_ptr<types::Model_type>>(model_types_[name.lexeme])->methods[method->name] = func_type;
     }
 
     current_model_.clear();
@@ -1403,7 +1403,7 @@ Result<ast::Expr*> Parser::parse_closure_expression()
     }
 
     // --- AST Node Creation ---
-    auto closure_type = std::make_shared<types::Closure_type>();
+    auto closure_type = mem::make_rc<types::Closure_type>();
     for (const auto &param : parameters) closure_type->function_type.parameter_types.push_back(param.type);
     closure_type->function_type.return_type = return_type;
 
@@ -1546,7 +1546,7 @@ Result<types::Type> Parser::parse_type()
         if (!return_type_result)
             return return_type_result;
 
-        auto closure_t = std::make_shared<types::Closure_type>();
+        auto closure_t = mem::make_rc<types::Closure_type>();
         closure_t->function_type.parameter_types = parameter_types;
         closure_t->function_type.return_type = return_type_result.value();
         current_type = types::Type(closure_t);
@@ -1568,7 +1568,7 @@ Result<types::Type> Parser::parse_type()
             current_type = types::Type(types::Primitive_kind::Any);
         else
         {  // Assume it's a model name
-            auto model_type = std::make_shared<types::Model_type>();
+            auto model_type = mem::make_rc<types::Model_type>();
             model_type->name = type_name;
             current_type = types::Type(model_type);
         }
@@ -1584,16 +1584,16 @@ Result<types::Type> Parser::parse_type()
         if (match({lex::TokenType::LeftBracket}))
         {
             consume(lex::TokenType::RightBracket, "Expected ']' to complete array type suffix.");
-            current_type = types::Type(std::make_shared<types::Array_type>(current_type));
+            current_type = types::Type(mem::make_rc<types::Array_type>(current_type));
         }
         else if (match({lex::TokenType::Question}))
         {
-            auto optional_type = std::make_shared<types::Optional_type>();
+            auto optional_type = mem::make_rc<types::Optional_type>();
             optional_type->base_type = current_type;
             current_type = types::Type(optional_type);
         }
         else
-    {
+        {
             break;  // No more suffixes found
         }
     }

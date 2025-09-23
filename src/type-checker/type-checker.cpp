@@ -1,5 +1,4 @@
 #include "type-checker.hpp"
-#include <print>
 
 namespace phos
 {
@@ -23,7 +22,7 @@ void TypeResolver::resolve_expr(ast::Expr &expr)
 
 void TypeResolver::resolve_type(types::Type &type)
 {
-    if (auto *model_type_ptr = std::get_if<std::shared_ptr<types::Model_type>>(&type))
+    if (auto *model_type_ptr = std::get_if<mem::rc_ptr<types::Model_type>>(&type))
     {
         if ((*model_type_ptr)->name.empty())
             return;
@@ -39,17 +38,17 @@ void TypeResolver::resolve_type(types::Type &type)
             checker.type_error({}, "Unknown model type '" + name + "'.");
         }
     }
-    else if (auto *closure_type_ptr = std::get_if<std::shared_ptr<types::Closure_type>>(&type))
+    else if (auto *closure_type_ptr = std::get_if<mem::rc_ptr<types::Closure_type>>(&type))
     {
         for (auto &param_type : (*closure_type_ptr)->function_type.parameter_types) resolve_type(param_type);
         resolve_type((*closure_type_ptr)->function_type.return_type);
     }
-    else if (auto *array_type_ptr = std::get_if<std::shared_ptr<types::Array_type>>(&type))
+    else if (auto *array_type_ptr = std::get_if<mem::rc_ptr<types::Array_type>>(&type))
     {
         if (*array_type_ptr)
             resolve_type((*array_type_ptr)->element_type);
     }
-    else if (auto *optional_type_ptr = std::get_if<std::shared_ptr<types::Optional_type>>(&type))
+    else if (auto *optional_type_ptr = std::get_if<mem::rc_ptr<types::Optional_type>>(&type))
     {
         if (*optional_type_ptr)
             resolve_type((*optional_type_ptr)->base_type);
@@ -265,7 +264,7 @@ inline void Type_checker::collect_signatures(const std::vector<ast::Stmt*> &stat
             }
             else
             {
-                auto model_type = std::make_shared<types::Model_type>();
+                auto model_type = mem::make_rc<types::Model_type>();
                 model_type->name = model_stmt->name;
                 for (const auto &field : model_stmt->fields) model_type->fields[field.first] = field.second;
                 ModelData data;
@@ -322,19 +321,19 @@ inline bool Type_checker::is_compatible(const types::Type &expected, const types
     }
     if (is_optional(actual) || is_nil(actual))
         return false;
-    if (auto *expected_array = std::get_if<std::shared_ptr<types::Array_type>>(&expected))
+    if (auto *expected_array = std::get_if<mem::rc_ptr<types::Array_type>>(&expected))
     {
         if (is_any((*expected_array)->element_type) && is_array(actual))
             return true;
     }
-    if (const auto *a_array = std::get_if<std::shared_ptr<types::Array_type>>(&expected))
+    if (const auto *a_array = std::get_if<mem::rc_ptr<types::Array_type>>(&expected))
     {
-        if (const auto *b_array = std::get_if<std::shared_ptr<types::Array_type>>(&actual))
+        if (const auto *b_array = std::get_if<mem::rc_ptr<types::Array_type>>(&actual))
             return is_compatible((*a_array)->element_type, (*b_array)->element_type);
     }
-    if (const auto *a_closure = std::get_if<std::shared_ptr<types::Closure_type>>(&expected))
+    if (const auto *a_closure = std::get_if<mem::rc_ptr<types::Closure_type>>(&expected))
     {
-        if (const auto *b_closure = std::get_if<std::shared_ptr<types::Closure_type>>(&actual))
+        if (const auto *b_closure = std::get_if<mem::rc_ptr<types::Closure_type>>(&actual))
             return (*a_closure)->function_type == (*b_closure)->function_type;
     }
     return expected == actual;
@@ -381,22 +380,22 @@ inline bool Type_checker::is_string(const types::Type &type) const
 
 inline bool Type_checker::is_array(const types::Type &type) const
 {
-    return std::holds_alternative<std::shared_ptr<types::Array_type>>(type);
+    return std::holds_alternative<mem::rc_ptr<types::Array_type>>(type);
 }
 
 inline bool Type_checker::is_function(const types::Type &type) const
 {
-    return std::holds_alternative<std::shared_ptr<types::Function_type>>(type);
+    return std::holds_alternative<mem::rc_ptr<types::Function_type>>(type);
 }
 
 inline bool Type_checker::is_closure(const types::Type &type) const
 {
-    return std::holds_alternative<std::shared_ptr<types::Closure_type>>(type);
+    return std::holds_alternative<mem::rc_ptr<types::Closure_type>>(type);
 }
 
 inline bool Type_checker::is_model(const types::Type &type) const
 {
-    return std::holds_alternative<std::shared_ptr<types::Model_type>>(type);
+    return std::holds_alternative<mem::rc_ptr<types::Model_type>>(type);
 }
 
 inline bool Type_checker::is_any(const types::Type &type) const
@@ -423,7 +422,7 @@ inline Result<std::pair<types::Type, bool>> Type_checker::lookup(const std::stri
         return var;
     if (functions.contains(name))
     {
-        auto func_type = std::make_shared<types::Function_type>();
+        auto func_type = mem::make_rc<types::Function_type>();
         const auto &func_data = functions.at(name);
         for (const auto &param : func_data.declaration->parameters) func_type->parameter_types.push_back(param.type);
         func_type->return_type = func_data.declaration->return_type;
@@ -472,7 +471,7 @@ inline void Type_checker::check_stmt_node(ast::Var_stmt &stmt)
     {
         if (is_array(init_type))
         {
-            const auto &array_type = std::get<std::shared_ptr<types::Array_type>>(init_type);
+            const auto &array_type = std::get<mem::rc_ptr<types::Array_type>>(init_type);
             if (array_type->element_type == types::Type(types::Primitive_kind::Void))
                 type_error(stmt.loc, "Cannot infer type of an empty array initializer.");
         }
@@ -780,7 +779,7 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr)
     auto callable_var_res = lookup_variable(expr.callee, expr.loc);
     if (callable_var_res)
     {
-        if (auto *ct = std::get_if<std::shared_ptr<types::Closure_type>>(&callable_var_res.value().first))
+        if (auto *ct = std::get_if<mem::rc_ptr<types::Closure_type>>(&callable_var_res.value().first))
         {
             const auto &signature = (*ct)->function_type;
             return expr.type = signature.return_type;
@@ -841,7 +840,7 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Closure_expr &expr
     end_scope();
     current_return_type = saved_ret;
 
-    auto ct = std::make_shared<types::Closure_type>();
+    auto ct = mem::make_rc<types::Closure_type>();
 
     for (auto const &p : expr.parameters) ct->function_type.parameter_types.push_back(p.type);
 
@@ -860,14 +859,14 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Field_access_expr 
         type_error(expr.loc, "Cannot access field on an optional type. Use an 'if' check to unwrap it first.");
         return expr.type = types::Primitive_kind::Void;
     }
-    if (auto *mt = std::get_if<std::shared_ptr<types::Model_type>>(&obj_type))
+    if (auto *mt = std::get_if<mem::rc_ptr<types::Model_type>>(&obj_type))
     {
         if ((*mt)->fields.contains(expr.field_name))
             return expr.type = (*mt)->fields.at(expr.field_name);
         if ((*mt)->methods.contains(expr.field_name))
         {
             const auto &method = (*mt)->methods.at(expr.field_name);
-            auto ft = std::make_shared<types::Function_type>();
+            auto ft = mem::make_rc<types::Function_type>();
             ft->parameter_types = method.parameter_types;
             ft->return_type = method.return_type;
             return expr.type = types::Type(ft);
@@ -930,7 +929,7 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &
                 type_error(ast::get_loc(expr.arguments[0]->node), "Closure parameter type is not compatible with array element type.");
             }
             // map on T[] with closure |T|->U returns U[]
-            return expr.type = types::Type(std::make_shared<types::Array_type>(closure_type->function_type.return_type));
+            return expr.type = types::Type(mem::make_rc<types::Array_type>(closure_type->function_type.return_type));
         }
 
         if (is_optional(obj_type))
@@ -943,7 +942,7 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &
                 type_error(ast::get_loc(expr.arguments[0]->node), "Closure parameter type is not compatible with optional's base type.");
             }
             // map on T? with closure |T|->U returns U?
-            return expr.type = types::Type(std::make_shared<types::Optional_type>(closure_type->function_type.return_type));
+            return expr.type = types::Type(mem::make_rc<types::Optional_type>(closure_type->function_type.return_type));
         }
     }
     if (m_native_methods.count(expr.method_name))
@@ -995,7 +994,7 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &
         type_error(expr.loc, "Cannot call method on an optional type. Use an 'if' check to unwrap it first.");
         return expr.type = types::Primitive_kind::Void;
     }
-    if (auto *mt = std::get_if<std::shared_ptr<types::Model_type>>(&obj_type))
+    if (auto *mt = std::get_if<mem::rc_ptr<types::Model_type>>(&obj_type))
     {
         if ((*mt)->methods.count(expr.method_name))
         {
@@ -1061,7 +1060,7 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Unary_expr &expr)
 inline Result<types::Type> Type_checker::check_expr_node(ast::Array_literal_expr &expr)
 {
     if (expr.elements.empty())
-        return expr.type = types::Type(std::make_shared<types::Array_type>(types::Type(types::Primitive_kind::Void)));
+        return expr.type = types::Type(mem::make_rc<types::Array_type>(types::Type(types::Primitive_kind::Void)));
     types::Type common_type = types::Primitive_kind::Nil;
     bool has_nil = false;
     for (const auto &elem_expr : expr.elements)
@@ -1081,12 +1080,12 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Array_literal_expr
         else if (!is_compatible(common_type, elem_type) && !is_compatible(elem_type, common_type))
         {
             type_error(ast::get_loc(elem_expr->node), "Array elements must have a consistent type.");
-            return expr.type = types::Type(std::make_shared<types::Array_type>(types::Primitive_kind::Void));
+            return expr.type = types::Type(mem::make_rc<types::Array_type>(types::Primitive_kind::Void));
         }
     }
     if (has_nil && !is_optional(common_type) && !is_nil(common_type))
-        common_type = types::Type(std::make_shared<types::Optional_type>(common_type));
-    return expr.type = types::Type(std::make_shared<types::Array_type>(common_type));
+        common_type = types::Type(mem::make_rc<types::Optional_type>(common_type));
+    return expr.type = types::Type(mem::make_rc<types::Array_type>(common_type));
 }
 
 inline Result<types::Type> Type_checker::check_expr_node(ast::Array_access_expr &expr)
@@ -1102,7 +1101,7 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Array_access_expr 
     auto index_type_res = check_expr(*expr.index);
     if (index_type_res && index_type_res.value() != types::Type(types::Primitive_kind::Int))
         type_error(ast::get_loc(expr.index->node), "Array index must be an integer.");
-    const auto &array_type = std::get<std::shared_ptr<types::Array_type>>(array_type_res.value());
+    const auto &array_type = std::get<mem::rc_ptr<types::Array_type>>(array_type_res.value());
     return expr.type = array_type->element_type;
 }
 
@@ -1122,7 +1121,7 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Array_assignment_e
     auto value_type_res = check_expr(*expr.value);
     if (!value_type_res)
         return expr.type = types::Primitive_kind::Void;
-    const auto &array_type = std::get<std::shared_ptr<types::Array_type>>(array_type_res.value());
+    const auto &array_type = std::get<mem::rc_ptr<types::Array_type>>(array_type_res.value());
     if (!is_compatible(array_type->element_type, value_type_res.value()))
         type_error(ast::get_loc(expr.value->node), "Type of value being assigned does not match array's element type.");
     return expr.type = value_type_res.value();

@@ -31,17 +31,17 @@ struct Native_method_definition
 inline constexpr int NUM_NATIVE_FUNCS = 2;
 
 // Returns a fixed-size array of all native function implementations.
-inline std::array<std::shared_ptr<Native_function_value>, NUM_NATIVE_FUNCS> get_natives()
+inline std::array<mem::rc_ptr<Native_function_value>, NUM_NATIVE_FUNCS> get_natives()
 {
     auto signatures = get_native_fn_signatures();
-    std::array<std::shared_ptr<Native_function_value>, NUM_NATIVE_FUNCS> functions;
+    std::array<mem::rc_ptr<Native_function_value>, NUM_NATIVE_FUNCS> functions;
 
     // === len ===
     {
         std::string name = "len";
         auto signature_data = signatures.at(name);
 
-        auto func = std::make_shared<Native_function_value>();
+        auto func = mem::make_rc<Native_function_value>();
         func->name = name;
         func->arity = signature_data.allowed_params.size();
         func->code = [](const std::vector<Value> &args) -> Result<Value>
@@ -61,7 +61,7 @@ inline std::array<std::shared_ptr<Native_function_value>, NUM_NATIVE_FUNCS> get_
     {
         std::string name = "clock";
 
-        auto func = std::make_shared<Native_function_value>();
+        auto func = mem::make_rc<Native_function_value>();
         func->name = name;
         func->arity = 0;
         func->code = [](const std::vector<Value> &args) -> Result<Value>
@@ -177,7 +177,7 @@ inline std::array<Native_method_definition, NUM_NATIVE_METHODS> get_native_metho
                             return std::unexpected(err::msg("Delimiter must be a string.", "interpreter", 0, 0));
                         std::string str = get_string(s);
                         std::string delim = get_string(a[0]);
-                        auto res = std::make_shared<Array_value>();
+                        auto res = mem::make_rc<Array_value>();
                         size_t start = 0;
                         size_t end = str.find(delim);
                         while (end != std::string::npos)

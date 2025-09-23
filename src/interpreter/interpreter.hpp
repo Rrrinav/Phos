@@ -30,24 +30,24 @@ private:
     struct FunctionData
     {
         types::Function_type signature;
-        std::shared_ptr<ast::Function_stmt> declaration;
-        std::shared_ptr<Environment> definition_environment;
+        mem::rc_ptr<ast::Function_stmt> declaration;
+        mem::rc_ptr<Environment> definition_environment;
     };
     struct ClosureData
     {
         std::size_t id;
         types::Closure_type signature;
-        std::shared_ptr<ast::Closure_expr> declaration;
-        std::shared_ptr<Environment> captured_environment;
+        mem::rc_ptr<ast::Closure_expr> declaration;
+        mem::rc_ptr<Environment> captured_environment;
     };
     struct ModelData
     {
-        std::shared_ptr<types::Model_type> signature;
+        mem::rc_ptr<types::Model_type> signature;
         std::unordered_map<std::string, FunctionData> methods;
     };
     // Environment management
-    std::shared_ptr<Environment> globals;
-    std::shared_ptr<Environment> environment;
+    mem::rc_ptr<Environment> globals;
+    mem::rc_ptr<Environment> environment;
     // Code execution tables
     std::unordered_map<std::string, FunctionData> functions;
     std::unordered_map<size_t, ClosureData> closures;
@@ -105,7 +105,7 @@ private:
     Result<Return_value> execute_visitor(const ast::For_stmt &stmt);
 
     std::string unescape_string(const std::string &s);
-    Result<Return_value> execute_block(const std::vector<ast::Stmt*> &statements, std::shared_ptr<Environment> block_env);
+    Result<Return_value> execute_block(const std::vector<ast::Stmt*> &statements, mem::rc_ptr<Environment> block_env);
     // ========================================================================
     // Function & Closure Calling
     // ========================================================================

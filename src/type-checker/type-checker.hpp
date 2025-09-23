@@ -69,7 +69,7 @@ class Type_checker
     friend class TypeResolver;
 
 public:
-    std::unordered_map<std::string, std::shared_ptr<types::Model_type>> model_signatures;
+    std::unordered_map<std::string, mem::rc_ptr<types::Model_type>> model_signatures;
 
     void type_error(const ast::Source_location &loc, const std::string &message)
     {
@@ -92,7 +92,7 @@ private:
 
     struct ModelData
     {
-        std::shared_ptr<types::Model_type> signature;
+        mem::rc_ptr<types::Model_type> signature;
         std::unordered_map<std::string, FunctionData> methods;
     };
 
@@ -106,7 +106,7 @@ private:
     std::unordered_map<std::string, native::Native_method_signature> m_native_methods;
 
     std::optional<types::Type> current_return_type;
-    std::optional<std::shared_ptr<types::Model_type>> current_model_type;
+    std::optional<mem::rc_ptr<types::Model_type>> current_model_type;
     std::vector<err::msg> errors;
     std::string phase = "type-checking";
 

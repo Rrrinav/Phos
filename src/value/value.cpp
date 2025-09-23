@@ -4,7 +4,38 @@
 
 namespace phos
 {
+bool operator==(const Value &lhs, const Value &rhs)
+{
+    if (lhs.index() != rhs.index())
+        return false;
 
+    return std::visit(
+    [&](auto &&l_val) -> bool
+    {
+        auto &&r_val = std::get<std::decay_t<decltype(l_val)>>(rhs);
+        using T = std::decay_t<decltype(l_val)>;
+
+        if constexpr (std::is_same_v<T, std::nullptr_t> || std::is_same_v<T, std::monostate>)
+        {
+            return true;  // nil == nil, void == void
+        }
+        else if constexpr (std::is_same_v<T, mem::rc_ptr<Model_value>>||
+                           std::is_same_v<T, mem::rc_ptr<Function_value>> ||
+                           std::is_same_v<T, mem::rc_ptr<Closure_value>> ||
+                           std::is_same_v<T, mem::rc_ptr<Array_value>> ||
+                           std::is_same_v<T, mem::rc_ptr<Native_function_value>>)
+        {
+            if (!l_val || !r_val)
+                return l_val == r_val;
+            return l_val == r_val;
+        }
+        else
+        {
+            return l_val == r_val;
+        }
+    },
+    lhs);
+}
 std::string value_to_string_impl(const Value &value, int indent_level)
 {
     // --- Primitives ---

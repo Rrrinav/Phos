@@ -13,11 +13,11 @@ class Environment
 {
 private:
     std::unordered_map<std::string, Value> values;
-    std::shared_ptr<Environment> enclosing;
+    mem::rc_ptr<Environment> enclosing;
 
 public:
     Environment() : enclosing(nullptr) {}
-    Environment(std::shared_ptr<Environment> enclosing) : enclosing(std::move(enclosing)) {}
+    Environment(mem::rc_ptr<Environment> enclosing) : enclosing(std::move(enclosing)) {}
 
     Result<void> define(const std::string &name, const Value &value)
     {

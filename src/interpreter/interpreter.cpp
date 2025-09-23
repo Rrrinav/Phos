@@ -25,7 +25,7 @@ namespace phos
 
 Interpreter::Interpreter()
 {
-    globals = std::make_shared<Environment>();
+    globals = mem::make_rc<Environment>();
     environment = globals;
     auto native_functions = native::get_natives();
     for (auto &a : native_functions) this->define_native(a->name, a->arity, a->signature, a->parameters, a->code);
@@ -52,7 +52,7 @@ void Interpreter::define_native(const std::string &name, int arity, types::Funct
                                 std::vector<std::pair<std::string, types::Type>> parameters,
                                 std::function<Result<Value>(const std::vector<Value> &)> code)
 {
-    auto func_val = std::make_shared<Native_function_value>();
+    auto func_val = mem::make_rc<Native_function_value>();
     func_val->name = name;
     func_val->arity = arity;
     func_val->signature = std::move(signature);
@@ -71,7 +71,7 @@ void Interpreter::define_native_method(std::string type, const std::string &name
 
 Result<Value> Interpreter::evaluate_visitor(const ast::Array_literal_expr & expr)
 {
-    auto array_val = std::make_shared<Array_value>();
+    auto array_val = mem::make_rc<Array_value>();
     for (const auto &elem_expr : expr.elements)
     {
         auto elem_result = evaluate(*elem_expr);
@@ -227,13 +227,13 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Closure_expr& expr)
     for (const auto &param : expr.parameters) closure_type_info.function_type.parameter_types.push_back(param.type);
     closure_type_info.function_type.return_type = expr.return_type;
 
-    closures[id] = ClosureData{id, closure_type_info, std::make_shared<ast::Closure_expr>(expr), environment};
+    closures[id] = ClosureData{id, closure_type_info, mem::make_rc<ast::Closure_expr>(expr), environment};
 
     std::vector<std::pair<std::string, types::Type>> param_data;
     for (const auto &p : expr.parameters) param_data.push_back({p.name, p.type});
 
-    auto func_val = std::make_shared<Function_value>(closure_type_info.function_type, param_data, environment);
-    auto closure_val = std::make_shared<Closure_value>(func_val, std::unordered_map<std::string, Value>{});
+    auto func_val = mem::make_rc<Function_value>(closure_type_info.function_type, param_data, environment);
+    auto closure_val = mem::make_rc<Closure_value>(func_val, std::unordered_map<std::string, Value>{});
     closure_val->id = id;
 
     return Value(closure_val);
@@ -394,7 +394,7 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Method_call_expr& expr)
             const auto &method_data = model_data.at(model_name).methods.at(expr.method_name);
 
             // Create a new environment for the method call that inherits from the method's definition environment.
-            auto new_env = std::make_shared<Environment>(method_data.definition_environment);
+            auto new_env = mem::make_rc<Environment>(method_data.definition_environment);
             new_env->define("this", object);  // Define 'this'
 
             // Define parameters
@@ -423,7 +423,7 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Model_literal_expr& expr)
         return std::unexpected( err::msg("Model type '" + expr.model_name + "' is not defined.", "interpreter", expr.loc.line, expr.loc.column));
 
     auto model_type = model_data.at(expr.model_name).signature;
-    auto instance = std::make_shared<Model_value>(*model_type, std::unordered_map<std::string, Value>{});
+    auto instance = mem::make_rc<Model_value>(*model_type, std::unordered_map<std::string, Value>{});
 
     for (const auto &[name, expr] : expr.fields)
     {
@@ -490,14 +490,14 @@ Result<Return_value> Interpreter::execute_visitor(const ast::Function_stmt &stmt
     for (const auto &param : stmt.parameters) func_type.parameter_types.push_back(param.type);
     func_type.return_type = stmt.return_type;
 
-    functions[stmt.name] = {func_type, std::make_shared<ast::Function_stmt>(std::move(stmt)) , environment};
+    functions[stmt.name] = {func_type, mem::make_rc<ast::Function_stmt>(std::move(stmt)) , environment};
 
     // PERF: This is slow, maybe straight away move it?
     std::vector<std::pair<std::string, types::Type>> param_data;
     for (const auto &p : stmt.parameters) param_data.push_back({p.name, p.type});
 
     // Now, create the Function_value with the clean data.
-    auto func_val = std::make_shared<Function_value>(func_type, param_data, environment);
+    auto func_val = mem::make_rc<Function_value>(func_type, param_data, environment);
 
     auto define_result = environment->define(stmt.name, Value(func_val));
     if (!define_result)
@@ -508,7 +508,7 @@ Result<Return_value> Interpreter::execute_visitor(const ast::Function_stmt &stmt
 
 Result<Return_value> Interpreter::execute_visitor(const ast::Model_stmt &stmt)
 {
-    auto model_type = std::make_shared<types::Model_type>();
+    auto model_type = mem::make_rc<types::Model_type>();
     model_type->name = stmt.name;
 
     for (const auto &[name, type] : stmt.fields) model_type->fields[name] = type;
@@ -522,7 +522,7 @@ Result<Return_value> Interpreter::execute_visitor(const ast::Model_stmt &stmt)
         for (const auto &param : method_ast->parameters) method_type.parameter_types.push_back(param.type);
         method_type.return_type = method_ast->return_type;
 
-        data.methods[method_ast->name] = {method_type, std::make_shared<ast::Function_stmt>(*method_ast), environment};
+        data.methods[method_ast->name] = {method_type, mem::make_rc<ast::Function_stmt>(*method_ast), environment};
         model_type->methods[method_ast->name] = method_type;
     }
 
@@ -533,7 +533,7 @@ Result<Return_value> Interpreter::execute_visitor(const ast::Model_stmt &stmt)
 
 Result<Return_value> Interpreter::execute_visitor(const ast::Block_stmt &stmt)
 {
-    return execute_block(stmt.statements, std::make_shared<Environment>(environment));
+    return execute_block(stmt.statements, mem::make_rc<Environment>(environment));
 }
 
 Result<Value> Interpreter::evaluate_visitor(const ast::Assignment_expr& expr)
@@ -673,7 +673,7 @@ std::string Interpreter::unescape_string(const std::string &s)
     return res;
 }
 
-Result<Return_value> Interpreter::execute_block(const std::vector<ast::Stmt*> &statements, std::shared_ptr<Environment> block_env)
+Result<Return_value> Interpreter::execute_block(const std::vector<ast::Stmt*> &statements, mem::rc_ptr<Environment> block_env)
 {
     auto previous = this->environment;
     this->environment = block_env;
@@ -698,7 +698,7 @@ Result<Value> Interpreter::call_function(const std::string &name, const std::vec
         return std::unexpected(err::msg("Undefined function '" + name + "'.", "interpreter", loc.line, loc.column));
 
     const auto &func_data = functions.at(name);
-    auto new_env = std::make_shared<Environment>(func_data.definition_environment);
+    auto new_env = mem::make_rc<Environment>(func_data.definition_environment);
 
     for (size_t i = 0; i < func_data.declaration->parameters.size(); ++i)
         auto _ = new_env->define(func_data.declaration->parameters[i].name, arguments[i]);
@@ -717,7 +717,7 @@ Result<Value> Interpreter::call_closure(size_t id, const std::vector<Value> &arg
         return std::unexpected(err::msg("Invalid or stale closure.", "interpreter", loc.line, loc.column));
 
     const auto &closure_data = closures.at(id);
-    auto new_env = std::make_shared<Environment>(closure_data.captured_environment);
+    auto new_env = mem::make_rc<Environment>(closure_data.captured_environment);
 
     for (size_t i = 0; i < closure_data.declaration->parameters.size(); ++i)
         std::ignore = new_env->define(closure_data.declaration->parameters[i].name, arguments[i]);
@@ -880,7 +880,7 @@ Result<Value> Interpreter::cast_value(const Value &v, const types::Type &t)
 Result<Value> Interpreter::map_array(Value &array_val, const Value &closure)
 {
     auto arr = get_array(array_val);
-    auto result_arr = std::make_shared<Array_value>();
+    auto result_arr = mem::make_rc<Array_value>();
 
     // Get the closure ID just once.
     size_t closure_id = get_closure(closure)->id;
