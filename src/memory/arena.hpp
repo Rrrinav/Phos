@@ -93,7 +93,7 @@ public:
 
     // Static method for move/copy constructing from an existing object
     template <typename T>
-    static T *alloc(Arena &arena, T obj)
+    static T *alloc(Arena &arena, T&& obj)
     {
         T *mem = arena.allocate<T>();
         return new (mem) T(std::forward<T>(obj));
