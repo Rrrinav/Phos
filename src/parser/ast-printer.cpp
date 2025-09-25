@@ -1,9 +1,8 @@
 #include "ast-printer.hpp"
-#include "../utility/utility.hpp"
 #include "ast.hpp"
+#include "../utility/utility.hpp"
 
 #include <print>
-#include <memory>
 
 namespace phos::ast {
 
@@ -74,7 +73,7 @@ void AstPrinter::print_stmt(const Stmt &stmt)
 void AstPrinter::print_expr_node(const Literal_expr &node)
 {
     indent();
-    print_str("Literal: " + util::value_to_string(node.value));
+    print_str("Literal: " + value_to_string(node.value));
     with_child(false,
                [&]
                {

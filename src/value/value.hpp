@@ -112,5 +112,6 @@ inline phos::mem::rc_ptr<Native_function_value> get_native_function(const Value 
 }
 
 std::string value_to_string(const Value &value);
+std::string get_value_type_string(const Value &value);
 
 }  // namespace phos

@@ -1,6 +1,8 @@
 #include "interpreter.hpp"
 #include "./native_globals.hpp"
 #include "../error/err.hpp"
+#include "../utility/utility.hpp"
+#include "../utility/try_res.hpp"
 
 #include <format>
 #include <print>
@@ -39,10 +41,8 @@ Result<void> Interpreter::interpret(const std::vector<ast::Stmt*> &statements)
 {
     for (const auto &statement : statements)
     {
-        auto result = execute(*statement);
-        if (!result)
-            return std::unexpected(result.error());
-        if (result.value().is_return)
+        auto result = __Try(execute(*statement));
+        if (result.is_return)
             return std::unexpected(err::msg("Cannot return from top-level code.", "interpreter", 0, 0));
     }
     return {};
@@ -74,10 +74,8 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Array_literal_expr & expr
     auto array_val = mem::make_rc<Array_value>();
     for (const auto &elem_expr : expr.elements)
     {
-        auto elem_result = evaluate(*elem_expr);
-        if (!elem_result)
-            return elem_result;
-        array_val->elements.push_back(elem_result.value());
+        auto elem_result = __Try(evaluate(*elem_expr));
+        array_val->elements.push_back(elem_result);
     }
     return Value(array_val);
 }
@@ -107,86 +105,76 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Array_access_expr & expr)
 
 Result<Value> Interpreter::evaluate_visitor(const ast::Array_assignment_expr & expr)
 {
-    auto array_res = evaluate(*expr.array);
-    if (!array_res)
-        return array_res;
+    auto array_res = __Try(evaluate(*expr.array));
+    auto index_res = __Try(evaluate(*expr.index));
+    auto value_res = __Try(evaluate(*expr.value));
 
-    auto index_res = evaluate(*expr.index);
-    if (!index_res)
-        return index_res;
-
-    auto value_res = evaluate(*expr.value);
-    if (!value_res)
-        return value_res;
-
-    if (!is_array(array_res.value()))
+    if (!is_array(array_res))
         return std::unexpected(
             err::msg("Can only use subscript '[]' on arrays for assignment.", "interpreter", expr.loc.line, expr.loc.column));
-    if (!is_int(index_res.value()))
+    if (!is_int(index_res))
         return std::unexpected(err::msg("Array index must be an integer.", "interpreter", expr.loc.line, expr.loc.column));
 
-    auto array_val = get_array(array_res.value());
-    auto index = get_int(index_res.value());
+    auto array_val = get_array(array_res);
+    auto index = get_int(index_res);
 
     if (index < 0 || static_cast<size_t>(index) >= array_val->elements.size())
         return std::unexpected(err::msg("Array index out of bounds.", "interpreter", expr.loc.line, expr.loc.column));
 
-    array_val->elements[index] = value_res.value();
-    return value_res.value();
+    array_val->elements[index] = value_res;
+    return value_res;
 }
 
 Result<Value> Interpreter::evaluate_visitor(const ast::Binary_expr& expr)
 {
+    auto left_result = __Try(evaluate(*expr.left));
+    auto right_result = __Try(evaluate(*expr.right));
 
-    auto left_result = evaluate(*expr.left);
-    if (!left_result)
-        return left_result;
-
-    auto right_result = evaluate(*expr.right);
-    if (!right_result)
-        return right_result;
-
-    const auto &left = left_result.value();
-    const auto &right = right_result.value();
-
+    const auto &left = left_result;
+    const auto &right = right_result;
+    Result<Value> res;
     switch (expr.op)
     {
         case lex::TokenType::Plus:
-            return add(left, right);
+            res = add(left, right); break;
         case lex::TokenType::Minus:
-            return subtract(left, right);
+            res = subtract(left, right); break;
         case lex::TokenType::Star:
-            return multiply(left, right);
+            res = multiply(left, right); break;
         case lex::TokenType::Slash:
-            return divide(left, right);
+            res = divide(left, right); break;
         case lex::TokenType::Percent:
-            return modulo(left, right);
+            res = modulo(left, right); break;
         case lex::TokenType::Equal:
-            return Value(equals(left, right));
+            res = Value(equals(left, right)); break;
         case lex::TokenType::NotEqual:
-            return Value(!equals(left, right));
+            res = Value(!equals(left, right)); break;
         case lex::TokenType::Less:
-            return lessThan(left, right);
+            res = lessThan(left, right); break;
         case lex::TokenType::LessEqual:
-            return less_than_or_equal(left, right);
+            res = less_than_or_equal(left, right); break;
         case lex::TokenType::Greater:
-            return greater_than(left, right);
+            res = greater_than(left, right); break;
         case lex::TokenType::GreaterEqual:
-            return greater_than_or_equal(left, right);
+            res = greater_than_or_equal(left, right); break;
         case lex::TokenType::LogicalAnd:
-            return Value(is_truthy(left) && is_truthy(right));
+            res = Value(is_truthy(left) && is_truthy(right)); break;
         case lex::TokenType::LogicalOr:
-            return Value(is_truthy(left) || is_truthy(right));
+            res = Value(is_truthy(left) || is_truthy(right)); break;
         default:
-            return std::unexpected(err::msg("Unknown binary operator.", "interpreter", expr.loc.line, expr.loc.column));
+            return std::unexpected(err::msg("Unknown binary operator " + util::operator_token_to_string(expr.op), "interpreter", expr.loc.line, expr.loc.column));
     }
+    if (!res.has_value())
+    {
+        res.error().line = expr.loc.line;
+        res.error().column = expr.loc.column;
+    }
+    return res;
 }
 
 Result<Value> Interpreter::evaluate_visitor(const ast::Call_expr& expr)
 {
-    auto callee_result = environment->get(expr.callee);
-    if (!callee_result)
-        return callee_result;
+    auto callee_result = __Try(environment->get(expr.callee));
 
     std::vector<Value> arguments;
     for (const auto &argument : expr.arguments)
@@ -197,13 +185,13 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Call_expr& expr)
         arguments.push_back(arg_result.value());
     }
 
-    if (is_function(callee_result.value()))
+    if (is_function(callee_result))
         return call_function(expr.callee, arguments, expr.loc);
-    else if (is_closure(callee_result.value()))
-        return call_closure(get_closure(callee_result.value())->id, arguments, expr.loc);
-    else if (is_native_function(callee_result.value()))
+    else if (is_closure(callee_result))
+        return call_closure(get_closure(callee_result)->id, arguments, expr.loc);
+    else if (is_native_function(callee_result))
     {
-        auto native_fn = get_native_function(callee_result.value());
+        auto native_fn = get_native_function(callee_result);
         if (native_fn->arity != -1 && arguments.size() != native_fn->arity)
         {
             return std::unexpected(err::msg(
@@ -241,25 +229,20 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Closure_expr& expr)
 
 Result<Value> Interpreter::evaluate_visitor(const ast::Cast_expr& expr)
 {
-    auto value_result = evaluate(*expr.expression);
-    if (!value_result)
-        return value_result;
-
-    return cast_value(value_result.value(), expr.target_type);
+    auto value_result = __Try(evaluate(*expr.expression));
+    return cast_value(value_result, expr.target_type);
 }
 
 Result<Value> Interpreter::evaluate_visitor(const ast::Field_access_expr& expr)
 {
 
-    auto object_result = evaluate(*expr.object);
-    if (!object_result)
-        return object_result;
+    auto object_result = __Try(evaluate(*expr.object));
 
-    if (!is_model(object_result.value()))
+    if (!is_model(object_result))
         return std::unexpected(
             err::msg("Can only access fields on model instances.", "interpreter", expr.loc.line, expr.loc.column));
 
-    auto model_val = get_model(object_result.value());
+    auto model_val = get_model(object_result);
     if (model_val->fields.contains(expr.field_name))
         return model_val->fields.at(expr.field_name);
 
@@ -268,22 +251,15 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Field_access_expr& expr)
 
 Result<Value> Interpreter::evaluate_visitor(const ast::Field_assignment_expr& expr)
 {
+    auto object_result = __Try(evaluate(*expr.object));
 
-    auto object_result = evaluate(*expr.object);
-    if (!object_result)
-        return object_result;
-
-    if (!is_model(object_result.value()))
+    if (!is_model(object_result))
         return std::unexpected(
             err::msg("Can only assign to fields of a model instance.", "interpreter", expr.loc.line, expr.loc.column));
 
-    auto value_res = evaluate(*expr.value);
-    if (!value_res)
-        return value_res;
-
-    get_model(object_result.value())->fields[expr.field_name] = value_res.value();
-
-    return value_res.value();
+    auto value_res = __Try(evaluate(*expr.value));
+    get_model(object_result)->fields[expr.field_name] = value_res;
+    return value_res;
 }
 
 Result<Value> Interpreter::evaluate_visitor(const ast::Literal_expr& expr)
@@ -298,16 +274,14 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Variable_expr& expr)
 
 Result<Value> Interpreter::evaluate_visitor(const ast::Unary_expr& expr)
 {
-    auto right_result = evaluate(*expr.right);
-    if (!right_result)
-        return right_result;
+    auto right_result = __Try(evaluate(*expr.right));
 
     switch (expr.op)
     {
         case lex::TokenType::Minus:
-            return negate(right_result.value());
+            return negate(right_result);
         case lex::TokenType::LogicalNot:
-            return Value(!is_truthy(right_result.value()));
+            return Value(!is_truthy(right_result));
         default:
             return std::unexpected(err::msg("Unknown unary operator.", "interpreter", expr.loc.line, expr.loc.column));
     }
@@ -315,26 +289,20 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Unary_expr& expr)
 
 Result<Value> Interpreter::evaluate_visitor(const ast::Method_call_expr& expr)
 {
-    auto object_result = evaluate(*expr.object);
-    if (!object_result)
-        return object_result;
+    auto object_result = __Try(evaluate(*expr.object));
 
-    Value object = object_result.value();
+    Value object = object_result;
 
     std::vector<Value> arguments;
     for (const auto &argument : expr.arguments)
     {
-        auto arg_result = evaluate(*argument);
-        if (!arg_result)
-            return arg_result;
-        arguments.push_back(arg_result.value());
+        auto arg_result = __Try(evaluate(*argument));
+        arguments.push_back(arg_result);
     }
     if (expr.method_name == "map")
     {
-        auto object_result = evaluate(*expr.object);
-        if (!object_result)
-            return object_result;
-        Value object = object_result.value();
+        auto object_result = __Try(evaluate(*expr.object));
+        Value object = object_result;
 
         if (expr.arguments.size() != 1)
             return std::unexpected(
@@ -401,11 +369,9 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Method_call_expr& expr)
             for (size_t i = 0; i < method_data.declaration->parameters.size(); ++i)
                 new_env->define(method_data.declaration->parameters[i].name, arguments[i]);
 
-            auto result = execute_block(std::get<ast::Block_stmt>(method_data.declaration->body->node).statements, new_env);
-            if (!result)
-                return std::unexpected(result.error());
-            if (result.value().is_return)
-                return result.value().value;
+            auto result = __Try(execute_block(std::get<ast::Block_stmt>(method_data.declaration->body->node).statements, new_env));
+            if (result.is_return)
+                return result.value;
 
             return Value(std::monostate{});  // Return void if no explicit return
         }
@@ -427,10 +393,8 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Model_literal_expr& expr)
 
     for (const auto &[name, expr] : expr.fields)
     {
-        auto val_res = evaluate(*expr);
-        if (!val_res)
-            return val_res;
-        instance->fields[name] = val_res.value();
+        auto val_res = __Try(evaluate(*expr));
+        instance->fields[name] = val_res;
     }
     return Value(instance);
 }
@@ -450,20 +414,15 @@ Result<Return_value> Interpreter::execute_visitor(const ast::Return_stmt &stmt)
     Value value;
     if (stmt.expression != nullptr)
     {
-        auto value_result = evaluate(*stmt.expression);
-        if (!value_result)
-            return std::unexpected(value_result.error());
-        value = value_result.value();
+        auto value_result = __Try(evaluate(*stmt.expression));
+        value = value_result;
     }
     return Return_value(value);
 }
 
 Result<Return_value> Interpreter::execute_visitor(const ast::Expr_stmt &stmt)
 {
-    auto eval_result = evaluate(*stmt.expression);
-    if (!eval_result)
-        return std::unexpected(eval_result.error());
-
+    auto eval_result = __Try(evaluate(*stmt.expression));
     return Return_value{};
 }
 
@@ -472,14 +431,10 @@ Result<Return_value> Interpreter::execute_visitor(const ast::Var_stmt &stmt)
     Value value(std::monostate{});
     if (stmt.initializer != nullptr)
     {
-        auto init_result = evaluate(*stmt.initializer);
-        if (!init_result)
-            return std::unexpected(init_result.error());
-        value = init_result.value();
+        auto init_result = __Try(evaluate(*stmt.initializer));
+        value = init_result;
     }
-    auto define_result = environment->define(stmt.name, value);
-    if (!define_result)
-        return std::unexpected(define_result.error());
+    __TryVoid(environment->define(stmt.name, value));
     return Return_value{};
 
 }
@@ -499,9 +454,7 @@ Result<Return_value> Interpreter::execute_visitor(const ast::Function_stmt &stmt
     // Now, create the Function_value with the clean data.
     auto func_val = mem::make_rc<Function_value>(func_type, param_data, environment);
 
-    auto define_result = environment->define(stmt.name, Value(func_val));
-    if (!define_result)
-        return std::unexpected(define_result.error());
+    __TryVoid(environment->define(stmt.name, Value(func_val)));
 
     return Return_value{};
 }
@@ -538,25 +491,17 @@ Result<Return_value> Interpreter::execute_visitor(const ast::Block_stmt &stmt)
 
 Result<Value> Interpreter::evaluate_visitor(const ast::Assignment_expr& expr)
 {
-    auto value_result = evaluate(*expr.value);
-    if (!value_result)
-        return value_result;
+    auto value_result = __Try(evaluate(*expr.value));
+    __TryVoid(environment->assign(expr.name, value_result));
 
-    auto assign_result = environment->assign(expr.name, value_result.value());
-    if (!assign_result)
-        return std::unexpected(assign_result.error());
-
-    return value_result.value();
+    return value_result;
 }
 
 Result<Return_value> Interpreter::execute_visitor(const ast::Print_stmt &stmt)
 {
+    auto value_result = __Try(evaluate(*stmt.expression));
 
-    auto value_result = evaluate(*stmt.expression);
-    if (!value_result)
-        return std::unexpected(value_result.error());
-
-    auto value = value_result.value();
+    auto value = value_result;
     std::string str = "";
     if (is_string(value))
         str = unescape_string(get_string(value));
@@ -572,11 +517,9 @@ Result<Return_value> Interpreter::execute_visitor(const ast::Print_stmt &stmt)
 
 Result<Return_value> Interpreter::execute_visitor(const ast::If_stmt &stmt)
 {
-    auto condition_result = evaluate(*stmt.condition);
-    if (!condition_result)
-        return std::unexpected(condition_result.error());
+    auto condition_result = __Try(evaluate(*stmt.condition));
 
-    if (is_truthy(condition_result.value()))
+    if (is_truthy(condition_result))
         return execute(*stmt.then_branch);
     else if (stmt.else_branch != nullptr)
         return execute(*stmt.else_branch);
@@ -588,17 +531,11 @@ Result<Return_value> Interpreter::execute_visitor(const ast::While_stmt &stmt)
 {
     while (true)
     {
-        auto condition_result = evaluate(*stmt.condition);
-        if (!condition_result)
-            return std::unexpected(condition_result.error());
-        if (!is_truthy(condition_result.value()))
-            break;
+        auto condition_result = __Try(evaluate(*stmt.condition));
+        if (!is_truthy(condition_result)) break;
 
-        auto body_result = execute(*stmt.body);
-        if (!body_result)
-            return body_result;
-        if (body_result.value().is_return)
-            return body_result;
+        auto body_result = __Try(execute(*stmt.body));
+        if (body_result.is_return) return body_result;
     }
     return Return_value{};
 
@@ -607,35 +544,21 @@ Result<Return_value> Interpreter::execute_visitor(const ast::While_stmt &stmt)
 Result<Return_value> Interpreter::execute_visitor(const ast::For_stmt &stmt)
 {
     if (stmt.initializer != nullptr)
-    {
-        auto init_result = execute(*stmt.initializer);
-        if (!init_result)
-            return init_result;
-    }
+        auto init_result = __Try(execute(*stmt.initializer));
 
     while (true)
     {
         if (stmt.condition != nullptr)
         {
-            auto cond_result = evaluate(*stmt.condition);
-            if (!cond_result)
-                return std::unexpected(cond_result.error());
-            if (!is_truthy(cond_result.value()))
-                break;
+            auto cond_result = __Try(evaluate(*stmt.condition));
+            if (!is_truthy(cond_result)) break;
         }
 
-        auto body_result = execute(*stmt.body);
-        if (!body_result)
-            return body_result;
-        if (body_result.value().is_return)
-            return body_result;
+        auto body_result = __Try(execute(*stmt.body));
+        if (body_result.is_return) return body_result;
 
         if (stmt.increment != nullptr)
-        {
-            auto inc_result = evaluate(*stmt.increment);
-            if (!inc_result)
-                return std::unexpected(inc_result.error());
-        }
+            auto inc_result = __Try(evaluate(*stmt.increment));
     }
     return Return_value{};
 }
@@ -703,11 +626,9 @@ Result<Value> Interpreter::call_function(const std::string &name, const std::vec
     for (size_t i = 0; i < func_data.declaration->parameters.size(); ++i)
         auto _ = new_env->define(func_data.declaration->parameters[i].name, arguments[i]);
 
-    auto result = execute_block(std::get<ast::Block_stmt>(func_data.declaration->body->node).statements, new_env);
-    if (!result)
-        return std::unexpected(result.error());
-    if (result.value().is_return)
-        return result.value().value;
+    auto result = __Try(execute_block(std::get<ast::Block_stmt>(func_data.declaration->body->node).statements, new_env));
+    if (result.is_return) return result.value;
+
     return Value(std::monostate{});
 }
 
@@ -722,11 +643,9 @@ Result<Value> Interpreter::call_closure(size_t id, const std::vector<Value> &arg
     for (size_t i = 0; i < closure_data.declaration->parameters.size(); ++i)
         std::ignore = new_env->define(closure_data.declaration->parameters[i].name, arguments[i]);
 
-    auto result = execute_block(std::get<ast::Block_stmt>(closure_data.declaration->body->node).statements, new_env);
-    if (!result)
-        return std::unexpected(result.error());
-    if (result.value().is_return)
-        return result.value().value;
+    auto result = __Try(execute_block(std::get<ast::Block_stmt>(closure_data.declaration->body->node).statements, new_env));
+    if (result.is_return) return result.value;
+
     return Value(std::monostate{});
 }
 
@@ -742,7 +661,12 @@ Result<Value> Interpreter::add(const Value &l, const Value &r)
         return Value(get_float(l) + static_cast<double>(get_int(r)));
     if (is_string(l) && is_string(r))
         return Value(get_string(l) + get_string(r));
-    return std::unexpected(err::msg("Operands must be two numbers or two strings for '+'.", "interpreter", 0, 0));
+    return std::unexpected(err::msg(
+        std::format("Operands must be two numbers or two strings for '+': left: {}, right: {}",
+            get_value_type_string(l),
+            get_value_type_string(r)),
+        "interpreter", 0, 0)
+    );
 }
 
 Result<Value> Interpreter::subtract(const Value &l, const Value &r)
@@ -755,7 +679,10 @@ Result<Value> Interpreter::subtract(const Value &l, const Value &r)
         return Value(static_cast<double>(get_int(l)) - get_float(r));
     if (is_float(l) && is_int(r))
         return Value(get_float(l) - static_cast<double>(get_int(r)));
-    return std::unexpected(err::msg("Operands must be numbers for '-'.", "interpreter", 0, 0));
+    return std::unexpected(err::msg(std::format("Operands must be numbers for '-': left: {}, right: {}",
+        get_value_type_string(l),
+        get_value_type_string(r)),
+    "interpreter", 0, 0));
 }
 
 Result<Value> Interpreter::multiply(const Value &l, const Value &r)
@@ -768,7 +695,10 @@ Result<Value> Interpreter::multiply(const Value &l, const Value &r)
         return Value(static_cast<double>(get_int(l)) * get_float(r));
     if (is_float(l) && is_int(r))
         return Value(get_float(l) * static_cast<double>(get_int(r)));
-    return std::unexpected(err::msg("Operands must be numbers for '*'.", "interpreter", 0, 0));
+    return std::unexpected(err::msg(std::format("Operands must be numbers for '*': left: {}, right: {}",
+        get_value_type_string(l),
+        get_value_type_string(r)),
+    "interpreter", 0, 0));
 }
 
 Result<Value> Interpreter::divide(const Value &l, const Value &r)
@@ -784,15 +714,21 @@ Result<Value> Interpreter::divide(const Value &l, const Value &r)
         return Value(static_cast<double>(get_int(l)) / get_float(r));
     if (is_float(l) && is_int(r))
         return Value(get_float(l) / static_cast<double>(get_int(r)));
-    return std::unexpected(err::msg("Operands must be numbers for '/'.", "interpreter", 0, 0));
+    return std::unexpected(err::msg(std::format("Operands must be numbers for '/': left: {}, right: {}",
+        get_value_type_string(l),
+        get_value_type_string(r)),
+    "interpreter", 0, 0));
 }
 
 Result<Value> Interpreter::modulo(const Value &l, const Value &r)
 {
     if (!is_int(l) || !is_int(r))
-        return std::unexpected(err::msg("Operands must be integers for '%'.", "interpreter", 0, 0));
+        return std::unexpected(err::msg(std::format("Operands must be intergers for '%': left: {}, right: {}",
+            get_value_type_string(l),
+            get_value_type_string(r)),
+        "interpreter", 0, 0));
     if (get_int(r) == 0)
-        return std::unexpected(err::msg("Division by zero.", "interpreter", 0, 0));
+        return std::unexpected(err::msg("Modulo by zero.", "interpreter", 0, 0));
     return Value(get_int(l) % get_int(r));
 }
 
@@ -802,7 +738,7 @@ Result<Value> Interpreter::negate(const Value &v)
         return Value(-get_int(v));
     if (is_float(v))
         return Value(-get_float(v));
-    return std::unexpected(err::msg("Operand must be a number for '-'.", "interpreter", 0, 0));
+    return std::unexpected(err::msg(std::format("Operand must be a number for '-': value: {}", get_value_type_string(v)), "interpreter", 0, 0));
 }
 
 // ========================================================================
@@ -815,8 +751,10 @@ Result<Value> Interpreter::lessThan(const Value &l, const Value &r)
         return Value(get_int(l) < get_int(r));
     if (is_float(l) && is_float(r))
         return Value(get_float(l) < get_float(r));
-    return std::unexpected(err::msg("Operands must be numbers of same type for '<'. Even the comparison between f64 and i64 is not allowed",
-                                    "interpreter", 0, 0));
+    return std::unexpected(err::msg(std::format("Operands must be numbers of same type for '<'. Even the comparison between f64 and i64 is not allowed: left: {}, right: {}",
+        get_value_type_string(l),
+        get_value_type_string(r)),
+    "interpreter", 0, 0));
 }
 
 Result<Value> Interpreter::less_than_or_equal(const Value &l, const Value &r)
@@ -826,8 +764,10 @@ Result<Value> Interpreter::less_than_or_equal(const Value &l, const Value &r)
     if (is_float(l) && is_float(r))
         return Value(get_float(l) <= get_float(r));
 
-    return std::unexpected(err::msg(
-        "Operands must be numbers of same type for '<='. Even the comparison between f64 and i64 is not allowed", "interpreter", 0, 0));
+    return std::unexpected(err::msg(std::format("Operands must be numbers of same type for '<='. Even the comparison between f64 and i64 is not allowed: left: {}, right: {}",
+        get_value_type_string(l),
+        get_value_type_string(r)),
+    "interpreter", 0, 0));
 }
 
 Result<Value> Interpreter::greater_than(const Value &l, const Value &r)
@@ -836,8 +776,10 @@ Result<Value> Interpreter::greater_than(const Value &l, const Value &r)
         return Value(get_int(l) > get_int(r));
     if (is_float(l) && is_float(r))
         return Value(get_float(l) > get_float(r));
-    return std::unexpected(err::msg("Operands must be numbers of same type for '>'. Even the comparison between f64 and i64 is not allowed",
-                                    "interpreter", 0, 0));
+    return std::unexpected(err::msg(std::format("Operands must be numbers of same type for '>'. Even the comparison between f64 and i64 is not allowed: left: {}, right: {}",
+        get_value_type_string(l),
+        get_value_type_string(r)),
+    "interpreter", 0, 0));
 }
 
 Result<Value> Interpreter::greater_than_or_equal(const Value &l, const Value &r)
@@ -847,8 +789,10 @@ Result<Value> Interpreter::greater_than_or_equal(const Value &l, const Value &r)
     if (is_float(l) && is_float(r))
         return Value(get_float(l) >= get_float(r));
 
-    return std::unexpected(err::msg(
-        "Operands must be numbers of same type for '>='. Even the comparison between f64 and i64 is not allowed", "interpreter", 0, 0));
+    return std::unexpected(err::msg(std::format("Operands must be numbers of same type for '>='. Even the comparison between f64 and i64 is not allowed: left: {}, right: {}",
+        get_value_type_string(l),
+        get_value_type_string(r)),
+    "interpreter", 0, 0));
 }
 
 // ========================================================================
@@ -867,6 +811,8 @@ bool Interpreter::is_truthy(const Value &v)
         return get_int(v) != 0;
     if (is_float(v))
         return get_float(v) != 0.0;
+    if (is_string(v))
+        return get_string(v).size() > 0;
     return true;  // Models, functions, closures, and non-empty strings are truthy
 }
 
@@ -887,10 +833,8 @@ Result<Value> Interpreter::map_array(Value &array_val, const Value &closure)
 
     for (const auto &element : arr->elements)
     {
-        auto mapped_res = this->call_closure(closure_id, {element}, {});
-        if (!mapped_res)
-            return mapped_res;
-        result_arr->elements.push_back(mapped_res.value());
+        auto mapped_res = __Try(this->call_closure(closure_id, {element}, {}));
+        result_arr->elements.push_back(mapped_res);
     }
     return Value(result_arr);
 }
@@ -903,10 +847,8 @@ Result<Value> Interpreter::map_optional(Value &optional_val, const Value &closur
     // Get the closure ID.
     size_t closure_id = get_closure(closure)->id;
 
-    auto mapped_res = this->call_closure(closure_id, {optional_val}, {});
-    if (!mapped_res)
-        return mapped_res;
+    auto mapped_res = __Try(this->call_closure(closure_id, {optional_val}, {}));
 
-    return mapped_res.value();
+    return mapped_res;
 }
 } // namespace phos

@@ -578,7 +578,9 @@ inline void Type_checker::check_stmt_node(ast::Return_stmt &stmt)
     if (stmt.expression)
     {
         if (auto val_res = check_expr(*stmt.expression); val_res && !is_compatible(current_return_type.value(), val_res.value()))
-            type_error(stmt.loc, "Return value type does not match function's return type");
+            type_error(stmt.loc, "Return value type does not match function's return type: expected: " +
+                       types::type_to_string(current_return_type.value()) + " got: " +
+                       types::type_to_string(val_res.value()));
     }
     else if (current_return_type.value() != types::Type(types::Primitive_kind::Void))
     {
@@ -669,6 +671,12 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr)
     types::Type left_type = left_res.value();
     types::Type right_type = right_res.value();
 
+    auto report_error = [&](const std::string& message) {
+        type_error(expr.loc, std::format("{} (left is '{}', right is '{}')", 
+                                         message, 
+                                         types::type_to_string(left_type), 
+                                         types::type_to_string(right_type)));
+    };
     switch (expr.op)
     {
         // --- Arithmetic Operators ---
@@ -680,7 +688,7 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr)
         case lex::TokenType::Star:
             if (!is_numeric(left_type) || !is_numeric(right_type))
             {
-                type_error(expr.loc, "Operands must be two numbers or two strings for '+'");
+                report_error("Operands must be two numbers or two strings for '+'");
                 return expr.type = types::Primitive_kind::Void;
             }
             return expr.type = promote_numeric_type(left_type, right_type);
@@ -688,7 +696,7 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr)
         case lex::TokenType::Slash:
             if (!is_numeric(left_type) || !is_numeric(right_type))
             {
-                type_error(expr.loc, "Operands for division must be numbers.");
+                report_error("Operands for division must be numbers.");
                 return expr.type = types::Primitive_kind::Void;
             }
             // Division always results in a float.
@@ -697,7 +705,7 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr)
         case lex::TokenType::Percent:
             if (left_type != types::Type(types::Primitive_kind::Int) || right_type != types::Type(types::Primitive_kind::Int))
             {
-                type_error(expr.loc, "Operands for '%' must be integers.");
+                report_error("Operands for '%' must be integers.");
                 return expr.type = types::Primitive_kind::Void;
             }
             return expr.type = types::Primitive_kind::Int;
@@ -708,7 +716,7 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr)
         case lex::TokenType::Less:
         case lex::TokenType::LessEqual:
             if (!is_numeric(left_type) || !is_numeric(right_type))
-                type_error(expr.loc, "Comparison operators require numeric operands.");
+                report_error("Comparison operators require numeric operands.");
             return expr.type = types::Primitive_kind::Bool;
 
         // --- Equality Operators ---
@@ -718,14 +726,14 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr)
             if ((is_optional(left_type) && is_nil(right_type)) || (is_nil(left_type) && is_optional(right_type)))
                 return expr.type = types::Primitive_kind::Bool;
             if (!is_compatible(left_type, right_type) && !is_compatible(right_type, left_type))
-                type_error(expr.loc, "Cannot compare incompatible types.");
+                report_error("Cannot compare incompatible types.");
             return expr.type = types::Primitive_kind::Bool;
 
         // --- Logical Operators ---
         case lex::TokenType::LogicalAnd:
         case lex::TokenType::LogicalOr:
             if (!is_boolean(left_type) || !is_boolean(right_type))
-                type_error(expr.loc, "Operands for logical operators must be booleans.");
+                report_error("Operands for logical operators must be booleans.");
             return expr.type = types::Primitive_kind::Bool;
 
         default:
