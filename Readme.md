@@ -52,6 +52,16 @@ if (first_active_user.exists()) {
 foo()();
 ```
 
+## Build
+
+```sh
+git clone https://github.com/rrrinav/phos
+g++ ./bld.cpp -o ./bld
+./bld -rel
+
+./bin/phos ./examples/01_game_of_life.phos
+```
+
 ## TODO
 
 - [ ] Proper I/O (reading input, file streams)

@@ -1,0 +1,137 @@
+// Conway's Game of Life, implemented in Phos.
+// This script demonstrates 2D arrays, functions, loops, and conditionals.
+// 25/09/2025:21:39 (rinav)
+
+// ==========================================================
+// ## Helper Functions
+// ==========================================================
+
+// Prints the grid to the console.
+fn print_grid(const grid: i64[][]) {
+    let height := len(grid);
+    let width := len(grid[0]);
+
+    for (let y := 0; y < height; y = y + 1) {
+        let line := "";
+        for (let x := 0; x < width; x = x + 1) {
+            if (grid[y][x] == 1) {
+                line = line + " # ";
+            } else {
+                line = line + " . ";
+            }
+        }
+        print(line);
+    }
+}
+
+// Counts the live neighbors for a cell at (x, y).
+// The grid wraps around (toroidal array).
+fn count_live_neighbors(const grid: i64[][], x: i64, y: i64) -> i64 {
+    let height := len(grid);
+    let width := len(grid[0]);
+    let count := 0;
+
+    for (let dy := -1; dy <= 1; dy = dy + 1) {
+        for (let dx := -1; dx <= 1; dx = dx + 1) {
+            // Don't count the cell itself
+            if (dx == 0 && dy == 0) {
+                // continue; // Phos doesn't have `continue`, so we use an if-else block.
+            } else {
+                // The modulo operator gives us a wrapping (toroidal) grid for free!
+                let nx := (x + dx + width) % width;
+                let ny := (y + dy + height) % height;
+                count = count + grid[ny][nx];
+            }
+        }
+    }
+    return count;
+}
+
+// Computes the next state of the grid based on the rules of the game.
+fn next_generation(const grid: i64[][]) -> i64[][] {
+    let height := len(grid);
+    let width := len(grid[0]);
+    
+    // Create a new grid to store the next state.
+    // We can't modify the grid in-place as it would affect neighbor calculations.
+    let new_grid: i64[][] = [];
+    for (let y := 0; y < height; y = y + 1) {
+        let row: i64[] = [];
+        for (let x := 0; x < width; x = x + 1) {
+            row.push(0);
+        }
+        new_grid.push(row);
+    }
+
+    // Apply the rules to each cell
+    for (let y := 0; y < height; y = y + 1) {
+        for (let x := 0; x < width; x = x + 1) {
+            let live_neighbors := count_live_neighbors(grid, x, y);
+            let cell_is_alive := grid[y][x] == 1;
+
+            if (cell_is_alive) {
+                if (live_neighbors < 2 || live_neighbors > 3) {
+                    new_grid[y][x] = 0; // Dies
+                } else {
+                    new_grid[y][x] = 1; // Survives
+                }
+            } else {
+                if (live_neighbors == 3) {
+                    new_grid[y][x] = 1; // Becomes alive
+                }
+            }
+        }
+    }
+
+    return new_grid;
+}
+
+// A simple way to clear the console screen
+fn clear_screen() {
+    print("\033[2J\033[H");
+}
+
+// A simple busy-wait loop to pause execution.
+fn sleep() {
+    for (let i := 0; i < 20000; i=i+1) {
+        // do nothing
+    }
+}
+
+// ==========================================================
+// ## Main Program
+// ==========================================================
+
+print("--- Conway's Game of Life in Phos ---");
+
+let height := 20;
+let width := 20;
+let grid: i64[][] = [];
+
+// Initialize an empty grid
+for (let y := 0; y < height; y = y + 1) {
+    let row: i64[] = [];
+    for (let x := 0; x < width; x = x + 1) {
+        row.push(0);
+    }
+    grid.push(row);
+}
+
+// --- Place an initial pattern: The Glider ---
+// This pattern will travel diagonally across the grid. 
+grid[1][2] = 1;
+grid[2][3] = 1;
+grid[3][1] = 1;
+grid[3][2] = 1;
+grid[3][3] = 1;
+
+// --- Main Simulation Loop ---
+let generation := 0;
+while (true) {
+    clear_screen();
+    print("Generation: " + (generation as string));
+    print_grid(grid);
+    grid = next_generation(grid);
+    generation = generation + 1;
+    sleep();
+}

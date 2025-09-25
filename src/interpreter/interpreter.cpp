@@ -553,27 +553,111 @@ Result<Return_value> Interpreter::execute(const ast::Stmt &stmt)
     }, stmt.node);
 }
 
+std::string encode_utf8(int codepoint)
+{
+    std::string result;
+    if (codepoint <= 0x7F) {
+        // 1-byte sequence
+        result += static_cast<char>(codepoint);
+    } else if (codepoint <= 0x7FF) {
+        // 2-byte sequence
+        result += static_cast<char>(0xC0 | (codepoint >> 6));
+        result += static_cast<char>(0x80 | (codepoint & 0x3F));
+    } else if (codepoint <= 0xFFFF) {
+        // 3-byte sequence
+        result += static_cast<char>(0xE0 | (codepoint >> 12));
+        result += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+        result += static_cast<char>(0x80 | (codepoint & 0x3F));
+    } else if (codepoint <= 0x10FFFF) {
+        // 4-byte sequence
+        result += static_cast<char>(0xF0 | (codepoint >> 18));
+        result += static_cast<char>(0x80 | ((codepoint >> 12) & 0x3F));
+        result += static_cast<char>(0x80 | ((codepoint >> 6) & 0x3F));
+        result += static_cast<char>(0x80 | (codepoint & 0x3F));
+    }
+    return result;
+}
+
 std::string Interpreter::unescape_string(const std::string &s)
 {
     std::string res;
     res.reserve(s.length());
     for (std::string::size_type i = 0; i < s.length(); ++i)
     {
-        if (s[i] == '\\' && i + 1 < s.length())
-        {
-            switch (s[++i])
-            {
-                case 'n': res += '\n'; break;
-                case 't': res += '\t'; break;
-                case 'r': res += '\r'; break;
-                case '\\': res += '\\'; break;
-                case '"': res += '"'; break;
-                default: res += '\\'; res += s[i]; break;  // Keep unrecognized sequences
-            }
-        }
-        else
-        {
+        if (s[i] != '\\') {
             res += s[i];
+            continue;
+        }
+
+        // We have a '\', move to the next character
+        if (++i >= s.length()) {
+            res += '\\'; // Dangling backslash at the end
+            break;
+        }
+
+        switch (s[i])
+        {
+            // Simple character escapes
+            case 'a': res += '\a'; break;
+            case 'b': res += '\b'; break;
+            case 'f': res += '\f'; break;
+            case 'n': res += '\n'; break;
+            case 'r': res += '\r'; break;
+            case 't': res += '\t'; break;
+            case 'v': res += '\v'; break;
+            case '\\': res += '\\'; break;
+            case '\'': res += '\''; break;
+            case '"': res += '\"'; break;
+
+            // Hexadecimal escape (\xHH)
+            case 'x': {
+                if (i + 2 < s.length() && std::isxdigit(s[i+1]) && std::isxdigit(s[i+2])) {
+                    std::string hex_code = s.substr(i + 1, 2);
+                    res += static_cast<char>(std::stoi(hex_code, nullptr, 16));
+                    i += 2;
+                } else {
+                    res += "\\x";
+                }
+                break;
+            }
+
+            // Unicode escapes (\uXXXX and \UXXXXXXXX)
+            case 'u':
+            case 'U': {
+                int len = (s[i] == 'u') ? 4 : 8;
+                if (i + len < s.length()) {
+                    std::string hex_code = s.substr(i + 1, len);
+                    if (hex_code.length() == len && std::all_of(hex_code.begin(), hex_code.end(), ::isxdigit)) {
+                        res += encode_utf8(std::stoi(hex_code, nullptr, 16));
+                        i += len;
+                    } else {
+                        res += (len == 4 ? "\\u" : "\\U");
+                    }
+                } else {
+                    res += (len == 4 ? "\\u" : "\\U");
+                }
+                break;
+            }
+
+            default: {
+                // Octal escape (\ooo)
+                if (s[i] >= '0' && s[i] <= '7') {
+                    std::string oct_code;
+                    oct_code += s[i];
+                    if (i + 1 < s.length() && s[i+1] >= '0' && s[i+1] <= '7') {
+                        oct_code += s[++i];
+                        if (i + 1 < s.length() && s[i+1] >= '0' && s[i+1] <= '7') {
+                            oct_code += s[++i];
+                        }
+                    }
+                    res += static_cast<char>(std::stoi(oct_code, nullptr, 8));
+                } else {
+                    // Unrecognized sequence, print literally
+                    res += '\\';
+                    res += s[i];
+                }
+                break;
+            }
         }
     }
     return res;
