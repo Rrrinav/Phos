@@ -31,6 +31,11 @@ fn find_first(users: (User?)[], predicate: (| User | -> bool) ?) -> User ? {
   return nil; // Return nil if no user matches
 }
 
+fn foo() -> (|| -> void) {
+    let x:= "x from function.";
+    return || -> void { print("Hello from function, this is: " + x); };
+}
+
 let const user_list: (User?)[] = [
   User{ .id = 1, .name = "Alex", .is_active = false },
   nil, // A nil value in the list
@@ -43,6 +48,8 @@ let first_active_user:= find_first(user_list, nil);
 if (first_active_user.exists()) {
   print("Found active user: " + first_active_user.value().name);
 }
+
+foo()();
 ```
 
 ## TODO
