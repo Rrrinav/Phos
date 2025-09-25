@@ -109,6 +109,7 @@ private:
     // ========================================================================
     // Function & Closure Calling
     // ========================================================================
+    Result<Value> call(const Value& callee, const std::vector<Value>& arguments, const ast::Source_location& loc);
     Result<Value> call_function(const std::string &name, const std::vector<Value> &arguments, const ast::Source_location &loc);
     Result<Value> call_closure(size_t id, const std::vector<Value> &arguments, const ast::Source_location &loc);
     // ========================================================================

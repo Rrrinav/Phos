@@ -154,24 +154,36 @@ void AstPrinter::print_expr_node(const Unary_expr &node)
 void AstPrinter::print_expr_node(const Call_expr &node)
 {
     indent();
-    print_str("Call: " + node.callee);
+    print_str("Call Expression");
+
     bool has_args = !node.arguments.empty();
-    with_child(has_args,
-               [&]
-               {
-                   indent();
-                   print_str("Type: " + types::type_to_string(node.type));
-               });
+
+    // 1. Print the Callee Expression as the first child
+    //    We recursively call the printer to handle the callee.
+    with_child(true, [&] {
+        indent();
+        print_str("Callee");
+        with_child(false, [&] { print_expr_ptr(node.callee); });
+    });
+
+    // 2. Print the Type as the second child
+    with_child(!has_args, [&] { // This is the last child if there are no arguments
+        indent();
+        print_str("Type: " + types::type_to_string(node.type));
+    });
+
+    // 3. Print the Arguments block as the final child (if they exist)
     if (has_args)
     {
-        with_child(false,
-                   [&]
-                   {
-                       indent();
-                       print_str("Arguments");
-                       for (size_t i = 0; i < node.arguments.size(); ++i)
-                           with_child(i + 1 < node.arguments.size(), [&] { print_expr_ptr(node.arguments[i]); });
-                   });
+        with_child(false, [&] { // This is always the last main child
+            indent();
+            print_str("Arguments");
+            for (size_t i = 0; i < node.arguments.size(); ++i)
+            {
+                // Recursively print each argument expression
+                with_child(i + 1 < node.arguments.size(), [&] { print_expr_ptr(node.arguments[i]); });
+            }
+        });
     }
 }
 

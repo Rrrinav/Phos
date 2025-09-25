@@ -61,7 +61,7 @@ struct Unary_expr
 
 struct Call_expr
 {
-    std::string callee;
+    Expr* callee;
     std::vector<struct Expr*> arguments;
     types::Type type;
     Source_location loc;

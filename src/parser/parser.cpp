@@ -857,105 +857,94 @@ Result<ast::Expr*> Parser::call()
 {
     auto expr = __Try(primary());
 
+    // 2. Loop to handle postfix operations like (), [], and .
     while (true)
     {
         if (match({lex::TokenType::LeftParen}))
         {
+            // --- This is the new, generalized function call logic ---
             std::vector<ast::Expr*> arguments;
             if (!check(lex::TokenType::RightParen))
             {
                 do {
-                    auto arg_result = __Try(expression());
-                    arguments.push_back(arg_result);
+                    arguments.push_back(__Try(expression()));
                 } while (match({lex::TokenType::Comma}));
             }
-
             auto paren = __Try(consume(lex::TokenType::RightParen, "Expect ')' after arguments"));
 
-            if (auto *var_expr = std::get_if<ast::Variable_expr>(&expr->node))
+            // We can still try to infer the return type if the callee is a simple variable.
+            // This helps the type checker later.
+            types::Type return_type = types::Type(types::Primitive_kind::Void);
+            if (auto* var_expr = std::get_if<ast::Variable_expr>(&expr->node))
             {
                 auto func_it = function_types_.find(var_expr->name);
-                types::Type return_type = (func_it != function_types_.end()) ?
-                                          func_it->second :
-                                          types::Type(types::Primitive_kind::Void);
+                if (func_it != function_types_.end())
+                {
+                    return_type = func_it->second;
+                }
+            }
 
-                auto call_expr = mem::Arena::alloc(this->arena_, ast::Expr {
-                    ast::Call_expr{
-                        .callee = var_expr->name,
-                        .arguments = arguments,
-                        .type = return_type,
-                        .loc = {paren.line, paren.column}
-                    }
-                });
-                expr = call_expr;
-            }
-            else
-            {
-                return std::unexpected(create_error(peek(), "Invalid function call target."));
-            }
+            // Create the Call_expr node, using the *entire previous expression* as the callee.
+            auto* call_node = mem::Arena::alloc(arena_, ast::Call_expr{
+                expr,
+                arguments,
+                return_type,
+                ast::Source_location{paren.line, paren.column}
+            });
+
+            // The new expression becomes the call expression itself, allowing for chained calls like f()().
+            expr = mem::Arena::alloc(arena_, ast::Expr{*call_node});
         }
         else if (match({lex::TokenType::LeftBracket}))
         {
+            // --- Array access logic (unchanged) ---
             auto index_result = __Try(expression());
-
             auto right_bracket_result = __Try(consume(lex::TokenType::RightBracket, "Expect ']' after array index"));
 
-            auto array_access = mem::Arena::alloc(this->arena_, ast::Expr {
-                ast::Array_access_expr {
-                    .array = expr,
-                    .index = index_result,
-                    .type = types::Type(types::Primitive_kind::Void),
-                    .loc = {right_bracket_result.line, right_bracket_result.column}
-                }
+            auto* array_access_node = mem::Arena::alloc(arena_, ast::Array_access_expr{
+                expr,
+                index_result,
+                types::Type(types::Primitive_kind::Void), // Type checker resolves this
+                ast::Source_location{right_bracket_result.line, right_bracket_result.column}
             });
-            expr = array_access;
+            expr = mem::Arena::alloc(arena_, ast::Expr{*array_access_node});
         }
         else if (match({lex::TokenType::Dot}))
         {
+            // --- Field/Method access logic (unchanged) ---
             auto name_result = __Try(consume(lex::TokenType::Identifier, "Expect field or method name after '.'"));
 
-            if (check(lex::TokenType::LeftParen))
+            if (check(lex::TokenType::LeftParen)) // Method call
             {
-                // Method call
                 __TryIgnore(consume(lex::TokenType::LeftParen, "Expect '(' after method name"));
-
                 std::vector<ast::Expr*> arguments;
-                if (!check(lex::TokenType::RightParen))
-                {
+                if (!check(lex::TokenType::RightParen)) {
                     do {
-                        auto arg_result = __Try(expression());
-                        arguments.push_back(arg_result);
+                        arguments.push_back(__Try(expression()));
                     } while (match({lex::TokenType::Comma}));
                 }
-
                 __TryIgnore(consume(lex::TokenType::RightParen, "Expect ')' after arguments"));
 
-                auto method_call = mem::Arena::alloc(this->arena_, ast::Expr {
-                    ast::Method_call_expr{
-                        .object = expr,
-                        .method_name = name_result.lexeme,
-                        .arguments = arguments,
-                        .type = types::Type(types::Primitive_kind::Void),
-                        .loc = {name_result.line, name_result.column}}
+                auto* method_call_node = mem::Arena::alloc(arena_, ast::Method_call_expr{
+                    expr, name_result.lexeme, arguments, 
+                    types::Type(types::Primitive_kind::Void), // Type checker resolves this
+                    ast::Source_location{name_result.line, name_result.column}
                 });
-                expr = method_call;
+                expr = mem::Arena::alloc(arena_, ast::Expr{*method_call_node});
             }
-            else
-            {
-                // Field access
-                auto field_access = mem::Arena::alloc(this->arena_, ast::Expr{
-                    ast::Field_access_expr{
-                        .object = expr,
-                        .field_name = name_result.lexeme,
-                        .type = types::Type(types::Primitive_kind::Void),
-                        .loc = {name_result.line, name_result.column}}
+            else // Field access
+        {
+                auto* field_access_node = mem::Arena::alloc(arena_, ast::Field_access_expr{
+                    expr, name_result.lexeme, 
+                    types::Type(types::Primitive_kind::Void), // Type checker resolves this
+                    ast::Source_location{name_result.line, name_result.column}
                 });
-                expr = field_access;
+                expr = mem::Arena::alloc(arena_, ast::Expr{*field_access_node});
             }
         }
         else
-        {
-            break;
+    {
+            break; // No more postfix operators
         }
     }
     return expr;

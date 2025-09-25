@@ -174,37 +174,19 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Binary_expr& expr)
 
 Result<Value> Interpreter::evaluate_visitor(const ast::Call_expr& expr)
 {
-    auto callee_result = __Try(environment->get(expr.callee));
+    // 1. Evaluate the callee expression to get the function/closure Value itself.
+    auto callee = __Try(evaluate(*expr.callee));
 
+    // 2. Evaluate all the argument expressions.
     std::vector<Value> arguments;
-    for (const auto &argument : expr.arguments)
+    arguments.reserve(expr.arguments.size());
+    for (const auto& argument : expr.arguments)
     {
-        auto arg_result = evaluate(*argument);
-        if (!arg_result)
-            return arg_result;
-        arguments.push_back(arg_result.value());
+        arguments.push_back(__Try(evaluate(*argument)));
     }
 
-    if (is_function(callee_result))
-        return call_function(expr.callee, arguments, expr.loc);
-    else if (is_closure(callee_result))
-        return call_closure(get_closure(callee_result)->id, arguments, expr.loc);
-    else if (is_native_function(callee_result))
-    {
-        auto native_fn = get_native_function(callee_result);
-        if (native_fn->arity != -1 && arguments.size() != native_fn->arity)
-        {
-            return std::unexpected(err::msg(
-                std::format("'{}' expected {} arguments but got {}", native_fn->name, native_fn->arity, arguments.size()),
-                "interpreter",
-                expr.loc.line,
-                expr.loc.column)
-            );
-        }
-        return native_fn->code(arguments);
-    }
-
-    return std::unexpected(err::msg("Can only call functions and closures.", "interpreter", expr.loc.line, expr.loc.column));
+    // 3. Pass the evaluated callee and arguments to the new call helper.
+    return call(callee, arguments, expr.loc);
 }
 
 Result<Value> Interpreter::evaluate_visitor(const ast::Closure_expr& expr)
@@ -453,6 +435,7 @@ Result<Return_value> Interpreter::execute_visitor(const ast::Function_stmt &stmt
 
     // Now, create the Function_value with the clean data.
     auto func_val = mem::make_rc<Function_value>(func_type, param_data, environment);
+    func_val->name = stmt.name;
 
     __TryVoid(environment->define(stmt.name, Value(func_val)));
 
@@ -615,6 +598,39 @@ Result<Return_value> Interpreter::execute_block(const std::vector<ast::Stmt*> &s
 // Function & Closure Calling
 // ========================================================================
 
+Result<Value> Interpreter::call(const Value &callee, const std::vector<Value> &arguments, const ast::Source_location &loc)
+{
+    if (is_function(callee))
+    {
+        // This relies on the function's name being stored in the Function_value.
+        // You'll need to add `std::string name;` to your `Function_value` struct
+        // and set it when you create it in `execute_visitor(const ast::Function_stmt&)`
+        // for this lookup to work.
+        auto func = get_function(callee);
+        if (functions.count(func->name))
+            return call_function(func->name, arguments, loc);
+        return std::unexpected(err::msg("Callable is not a known function.", "interpreter", loc.line, loc.column));
+    }
+    else if (is_closure(callee))
+    {
+        return call_closure(get_closure(callee)->id, arguments, loc);
+    }
+    else if (is_native_function(callee))
+    {
+        auto native_fn = get_native_function(callee);
+        if (native_fn->arity != -1 && arguments.size() != static_cast<size_t>(native_fn->arity))
+        {
+            return std::unexpected(
+            err::msg(std::format("'{}' expected {} arguments but got {}", native_fn->name, native_fn->arity, arguments.size()),
+                     "interpreter",
+                     loc.line,
+                     loc.column));
+        }
+        return native_fn->code(arguments);
+    }
+
+    return std::unexpected(err::msg("Expression is not a function and cannot be called.", "interpreter", loc.line, loc.column));
+}
 Result<Value> Interpreter::call_function(const std::string &name, const std::vector<Value> &arguments, const ast::Source_location &loc)
 {
     if (!functions.contains(name))

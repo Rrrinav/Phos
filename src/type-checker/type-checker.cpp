@@ -744,57 +744,81 @@ inline Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr)
 
 inline Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr)
 {
-    if (m_native_signatures.count(expr.callee))
+    // --- Step 1: Check for a direct call to a named Native Function ---
+    if (auto* var_expr = std::get_if<ast::Variable_expr>(&expr.callee->node))
     {
-        const auto &signature = m_native_signatures.at(expr.callee);
-        if (expr.arguments.size() != signature.allowed_params.size())
+        if (m_native_signatures.count(var_expr->name))
         {
-            type_error(expr.loc, "Incorrect number of arguments for '" + expr.callee + "'. Expected " +
-                                     std::to_string(signature.allowed_params.size()) + ", but got " +
-                                     std::to_string(expr.arguments.size()) + ".");
-            return expr.type = signature.return_type;
-        }
-        for (size_t i = 0; i < expr.arguments.size(); ++i)
-        {
-            auto arg_type_res = check_expr(*expr.arguments[i]);
-            if (!arg_type_res)
-                return types::Primitive_kind::Void;
-            const auto &allowed_for_param = signature.allowed_params[i];
-            if (!is_argument_compatible(allowed_for_param, arg_type_res.value()))
-                type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch for function '" + expr.callee + "'.");
-        }
-        return expr.type = signature.return_type;
-    }
-    if (functions.count(expr.callee))
-    {
-        const auto &func_data = functions.at(expr.callee);
-        const auto &signature = func_data.declaration;
-        if (expr.arguments.size() != signature->parameters.size())
-        {
-            type_error(expr.loc, "Incorrect number of arguments for function '" + expr.callee + "'.");
-        }
-        else
-        {
+            const auto& signature = m_native_signatures.at(var_expr->name);
+
+            // 1a. Check arity (number of arguments)
+            if (expr.arguments.size() != signature.allowed_params.size())
+            {
+                type_error(expr.loc, 
+                           std::format("Incorrect number of arguments for native function '{}'. Expected {}, but got {}.",
+                                       var_expr->name, signature.allowed_params.size(), expr.arguments.size()));
+                return expr.type = signature.return_type; // Return expected type to reduce error cascade
+            }
+
+            // 1b. Check argument types
             for (size_t i = 0; i < expr.arguments.size(); ++i)
             {
                 auto arg_type_res = check_expr(*expr.arguments[i]);
-                if (arg_type_res && !is_compatible(signature->parameters[i].type, arg_type_res.value()))
-                    type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch.");
+                if (!arg_type_res) continue; // Error already reported
+
+                // Check if the actual type is compatible with any of the allowed types for this parameter
+                if (!is_argument_compatible(signature.allowed_params[i], arg_type_res.value()))
+                {
+                    type_error(ast::get_loc(expr.arguments[i]->node),
+                               std::format("Argument type mismatch for native function '{}'.", var_expr->name));
+                }
             }
-        }
-        return expr.type = signature->return_type;
-    }
-    auto callable_var_res = lookup_variable(expr.callee, expr.loc);
-    if (callable_var_res)
-    {
-        if (auto *ct = std::get_if<mem::rc_ptr<types::Closure_type>>(&callable_var_res.value().first))
-        {
-            const auto &signature = (*ct)->function_type;
             return expr.type = signature.return_type;
         }
     }
-    type_error(expr.loc, "'" + expr.callee + "' is not a function or callable variable.");
-    return types::Primitive_kind::Void;
+
+    // --- Step 2: Handle calls to other expressions (closures, first-class functions) ---
+    auto callee_type_res = check_expr(*expr.callee);
+    if (!callee_type_res)
+        return std::unexpected(callee_type_res.error());
+
+    types::Type callee_type = callee_type_res.value();
+    const types::Function_type *signature = nullptr;
+
+    if (types::is_function(callee_type))
+        signature = types::get_function_type(callee_type).get();
+    else if (types::is_closure(callee_type))
+        signature = &types::get_closure_type(callee_type)->function_type;
+
+    if (!signature)
+    {
+        type_error(ast::get_loc(expr.callee->node),
+                   "This expression has type '" + types::type_to_string(callee_type) + "' and cannot be called.");
+        return expr.type = types::Primitive_kind::Void;
+    }
+
+    if (expr.arguments.size() != signature->parameter_types.size())
+    {
+        type_error(expr.loc,
+                   std::format("Incorrect number of arguments. Expected {}, but got {}.",
+                               signature->parameter_types.size(), expr.arguments.size()));
+    }
+    else
+    {
+        for (size_t i = 0; i < expr.arguments.size(); ++i)
+        {
+            auto arg_type_res = check_expr(*expr.arguments[i]);
+            if (arg_type_res && !is_compatible(signature->parameter_types[i], arg_type_res.value()))
+            {
+                type_error(ast::get_loc(expr.arguments[i]->node),
+                           std::format("Argument type mismatch. Expected '{}' but got '{}'.",
+                                       types::type_to_string(signature->parameter_types[i]),
+                                       types::type_to_string(arg_type_res.value())));
+            }
+        }
+    }
+
+    return expr.type = signature->return_type;
 }
 
 inline Result<types::Type> Type_checker::check_expr_node(ast::Cast_expr &expr)

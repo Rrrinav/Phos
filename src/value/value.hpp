@@ -38,6 +38,7 @@ struct Function_value
     std::vector<std::pair<std::string, types::Type>> parameters;
     mem::rc_ptr<Environment> definition_environment;
     bool is_native = false;
+    std::string name;
 
     Function_value(types::Function_type sig, std::vector<std::pair<std::string, types::Type>> params, mem::rc_ptr<Environment> env)
         : signature(std::move(sig)), parameters(std::move(params)), definition_environment(std::move(env))
