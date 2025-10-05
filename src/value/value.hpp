@@ -2,15 +2,16 @@
 
 #include <cstddef>
 #include <unordered_map>
-#include <memory>
 #include <variant>
 #include <cstdint>
 #include <string>
 #include <functional>
 #include <vector>
+#include <optional>
 
 #include "type.hpp"
 #include "../error/result.hpp"
+#include "../memory/ref_counted.hpp"
 
 namespace phos
 {
@@ -26,6 +27,7 @@ using Value = std::variant<
     phos::mem::rc_ptr<struct Closure_value>,
     phos::mem::rc_ptr<struct Array_value>,
     phos::mem::rc_ptr<struct Native_function_value>,
+    phos::mem::rc_ptr<struct Union_value>, // Added Union_value
     std::nullptr_t,  // nil
     std::monostate   // void
 >;
@@ -71,6 +73,16 @@ struct Array_value
     std::vector<Value> elements;
 };
 
+struct Union_value
+{
+    mem::rc_ptr<types::Union_type> signature;
+    std::string tag;
+    std::optional<Value> value;
+
+    Union_value(mem::rc_ptr<types::Union_type> sig, std::string t, std::optional<Value> val)
+        : signature(std::move(sig)), tag(std::move(t)), value(std::move(val)) {}
+};
+
 using Native_callable = std::function<Result<Value>(const std::vector<Value> &arguments)>;
 
 struct Native_function_value
@@ -91,6 +103,7 @@ inline bool is_model(const Value &value) { return std::holds_alternative<phos::m
 inline bool is_function(const Value &value) { return std::holds_alternative<phos::mem::rc_ptr<Function_value>>(value); }
 inline bool is_closure(const Value &value) { return std::holds_alternative<phos::mem::rc_ptr<Closure_value>>(value); }
 inline bool is_array(const Value &value) { return std::holds_alternative<phos::mem::rc_ptr<Array_value>>(value); }
+inline bool is_union(const Value &value) { return std::holds_alternative<phos::mem::rc_ptr<Union_value>>(value); } // Added
 inline bool is_nil(const Value &value) { return std::holds_alternative<std::nullptr_t>(value); }
 inline bool is_void(const Value &value) { return std::holds_alternative<std::monostate>(value); }
 inline bool is_native_function(const Value &value) { return std::holds_alternative<phos::mem::rc_ptr<Native_function_value>>(value); }
@@ -106,6 +119,7 @@ inline phos::mem::rc_ptr<Model_value> get_model(const Value &value) { return std
 inline phos::mem::rc_ptr<Function_value> get_function(const Value &value) { return std::get<phos::mem::rc_ptr<Function_value>>(value); }
 inline phos::mem::rc_ptr<Closure_value> get_closure(const Value &value) { return std::get<phos::mem::rc_ptr<Closure_value>>(value); }
 inline phos::mem::rc_ptr<Array_value> get_array(const Value &value) { return std::get<phos::mem::rc_ptr<Array_value>>(value); }
+inline phos::mem::rc_ptr<Union_value> get_union(const Value &value) { return std::get<phos::mem::rc_ptr<Union_value>>(value); } // Added
 
 inline phos::mem::rc_ptr<Native_function_value> get_native_function(const Value &value)
 {
@@ -115,4 +129,4 @@ inline phos::mem::rc_ptr<Native_function_value> get_native_function(const Value 
 std::string value_to_string(const Value &value);
 std::string get_value_type_string(const Value &value);
 
-}  // namespace phos
+} // namespace phos

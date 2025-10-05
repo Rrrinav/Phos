@@ -52,7 +52,6 @@ void build_interpreter(bool release = false)
     std::vector<bld::Proc> builds;
     std::vector<std::string> files_to_build;
 
-    // Step 1: Determine which .cpp files actually need rebuilding
     for (auto f : cpp_files)
     {
         std::string out_p = bld::fs::get_stem(bld::str::replace(f, SRC, BIN), true) + ".o";
@@ -62,12 +61,10 @@ void build_interpreter(bool release = false)
 
         bool needs_rebuild = bld::is_executable_outdated(f, out_p);
 
-        // Dependency logic
         if (!needs_rebuild)
         {
             if (f.find("main.cpp") != std::string::npos)
             {
-                // main.cpp depends on ALL headers
                 for (auto &hpp : hpp_files)
                 {
                     if (bld::is_executable_outdated(hpp, out_p))
@@ -79,7 +76,6 @@ void build_interpreter(bool release = false)
             }
             else
             {
-                // other .cpp depends only on matching header (if present)
                 std::string header = bld::str::replace(f, ".cpp", ".hpp");
                 if (exists(header) && bld::is_executable_outdated(header, out_p))
                     needs_rebuild = true;
@@ -90,7 +86,6 @@ void build_interpreter(bool release = false)
             files_to_build.push_back(f);
     }
 
-    // Step 2: Compile all files that need rebuilding asynchronously
     if (!files_to_build.empty())
         bld::log(bld::Log_type::INFO, "Rebuilding " + std::to_string(files_to_build.size()) + " files...");
 
@@ -108,13 +103,11 @@ void build_interpreter(bool release = false)
         auto p = bld::execute_async(cmp_cmd);
         if (p)
             builds.push_back(p);
-        else
-            bld::log(bld::Log_type::ERR, "Failed to spawn build for " + f);
     }
 
     bld::wait_procs(builds);
 
-    // Step 3: Link all .o files into final binary
+    // Link all .o files
     bld::Command link_cmd = {"g++", "-o", TARGET};
     for (auto &o : objs)
         link_cmd.add_parts(o);
@@ -134,6 +127,81 @@ void build_interpreter(bool release = false)
     bld::log(bld::Log_type::INFO, "Build complete.");
 }
 
+void build_custom_interpreter(bool release = false)
+{
+    using namespace std::filesystem;
+
+    bld::fs::create_dir_if_not_exists(BIN);
+
+    auto hpp_files = bld::fs::get_all_files_with_extensions(SRC, {"hpp"}, true);
+
+    std::vector<std::string> objs_to_link;
+    std::vector<bld::Proc> builds;
+
+    if (!cfg["objs"])
+    {
+        bld::log(bld::Log_type::ERR, "No 'objs' list provided in config.");
+        std::exit(EXIT_FAILURE);
+    }
+
+    auto requested = bld::str::chop_by_delimiter(cfg["objs"], ",");
+    for (auto &req : requested)
+    {
+        bld::str::trim(req);
+        std::string src_file = SRC + req;
+        std::string out_p = bld::fs::get_stem(bld::str::replace(src_file, SRC, BIN), true) + ".o";
+
+        bld::fs::create_dir_if_not_exists(path(out_p).parent_path().string());
+
+        bool needs_rebuild = bld::is_executable_outdated(src_file, out_p);
+
+        // simple dependency check: header with same name
+        if (!needs_rebuild)
+        {
+            std::string header = bld::str::replace(src_file, ".cpp", ".hpp");
+            if (exists(header) && bld::is_executable_outdated(header, out_p))
+                needs_rebuild = true;
+        }
+
+        if (needs_rebuild)
+        {
+            bld::Command cmp_cmd = {"g++", "-c", src_file, "-o", out_p, "--std=c++23"};
+            if (release)
+                cmp_cmd.add_parts("-O2");
+            else
+                cmp_cmd.add_parts("-ggdb", "-O0");
+
+            bld::log(bld::Log_type::INFO, std::format("Building: {}", src_file));
+            auto p = bld::execute_async(cmp_cmd);
+            if (p)
+                builds.push_back(p);
+        }
+
+        objs_to_link.push_back(out_p);
+    }
+
+    bld::wait_procs(builds);
+
+    // link only requested objs
+    bld::Command link_cmd = {"g++", "-o", TARGET};
+    for (auto &o : objs_to_link)
+        link_cmd.add_parts(o);
+    link_cmd.add_parts("--std=c++23");
+
+    if (release)
+        link_cmd.add_parts("-O2");
+    else
+        link_cmd.add_parts("-ggdb", "-O0");
+
+    if (!bld::execute(link_cmd))
+    {
+        bld::log(bld::Log_type::ERR, "Custom linking failed.");
+        std::exit(EXIT_FAILURE);
+    }
+
+    bld::log(bld::Log_type::INFO, "Custom build complete.");
+}
+
 std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::string>>> run_tests()
 {
     std::string dir = cfg["test"];
@@ -148,8 +216,6 @@ std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::str
 
     auto files = bld::fs::get_all_files_with_extensions(dir, {"phos"});
 
-    int tests_passed = 0;
-    int tests_failed = 0;
     std::vector<std::pair<std::string, std::string>> failed;
     std::vector<std::string> passed_files;
 
@@ -162,7 +228,6 @@ std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::str
             std::exit(EXIT_FAILURE);
         }
 
-        // assume expected file is "<test>.expected"
         std::string expected_file = bld::fs::get_stem(f, true) + ".expected";
         std::string expected{};
         if (!bld::fs::read_file(expected_file, expected))
@@ -177,7 +242,6 @@ std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::str
         }
         else
         {
-            tests_failed++;
             std::string diff = string_diff(output, expected);
             failed.push_back({f, diff});
         }
@@ -196,9 +260,9 @@ int main(int argc, char *argv[])
         int passed_count = passed_files.size();
         int failed_count = failed_info.size();
 
-        bld::log(bld::Log_type::INFO, "Tests passed: " + std::to_string(passed_count) + ", failed: " + std::to_string(failed_count));
+        bld::log(bld::Log_type::INFO, "Tests passed: " + std::to_string(passed_count) +
+                                      ", failed: " + std::to_string(failed_count));
 
-        // Call the new report generator with the separated lists
         report_gen::generate_html_report(passed_files, failed_info);
 
         for (auto &[file, diff] : failed_info)
@@ -211,6 +275,12 @@ int main(int argc, char *argv[])
     else if (cfg["clean"])
     {
         bld::fs::remove_dir(BIN);
+    }
+    else if (cfg["objs"])
+    {
+        bool rel = cfg["rel"] ? true : false;
+        build_custom_interpreter(rel);
+        return 0;
     }
     else
     {

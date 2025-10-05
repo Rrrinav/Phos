@@ -1,0 +1,28 @@
+# Keep your existing settings
+BasedOnStyle: Google
+IndentWidth: 4
+ColumnLimit: 140
+PointerBindsToType: false
+AllowShortIfStatementsOnASingleLine: false
+AllowShortBlocksOnASingleLine: true
+AllowShortLoopsOnASingleLine: true
+DerivePointerAlignment: false
+BreakBeforeBraces: Allman
+NamespaceIndentation: None
+AccessModifierOffset: -4
+ReflowComments: false
+AlignConsecutiveAssignments: false
+RemoveBracesLLVM: true
+IndentAccessModifiers: false
+SortIncludes: Never
+
+# Struct/aggregate init inline braces
+Cpp11BracedListStyle: true
+
+# Force breaking each struct/aggregate field to a new line
+BinPackArguments: false
+BinPackParameters: false
+
+# Prevent hanging indent for struct fields
+ContinuationIndentWidth: 0
+

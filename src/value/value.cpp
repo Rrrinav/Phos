@@ -191,6 +191,13 @@ std::string value_to_string_impl(const Value &value, int indent_level)
         ss << ") -> " << types::type_to_string(func->signature.return_type);
         return ss.str();
     }
+    if (is_union(value))
+    {
+        auto un = get_union(value);
+        std::stringstream ss;
+        ss << "union<" << un->tag << ">";
+        return ss.str();
+    }
 
     return "unknown";
 }
@@ -216,6 +223,8 @@ std::string get_value_type_string(const Value &value)
                 return types::type_to_string(v->type);
             else if constexpr (std::is_same_v<T, mem::rc_ptr<Native_function_value>>)
                 return "native_fn<" + v->name + ">";
+            else if constexpr (std::is_same_v<T, mem::rc_ptr<Union_value>>)
+                return v->tag;
             else if constexpr (std::is_same_v<T, std::nullptr_t>) return "nil";
             else if constexpr (std::is_same_v<T, std::monostate>) return "void";
             else return "unknown";

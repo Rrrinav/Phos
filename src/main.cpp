@@ -108,6 +108,17 @@ int main(int argc, char *argv[])
             return 1;
         }
 
+        if (print_ast)
+        {
+            std::println("============Before typechecking=============");
+            phos::ast::AstPrinter printer;
+            printer.use_unicode = print_use_unicode;
+            printer.print_statements(parse_result.value());
+
+            if (print_only_print)
+                return 0;
+        }
+
         auto checked = phos::Type_checker().check(*parse_result);
         if (checked.size() > 0)
         {
@@ -116,6 +127,7 @@ int main(int argc, char *argv[])
 
         if (print_ast)
         {
+            std::println("============After typechecking=============");
             phos::ast::AstPrinter printer;
             printer.use_unicode = print_use_unicode;
             printer.print_statements(parse_result.value());

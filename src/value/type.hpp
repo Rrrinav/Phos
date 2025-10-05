@@ -21,7 +21,8 @@ using Type = std::variant<
     phos::mem::rc_ptr<struct Model_type>,
     phos::mem::rc_ptr<struct Array_type>,
     phos::mem::rc_ptr<struct Native_function_type>,
-    phos::mem::rc_ptr<struct Optional_type>
+    phos::mem::rc_ptr<struct Optional_type>,
+    phos::mem::rc_ptr<struct Union_type>
 >;
 
 bool operator==(const Type& lhs, const Type& rhs);
@@ -80,6 +81,14 @@ struct Optional_type
     auto operator<=>(const Optional_type &) const = default;
 };
 
+struct Union_type
+{
+    std::string name;
+    std::unordered_map<std::string, Type> variants;
+
+    bool operator==(const Union_type &other) const { return name == other.name && variants == other.variants; }
+};
+
 inline Primitive_kind get_primitive_kind(const Type &type) { return std::get<Primitive_kind>(type); }
 
 // --- Helper Functions (Declarations) ---
@@ -94,10 +103,12 @@ inline phos::mem::rc_ptr<Function_type> get_function_type(const Type &type) { re
 inline phos::mem::rc_ptr<Closure_type> get_closure_type(const Type &type)   { return std::get<phos::mem::rc_ptr<Closure_type>>(type); }
 inline phos::mem::rc_ptr<Model_type> get_model_type(const Type &type)       { return std::get<phos::mem::rc_ptr<Model_type>>(type); }
 inline phos::mem::rc_ptr<Array_type> get_array_type(const Type &type)       { return std::get<phos::mem::rc_ptr<Array_type>>(type); }
+inline phos::mem::rc_ptr<Union_type> get_union_type(const Type &type)       { return std::get<phos::mem::rc_ptr<Union_type>>(type); }
 
 inline bool is_any(const Type &type)       { if (is_primitive(type)) return get_primitive_kind(type) == types::Primitive_kind::Any; else return false; }
 inline bool is_nil(const Type &type) { if (is_primitive(type)) return get_primitive_kind(type) == types::Primitive_kind::Nil; else return false; }
 inline bool is_optional(const Type &type) { return std::holds_alternative<phos::mem::rc_ptr<Optional_type>>(type); }
+inline bool is_union(const Type &type) { return std::holds_alternative<phos::mem::rc_ptr<Union_type>>(type); }
 
 inline phos::mem::rc_ptr<Optional_type> get_optional_type(const Type &type) { return std::get<phos::mem::rc_ptr<Optional_type>>(type); }
 

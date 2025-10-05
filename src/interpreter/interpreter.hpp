@@ -49,6 +49,7 @@ private:
     mem::rc_ptr<Environment> globals;
     mem::rc_ptr<Environment> environment;
     // Code execution tables
+    std::unordered_map<std::string, mem::rc_ptr<types::Union_type>> m_union_signatures;
     std::unordered_map<std::string, FunctionData> functions;
     std::unordered_map<size_t, ClosureData> closures;
     std::unordered_map<std::string, ModelData> model_data;
@@ -88,21 +89,23 @@ private:
     Result<Value> evaluate_visitor(const ast::Unary_expr& expr);
     Result<Value> evaluate_visitor(const ast::Method_call_expr& expr);
     Result<Value> evaluate_visitor(const ast::Model_literal_expr& expr);
+    Result<Value> evaluate_visitor(const ast::Static_path_expr& expr);
     // ========================================================================
     // Statement Execution
     // ========================================================================
     Result<Return_value> execute(const ast::Stmt &stmt);
 
-    Result<Return_value> execute_visitor(const ast::Return_stmt &stmt);
-    Result<Return_value> execute_visitor(const ast::Expr_stmt &stmt);
-    Result<Return_value> execute_visitor(const ast::Var_stmt &stmt);
-    Result<Return_value> execute_visitor(const ast::Function_stmt &stmt);
-    Result<Return_value> execute_visitor(const ast::Model_stmt &stmt);
-    Result<Return_value> execute_visitor(const ast::Block_stmt &stmt);
-    Result<Return_value> execute_visitor(const ast::If_stmt &stmt);
-    Result<Return_value> execute_visitor(const ast::While_stmt &stmt);
-    Result<Return_value> execute_visitor(const ast::Print_stmt &stmt);
-    Result<Return_value> execute_visitor(const ast::For_stmt &stmt);
+    Result<Return_value> execute_visitor(const ast::Return_stmt& stmt);
+    Result<Return_value> execute_visitor(const ast::Expr_stmt& stmt);
+    Result<Return_value> execute_visitor(const ast::Var_stmt& stmt);
+    Result<Return_value> execute_visitor(const ast::Function_stmt& stmt);
+    Result<Return_value> execute_visitor(const ast::Model_stmt& stmt);
+    Result<Return_value> execute_visitor(const ast::Block_stmt& stmt);
+    Result<Return_value> execute_visitor(const ast::If_stmt& stmt);
+    Result<Return_value> execute_visitor(const ast::While_stmt& stmt);
+    Result<Return_value> execute_visitor(const ast::Print_stmt& stmt);
+    Result<Return_value> execute_visitor(const ast::For_stmt& stmt);
+    Result<Return_value> execute_visitor(const ast::Union_stmt& stmt);
 
     std::string unescape_string(const std::string &s);
     Result<Return_value> execute_block(const std::vector<ast::Stmt*> &statements, mem::rc_ptr<Environment> block_env);

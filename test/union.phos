@@ -1,0 +1,19 @@
+union State {
+    let ok: bool;
+    let err: string;
+}
+
+let res : State = State::ok(true);
+let res2 := State::err("Some unexpected error occured");
+
+if (res.has(State::ok)) {
+    print("State res is ok");
+} else {
+    print("State res is no ok: " + res.err);
+}
+
+if (res2.has(State::ok)) {
+    print("State res2 is ok");
+} else {
+    print("State res2 is no ok: "+ res2.err);
+}

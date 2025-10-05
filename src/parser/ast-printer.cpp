@@ -1,8 +1,7 @@
 #include "ast-printer.hpp"
-#include "ast.hpp"
 #include "../utility/utility.hpp"
 
-#include <print>
+#include <iostream>
 
 namespace phos::ast {
 
@@ -21,12 +20,12 @@ std::string AstPrinter::vertical_sym(bool has_next) const {
 void AstPrinter::indent() const
 {
     for (size_t i = 0; i + 1 < branch_stack.size(); ++i)
-        std::print("{}", vertical_sym(branch_stack[i]));
+        std::cout << vertical_sym(branch_stack[i]);
     if (!branch_stack.empty())
-        std::print("{}", branch_sym(branch_stack.back()));
+        std::cout << branch_sym(branch_stack.back());
 }
 
-void AstPrinter::print_str(const std::string &s) const { std::println("{}", s); }
+void AstPrinter::print_str(const std::string &s) const { std::cout << s << std::endl; }
 
 // ---------- public ----------
 
@@ -158,29 +157,24 @@ void AstPrinter::print_expr_node(const Call_expr &node)
 
     bool has_args = !node.arguments.empty();
 
-    // 1. Print the Callee Expression as the first child
-    //    We recursively call the printer to handle the callee.
     with_child(true, [&] {
         indent();
         print_str("Callee");
         with_child(false, [&] { print_expr_ptr(node.callee); });
     });
 
-    // 2. Print the Type as the second child
-    with_child(!has_args, [&] { // This is the last child if there are no arguments
+    with_child(!has_args, [&] {
         indent();
         print_str("Type: " + types::type_to_string(node.type));
     });
 
-    // 3. Print the Arguments block as the final child (if they exist)
     if (has_args)
     {
-        with_child(false, [&] { // This is always the last main child
+        with_child(false, [&] { 
             indent();
             print_str("Arguments");
             for (size_t i = 0; i < node.arguments.size(); ++i)
             {
-                // Recursively print each argument expression
                 with_child(i + 1 < node.arguments.size(), [&] { print_expr_ptr(node.arguments[i]); });
             }
         });
@@ -442,6 +436,24 @@ void AstPrinter::print_expr_node(const Array_assignment_expr &node)
                });
 }
 
+// ADDED: Visitor for our new Static_path_expr
+void AstPrinter::print_expr_node(const Static_path_expr &node)
+{
+    indent();
+    std::string base_name = "<unknown>";
+    if (auto* var_expr = std::get_if<Variable_expr>(&node.base->node))
+    {
+        base_name = var_expr->name;
+    }
+    print_str("Static Path: " + base_name + "::" + node.member.lexeme);
+    with_child(false,
+           [&]
+           {
+               indent();
+               print_str("Type: " + types::type_to_string(node.type));
+           });
+}
+
 // ---------- Statements ----------
 
 void AstPrinter::print_stmt_node(const Return_stmt &node)
@@ -467,7 +479,7 @@ void AstPrinter::print_stmt_node(const Function_stmt &node)
                                   [&]
                                   {
                                       indent();
-                                      print_str((node.parameters[i].is_const ? "const" : "") + node.parameters[i].name+ " : " + types::type_to_string(node.parameters[i].type));
+                                      print_str((node.parameters[i].is_const ? "const " : "") + node.parameters[i].name+ " : " + types::type_to_string(node.parameters[i].type));
                                   });
                    }
                });
@@ -573,26 +585,6 @@ void AstPrinter::print_stmt_node(const Expr_stmt &node)
     with_child(false, [&] { print_expr_ptr(node.expression); });
 }
 
-void AstPrinter::print_stmt_node(const Field_assignment_expr &node)
-{
-    indent();
-    print_str("Field Assign Stmt: " + node.field_name);
-    with_child(true,
-               [&]
-               {
-                   indent();
-                   print_str("Object");
-                   with_child(false, [&] { print_expr_ptr(node.object); });
-               });
-    with_child(false,
-               [&]
-               {
-                   indent();
-                   print_str("Value");
-                   with_child(false, [&] { print_expr_ptr(node.value); });
-               });
-}
-
 void AstPrinter::print_stmt_node(const Block_stmt &node)
 {
     indent();
@@ -685,5 +677,29 @@ void AstPrinter::print_stmt_node(const For_stmt &node)
                });
 }
 
-}  // namespace phos::ast
+void AstPrinter::print_stmt_node(const Union_stmt &node)
+{
+    indent();
+    print_str("Union: " + node.name);
+
+    with_child(false, [&] {
+        indent();
+        print_str("Variants");
+        if (node.variants.empty()) {
+            with_child(false, [&] {
+                indent();
+                print_str("<none>");
+            });
+        } else {
+            for (size_t i = 0; i < node.variants.size(); ++i) {
+                with_child(i + 1 < node.variants.size(), [&] {
+                    indent();
+                    print_str(node.variants[i].first + " : " + 
+                              types::type_to_string(node.variants[i].second));
+                });
+            }
+        }
+    });
+}
+} // namespace phos::ast
 

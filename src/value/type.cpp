@@ -77,7 +77,6 @@ std::string type_to_string(const Type &type)
         for (const auto &[name, member_type] : model_type->fields) result += name + ": " + type_to_string(member_type) + ", ";
 
         if (!model_type->fields.empty())
-
             result = result.substr(0, result.size() - 2);
 
         result += " }";
@@ -91,6 +90,17 @@ std::string type_to_string(const Type &type)
     else if (is_optional(type))
     {
         return type_to_string(get_optional_type(type)->base_type) + "?";
+    }
+    else if (is_union(type))
+    {
+        auto union_type = get_union_type(type);
+        std::string res = "union " + union_type->name + " {";
+        for (const auto &[name, mem_type] : union_type->variants) res += name + ": " + type_to_string(mem_type) + ", ";
+
+        if (!union_type->variants.empty())
+            res = res.substr(0, res.size() - 2);
+        res += " }";
+        return res;
     }
 
     return "unknown";

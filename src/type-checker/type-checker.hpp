@@ -35,9 +35,10 @@ private:
     void resolve_type(types::Type &type);
 
     template <typename T>
-    void visit(T &node) { }
+    void visit(T &node) { } // Default visitor
     void visit(ast::Function_stmt &stmt);
     void visit(ast::Model_stmt &stmt);
+    void visit(ast::Union_stmt &stmt);
     void visit(ast::Block_stmt &stmt);
     void visit(ast::Var_stmt &stmt);
     void visit(ast::Print_stmt &stmt);
@@ -52,6 +53,7 @@ private:
     void visit(ast::Cast_expr &expr);
     void visit(ast::Closure_expr &expr);
     void visit(ast::Field_access_expr &expr);
+    void visit(ast::Static_path_expr &expr);
     void visit(ast::Field_assignment_expr &expr);
     void visit(ast::Method_call_expr &expr);
     void visit(ast::Model_literal_expr &expr);
@@ -70,6 +72,7 @@ class Type_checker
 
 public:
     std::unordered_map<std::string, mem::rc_ptr<types::Model_type>> model_signatures;
+    std::unordered_map<std::string, mem::rc_ptr<types::Union_type>> m_union_signatures;
 
     void type_error(const ast::Source_location &loc, const std::string &message)
     {
@@ -126,6 +129,7 @@ private:
     bool is_function(const types::Type &type) const;
     bool is_closure(const types::Type &type) const;
     bool is_model(const types::Type &type) const;
+    bool is_union(const types::Type &type) const;
     bool is_any(const types::Type &type) const;
     bool is_nil(const types::Type &type) const;
     bool is_optional(const types::Type &type) const;
@@ -133,11 +137,12 @@ private:
     // --- Main Checking Logic ---
     void collect_signatures(const std::vector<ast::Stmt*> &statements);
     void check_stmt(ast::Stmt &stmt);
-    Result<types::Type> check_expr(ast::Expr &expr);
+    Result<types::Type> check_expr(ast::Expr &expr, std::optional<types::Type> context_type = std::nullopt);
 
     // --- Node Visitors ---
     void check_stmt_node(ast::Function_stmt &stmt);
     void check_stmt_node(ast::Model_stmt &stmt);
+    void check_stmt_node(ast::Union_stmt &stmt);
     void check_stmt_node(ast::Block_stmt &stmt);
     void check_stmt_node(ast::Expr_stmt &stmt);
     void check_stmt_node(ast::If_stmt &stmt);
@@ -147,20 +152,21 @@ private:
     void check_stmt_node(ast::While_stmt &stmt);
     void check_stmt_node(ast::For_stmt &stmt);
 
-    Result<types::Type> check_expr_node(ast::Assignment_expr &expr);
-    Result<types::Type> check_expr_node(ast::Binary_expr &expr);
-    Result<types::Type> check_expr_node(ast::Call_expr &expr);
-    Result<types::Type> check_expr_node(ast::Cast_expr &expr);
-    Result<types::Type> check_expr_node(ast::Closure_expr &expr);
-    Result<types::Type> check_expr_node(ast::Field_access_expr &expr);
-    Result<types::Type> check_expr_node(ast::Field_assignment_expr &expr);
-    Result<types::Type> check_expr_node(ast::Literal_expr &expr);
-    Result<types::Type> check_expr_node(ast::Method_call_expr &expr);
-    Result<types::Type> check_expr_node(ast::Model_literal_expr &expr);
-    Result<types::Type> check_expr_node(ast::Unary_expr &expr);
-    Result<types::Type> check_expr_node(ast::Variable_expr &expr);
-    Result<types::Type> check_expr_node(ast::Array_literal_expr &expr);
-    Result<types::Type> check_expr_node(ast::Array_access_expr &expr);
-    Result<types::Type> check_expr_node(ast::Array_assignment_expr &expr);
+    Result<types::Type> check_expr_node(ast::Assignment_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Binary_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Call_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Cast_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Closure_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Field_access_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Static_path_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Field_assignment_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Literal_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Method_call_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Model_literal_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Unary_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Variable_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Array_literal_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Array_access_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Array_assignment_expr &expr, std::optional<types::Type> context_type);
 };
-}  // namespace phos
+} // namespace phos

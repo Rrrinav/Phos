@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <memory>
 #include <string>
 #include <vector>
 #include <variant>
@@ -149,6 +148,14 @@ struct Array_assignment_expr
     Source_location loc;
 };
 
+struct Static_path_expr
+{
+    Expr* base;
+    lex::Token member;
+    types::Type type;
+    Source_location loc;
+};
+
 // =================================
 // Unified expression wrapper
 // =================================
@@ -156,7 +163,7 @@ struct Expr
 {
     using Node = std::variant<Literal_expr, Variable_expr, Binary_expr, Unary_expr, Call_expr, Assignment_expr, Cast_expr,
                               Field_access_expr, Method_call_expr, Model_literal_expr, Closure_expr, Field_assignment_expr,
-                              Array_literal_expr, Array_assignment_expr, Array_access_expr>;
+                              Array_literal_expr, Array_assignment_expr, Array_access_expr, Static_path_expr>;
 
     Node node;
 };
@@ -184,6 +191,13 @@ struct Model_stmt
     std::string name;
     std::vector<std::pair<std::string, types::Type>> fields;
     std::vector<Function_stmt *> methods;
+    Source_location loc;
+};
+
+struct Union_stmt
+{
+    std::string name;
+    std::vector<std::pair<std::string, types::Type>> variants;
     Source_location loc;
 };
 
@@ -248,7 +262,7 @@ struct For_stmt
 struct Stmt
 {
     using Node = std::variant<Return_stmt, Function_stmt, Model_stmt, Var_stmt, Print_stmt, Expr_stmt, Block_stmt, If_stmt, While_stmt,
-                              For_stmt>;
+                              For_stmt, Union_stmt>;
 
     Node node;
 };

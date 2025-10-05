@@ -84,13 +84,13 @@ private:
             case ',':
                 return Token(TokenType::Comma, ",", 0, line, start_col);
             case ':':
-                return Token(TokenType::Colon, ":", 0, line, start_col);
+                if (match(':')) return Token(TokenType::ColonColon, "::", 0, line, start_col);
+                else return Token(TokenType::Colon, ":", 0, line, start_col);
             case '+':
                 return Token(TokenType::Plus, "+", 0, line, start_col);
             case '-':
-                if (match('>'))
-                    return Token(TokenType::Arrow, "->", 0, line, start_col);
-                return Token(TokenType::Minus, "-", 0, line, start_col);
+                if (match('>')) return Token(TokenType::Arrow, "->", 0, line, start_col);
+                else return Token(TokenType::Minus, "-", 0, line, start_col);
             case '*':
                 return Token(TokenType::Star, "*", 0, line, start_col);
             case '%':
@@ -100,24 +100,20 @@ private:
                     return Token(TokenType::NotEqual, "!=", 0, line, start_col);
                 return Token(TokenType::LogicalNot, "!", 0, line, start_col);
             case '=':
-                if (match('='))
-                    return Token(TokenType::Equal, "==", 0, line, start_col);
-                return Token(TokenType::Assign, "=", 0, line, start_col);
+                if (match('=')) return Token(TokenType::Equal, "==", 0, line, start_col);
+                else return Token(TokenType::Assign, "=", 0, line, start_col);
             case '<':
-                if (match('='))
-                    return Token(TokenType::LessEqual, "<=", 0, line, start_col);
-                return Token(TokenType::Less, "<", 0, line, start_col);
+                if (match('=')) return Token(TokenType::LessEqual, "<=", 0, line, start_col);
+                else return Token(TokenType::Less, "<", 0, line, start_col);
             case '>':
-                if (match('='))
-                    return Token(TokenType::GreaterEqual, ">=", 0, line, start_col);
-                return Token(TokenType::Greater, ">", 0, line, start_col);
+                if (match('=')) return Token(TokenType::GreaterEqual, ">=", 0, line, start_col);
+                else return Token(TokenType::Greater, ">", 0, line, start_col);
             case '&':
                 if (match('&'))
                     return Token(TokenType::LogicalAnd, "&&", 0, line, start_col);
                 break;
             case '|':
-                if (match('|'))
-                    return Token(TokenType::LogicalOr, "||", 0, line, start_col);
+                if (match('|')) return Token(TokenType::LogicalOr, "||", 0, line, start_col);
                 else return Token(TokenType::Pipe, "|", 0, line, start_col);
                 break;
             case '"':

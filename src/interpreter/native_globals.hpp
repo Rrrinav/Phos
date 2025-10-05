@@ -77,7 +77,7 @@ inline std::array<mem::rc_ptr<Native_function_value>, NUM_NATIVE_FUNCS> get_nati
     return functions;
 }
 
-inline constexpr int NUM_NATIVE_METHODS = 16;
+inline constexpr int NUM_NATIVE_METHODS = 17;
 // Returns a fixed-size array of all native METHOD implementations.
 inline std::array<Native_method_definition, NUM_NATIVE_METHODS> get_native_methods()
 {
@@ -217,7 +217,6 @@ inline std::array<Native_method_definition, NUM_NATIVE_METHODS> get_native_metho
                             return a[0];  // Return the default value
                         return s;
                     }};
-
     return methods;
 }
 }  // namespace phos::native

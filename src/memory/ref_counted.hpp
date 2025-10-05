@@ -32,6 +32,7 @@ public:
     // Constructors
     rc_ptr() : ctrl(nullptr) {}
     explicit rc_ptr(T* raw) : ctrl(raw ? new _control_block_(raw, [](T* p){ delete p; }) : nullptr) {}
+    rc_ptr(std::nullptr_t) noexcept : ctrl(nullptr) {}
 
     rc_ptr(const rc_ptr &other) noexcept : ctrl(other.ctrl)
     {
