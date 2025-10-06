@@ -1,6 +1,7 @@
 #include "ast-printer.hpp"
 #include "../utility/utility.hpp"
 
+#include <format>
 #include <iostream>
 
 namespace phos::ast {
@@ -467,7 +468,7 @@ void AstPrinter::print_stmt_node(const Return_stmt &node)
 void AstPrinter::print_stmt_node(const Function_stmt &node)
 {
     indent();
-    print_str("Function: " + node.name);
+    print_str(std::format("{} Function: {}", node.is_static ? "static" : "", node.name));
     with_child(true,
                [&]
                {

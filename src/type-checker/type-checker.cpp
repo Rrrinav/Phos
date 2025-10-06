@@ -280,12 +280,27 @@ void TypeResolver::visit(ast::Array_assignment_expr &expr)
 std::vector<err::msg> Type_checker::check(std::vector<ast::Stmt*> &statements)
 {
     begin_scope();
-    collect_signatures(statements);
+
+    // First pass to find all type names
+    collect_signatures(statements); 
+
+    // Use the collected names to resolve all placeholder types in the AST
     TypeResolver resolver(*this);
     resolver.resolve(statements);
+
+    // Re-collect signatures. Now that the AST nodes have their types fully
+    // resolved, this second pass will build the internal maps with complete types.
+    functions.clear();
+    model_data.clear();
+    model_signatures.clear();
+    m_union_signatures.clear();
+
+    collect_signatures(statements);
+
     for (auto &stmt : statements)
         if (stmt)
             check_stmt(*stmt);
+
     end_scope();
     return errors;
 }
@@ -319,8 +334,16 @@ void Type_checker::collect_signatures(const std::vector<ast::Stmt*> &statements)
                     types::Function_type method_type;
                     for (const auto &param : method_ast->parameters) method_type.parameter_types.push_back(param.type);
                     method_type.return_type = method_ast->return_type;
-                    data.methods[method_ast->name] = {method_ast};
-                    model_type->methods[method_ast->name] = method_type;
+
+                    if (method_ast->is_static) {
+                        data.static_methods[method_ast->name] = {method_ast};
+                        model_type->static_methods[method_ast->name] = method_type;
+                    }
+                    else
+                    {
+                        data.methods[method_ast->name] = {method_ast};
+                        model_type->methods[method_ast->name] = method_type;
+                    }
                 }
                 model_signatures[model_stmt->name] = model_type;
                 model_data[model_stmt->name] = std::move(data);
@@ -479,7 +502,6 @@ Result<std::pair<types::Type, bool>> Type_checker::lookup(const std::string &nam
         return std::make_pair(types::Type(func_type), true);
     }
 
-    // Allow referring to a type by its name
     if (model_signatures.count(name))
     {
         return std::make_pair(model_signatures.at(name), true);
@@ -508,7 +530,7 @@ void Type_checker::check_stmt_node(ast::Function_stmt &stmt)
     auto saved_return = current_return_type;
     current_return_type = stmt.return_type;
     begin_scope();
-    if (current_model_type)
+    if (current_model_type && !stmt.is_static)
         declare("this", *current_model_type, true, stmt.loc);
     for (const auto &p : stmt.parameters) declare(p.name, p.type, p.is_const, stmt.loc);
     if (stmt.body)
@@ -808,7 +830,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
 {
     (void)context_type;
 
-    // Check for Union Instantiation: State::Ok(true)
+    // Check for Union/Static Method Instantiation: State::ok(true) or Point::origin()
     if (auto* static_path = std::get_if<ast::Static_path_expr>(&expr.callee->node))
     {
         auto base_type_res = check_expr(*static_path->base);
@@ -848,6 +870,36 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
                 }
             }
             return expr.type = types::Type(union_type);
+        }
+        else if (is_model(*base_type_res))
+        {
+            auto model_type = types::get_model_type(*base_type_res);
+            auto& method_name = static_path->member.lexeme;
+
+            if (!model_type->static_methods.count(method_name))
+            {
+                type_error(static_path->loc, "Model '" + model_type->name + "' has no static method named '" + method_name + "'.");
+                return expr.type = types::Primitive_kind::Void;
+            }
+
+            const auto& signature = model_type->static_methods.at(method_name);
+            // Re-use general function call logic
+            if (expr.arguments.size() != signature.parameter_types.size())
+            {
+                type_error(expr.loc, std::format("Incorrect number of arguments for static method '{}'. Expected {}, but got {}.", method_name, signature.parameter_types.size(), expr.arguments.size()));
+            }
+            else
+            {
+                for (size_t i = 0; i < expr.arguments.size(); ++i)
+                {
+                    auto arg_type_res = check_expr(*expr.arguments[i], signature.parameter_types[i]);
+                    if (arg_type_res && !is_compatible(signature.parameter_types[i], *arg_type_res))
+                    {
+                        type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch for static method.");
+                    }
+                }
+            }
+            return expr.type = signature.return_type;
         }
     }
 
@@ -1002,7 +1054,6 @@ Result<types::Type> Type_checker::check_expr_node(ast::Field_access_expr &expr, 
             type_error(expr.loc, "Union '" + union_type->name + "' has no variant named '" + expr.field_name + "'");
             return expr.type = types::Primitive_kind::Void;
         }
-        // This is an unsafe access, so we just return the type of the variant's payload
         return expr.type = union_type->variants.at(expr.field_name);
     }
 
@@ -1028,6 +1079,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Field_access_expr &expr, 
 
 Result<types::Type> Type_checker::check_expr_node(ast::Static_path_expr& expr, std::optional<types::Type> context_type)
 {
+    (void)context_type;
     auto base_res = check_expr(*expr.base);
     if (!base_res) return base_res;
 
@@ -1041,7 +1093,6 @@ Result<types::Type> Type_checker::check_expr_node(ast::Static_path_expr& expr, s
         }
 
         auto variant_type = union_type->variants.at(expr.member.lexeme);
-        // We model the variant constructor as a function
         auto constructor_type = mem::make_rc<types::Function_type>();
         if (variant_type != types::Type(types::Primitive_kind::Void))
         {
@@ -1050,8 +1101,18 @@ Result<types::Type> Type_checker::check_expr_node(ast::Static_path_expr& expr, s
         constructor_type->return_type = *base_res;
         return expr.type = types::Type(constructor_type);
     }
+    else if (is_model(*base_res))
+    {
+        auto model_type = types::get_model_type(*base_res);
+        if (!model_type->static_methods.count(expr.member.lexeme))
+        {
+            type_error(expr.loc, "Model '" + model_type->name + "' has no static method '" + expr.member.lexeme + "'.");
+            return expr.type = types::Primitive_kind::Void;
+        }
+        return expr.type = model_type->static_methods.at(expr.member.lexeme).return_type;
+    }
 
-    type_error(expr.loc, "Scope resolution operator '::' is only supported for union variants.");
+    type_error(expr.loc, "Scope resolution operator '::' is only supported for union variants and static model methods.");
     return expr.type = types::Primitive_kind::Void;
 }
 
@@ -1102,29 +1163,21 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
                 return expr.type = types::Primitive_kind::Bool;
             }
 
-            auto *arg_expr = expr.arguments[0];
-            if (auto *static_path = std::get_if<ast::Static_path_expr>(&arg_expr->node))
+            auto* arg_expr = expr.arguments[0];
+            if (auto* static_path = std::get_if<ast::Static_path_expr>(&arg_expr->node))
             {
-                if (auto *var_expr = std::get_if<ast::Variable_expr>(&static_path->base->node))
+                if(auto* var_expr = std::get_if<ast::Variable_expr>(&static_path->base->node))
                 {
                     if (var_expr->name != union_type->name)
-                        type_error(ast::get_loc(arg_expr->node),
-                                   "Argument to .has() must be a variant of the same union type '" + union_type->name + "'");
+                        type_error(ast::get_loc(arg_expr->node), "Argument to .has() must be a variant of the same union type '" + union_type->name + "'");
 
                     if (!union_type->variants.count(static_path->member.lexeme))
-                        type_error(ast::get_loc(arg_expr->node),
-                                   "Union '" + union_type->name + "' has no variant named '" + static_path->member.lexeme + "'");
+                        type_error(ast::get_loc(arg_expr->node), "Union '" + union_type->name + "' has no variant named '" + static_path->member.lexeme + "'");
+                } else {
+                     type_error(ast::get_loc(arg_expr->node), "Argument to .has() must be a static-like variant access (e.g. MyUnion::Variant).");
                 }
-                else
-                {
-                    type_error(ast::get_loc(arg_expr->node),
-                               "Argument to .has() must be a static-like variant access (e.g. MyUnion::Variant).");
-                }
-            }
-            else
-            {
-                type_error(ast::get_loc(arg_expr->node),
-                           "Argument to .has() must be a static-like variant access (e.g. MyUnion::Variant).");
+            } else {
+                 type_error(ast::get_loc(arg_expr->node), "Argument to .has() must be a static-like variant access (e.g. MyUnion::Variant).");
             }
 
             return expr.type = types::Primitive_kind::Bool;
@@ -1135,6 +1188,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
             return expr.type = types::Primitive_kind::Void;
         }
     }
+
 
     if (expr.method_name == "map")
     {
@@ -1217,9 +1271,13 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
             if (is_any(return_type))
             {
                 if (is_optional(obj_type))
+                {
                     return_type = types::get_optional_type(obj_type)->base_type;
+                }
                 else if (is_array(obj_type))
+                {
                     return_type = types::get_array_type(obj_type)->element_type;
+                }
             }
             return expr.type = return_type;
         }
@@ -1238,11 +1296,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
             const auto &method_signature = (*mt)->methods.at(expr.method_name);
             if (expr.arguments.size() != method_signature.parameter_types.size())
             {
-                type_error(expr.loc,
-                           std::format("Incorrect number of arguments for method '{}'. Expected {}, but got {}.",
-                                       expr.method_name,
-                                       method_signature.parameter_types.size(),
-                                       expr.arguments.size()));
+                type_error(expr.loc, std::format("Incorrect number of arguments for method '{}'. Expected {}, but got {}.", expr.method_name, method_signature.parameter_types.size(), expr.arguments.size()));
             }
             else
             {
@@ -1250,7 +1304,9 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
                 {
                     auto arg_res = check_expr(*expr.arguments[i], method_signature.parameter_types[i]);
                     if (arg_res && !is_compatible(method_signature.parameter_types[i], *arg_res))
+                    {
                         type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch for method '" + expr.method_name + "'.");
+                    }
                 }
             }
             return expr.type = method_signature.return_type;
@@ -1372,8 +1428,6 @@ Result<types::Type> Type_checker::check_expr_node(ast::Array_assignment_expr &ex
 
 Result<types::Type> Type_checker::check_expr_node(ast::Model_literal_expr &expr, std::optional<types::Type> context_type)
 {
-    (void)context_type;
-
     if (!model_signatures.count(expr.model_name))
     {
         type_error(expr.loc, "Unknown model type '" + expr.model_name + "'");
@@ -1404,7 +1458,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Model_literal_expr &expr,
             type_error(expr.loc, "Unknown field '" + field_name + "' in model '" + expr.model_name + "'");
             continue;
         }
-
+        
         auto expected_type = model_type->fields.at(field_name);
         auto actual_type_res = check_expr(*provided_field.second, expected_type);
 

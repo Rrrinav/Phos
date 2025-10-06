@@ -97,6 +97,7 @@ private:
     {
         mem::rc_ptr<types::Model_type> signature;
         std::unordered_map<std::string, FunctionData> methods;
+        std::unordered_map<std::string, FunctionData> static_methods;
     };
 
     using Scope = std::unordered_map<std::string, std::pair<types::Type, bool>>;

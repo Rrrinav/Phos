@@ -164,6 +164,7 @@ Result<ast::Stmt*> Parser::function_declaration()
     return mem::Arena::alloc(this->arena_, ast::Stmt {
         ast::Function_stmt {
             .name = name.lexeme,
+            .is_static = false,
             .parameters = parameters,
             .return_type = return_type,
             .body = body,
@@ -182,13 +183,13 @@ Result<ast::Stmt*> Parser::model_declaration()
 
     std::vector<std::pair<std::string, types::Type>> fields;
     std::vector<ast::Function_stmt *> methods;
-    
+
     while (!check(lex::TokenType::RightBrace) && !is_at_end())
     {
         skip_newlines();
         if (check(lex::TokenType::RightBrace)) break;
 
-        if (match({lex::TokenType::Fn}))
+        if (match({lex::TokenType::Fn}) || (peek().type == lex::TokenType::Static && tokens_[current_ + 1].type == lex::TokenType::Fn))
         {
             auto method_result = __Try(parse_model_method());
             methods.push_back(this->arena_.create<ast::Function_stmt>(method_result));
@@ -271,6 +272,9 @@ Result<std::pair<std::string, types::Type>> Parser::parse_model_field()
 
 Result<ast::Function_stmt> Parser::parse_model_method()
 {
+    bool is_static = match({lex::TokenType::Static});
+    if(is_static) __TryIgnore(consume(lex::TokenType::Fn, "Expect 'fn' after 'static'."));
+
     auto name = __Try(consume(lex::TokenType::Identifier, "Expect method name"));
     __TryIgnore(consume(lex::TokenType::LeftParen, "Expect '(' after method name"));
 
@@ -298,6 +302,7 @@ Result<ast::Function_stmt> Parser::parse_model_method()
 
     return ast::Function_stmt {
         .name = name.lexeme,
+        .is_static = is_static,
         .parameters = parameters,
         .return_type = return_type,
         .body = body_result,
@@ -314,7 +319,6 @@ Result<ast::Stmt*> Parser::var_declaration()
     ast::Expr* initializer = nullptr;
     bool type_inferred = false;
 
-    // FIX: Restored your original logic for ':' and ':='
     if (match({lex::TokenType::Colon}))
     {
         if (match({lex::TokenType::Assign})) // This is ':='
@@ -330,7 +334,9 @@ Result<ast::Stmt*> Parser::var_declaration()
                 initializer = __Try(expression());
             }
         }
-    } else {
+    }
+    else
+    {
         return std::unexpected(create_error(peek(), "Expect ':' or ':=' after variable name."));
     }
 
@@ -470,7 +476,7 @@ Result<ast::Stmt*> Parser::for_statement()
     __TryIgnore(consume(lex::TokenType::RightParen, "Expect ')' after for clauses"));
 
     auto body = __Try(statement());
-    
+
     return mem::Arena::alloc(this->arena_, ast::Stmt{
         ast::For_stmt{ initializer, condition, increment, body, {previous().line, previous().column} }
     });
@@ -647,7 +653,7 @@ Result<ast::Expr*> Parser::term()
     {
         lex::Token op = previous();
         auto right = __Try(factor());
-        
+
         auto binary_expr = mem::Arena::alloc(this->arena_, ast::Expr {
             ast::Binary_expr {
                 .left = expr,
@@ -670,7 +676,7 @@ Result<ast::Expr*> Parser::factor()
     {
         lex::Token op = previous();
         auto right = __Try(cast());
-        
+
         auto binary_expr = mem::Arena::alloc(this->arena_, ast::Expr {
             ast::Binary_expr {
                 .left = expr,
@@ -712,7 +718,7 @@ Result<ast::Expr*> Parser::unary()
     {
         lex::Token op = previous();
         auto right = __Try(cast());
-        
+
         return mem::Arena::alloc(this->arena_, ast::Expr {
             ast::Unary_expr{
                 .op = op.type,
@@ -741,7 +747,7 @@ Result<ast::Expr*> Parser::call()
                 } while (match({lex::TokenType::Comma}));
             }
             auto paren = __Try(consume(lex::TokenType::RightParen, "Expect ')' after arguments"));
-            
+
             auto* call_node = mem::Arena::alloc(arena_, ast::Call_expr{
                 expr,
                 arguments,
@@ -767,7 +773,7 @@ Result<ast::Expr*> Parser::call()
         else if (match({lex::TokenType::Dot}))
         {
             auto name_result = __Try(consume(lex::TokenType::Identifier, "Expect member name after '.'"));
-            
+
             // Re-introduce Method_call_expr parsing
             if (match({lex::TokenType::LeftParen})) 
             {
@@ -881,7 +887,7 @@ Result<ast::Expr*> Parser::primary()
             }
         });
     }
-    
+
     if (match({lex::TokenType::Identifier}))
     {
         lex::Token id = previous();
@@ -902,10 +908,10 @@ Result<ast::Expr*> Parser::primary()
             });
             return mem::Arena::alloc(arena_, ast::Expr{*static_path});
         }
-        
+
         if (check(lex::TokenType::LeftBrace))
             return parse_model_literal(id.lexeme);
-        
+
         return mem::Arena::alloc(this->arena_, ast::Expr {
             ast::Variable_expr {
                 .name = id.lexeme,
@@ -1017,7 +1023,7 @@ Result<ast::Expr*> Parser::parse_model_literal(const std::string& model_name)
     }
 
     __TryIgnore(consume(lex::TokenType::RightBrace, "Expect '}' after model fields."));
-    
+
     return mem::Arena::alloc(this->arena_, ast::Expr{
         ast::Model_literal_expr {
             .model_name = model_name,

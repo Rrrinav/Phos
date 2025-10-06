@@ -54,6 +54,7 @@ struct Model_type
     std::string name;
     std::unordered_map<std::string, Type> fields;
     std::unordered_map<std::string, Function_type> methods;
+    std::unordered_map<std::string, Function_type> static_methods;
 
     // NOTE: Cannot use <=> because std::unordered_map is not ordered.
     bool operator==(const Model_type &other) const { return name == other.name && fields == other.fields && methods == other.methods; }

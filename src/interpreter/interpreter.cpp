@@ -150,8 +150,16 @@ Result<Return_value> Interpreter::execute_visitor(const ast::Model_stmt &stmt)
         for (const auto &param : method_ast->parameters) method_type.parameter_types.push_back(param.type);
         method_type.return_type = method_ast->return_type;
 
-        data.methods[method_ast->name] = {method_type, mem::make_rc<ast::Function_stmt>(*method_ast), environment};
-        model_type->methods[method_ast->name] = method_type;
+        if (method_ast->is_static)
+        {
+            data.static_methods[method_ast->name] = {method_type, mem::make_rc<ast::Function_stmt>(*method_ast), environment};
+            model_type->static_methods[method_ast->name] = method_type;
+        }
+        else
+        {
+            data.methods[method_ast->name] = {method_type, mem::make_rc<ast::Function_stmt>(*method_ast), environment};
+            model_type->methods[method_ast->name] = method_type;
+        }
     }
 
     model_data[stmt.name] = std::move(data);
@@ -365,24 +373,35 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Binary_expr& expr)
 
 Result<Value> Interpreter::evaluate_visitor(const ast::Call_expr& expr)
 {
-    // Special Case: Union Instantiation e.g. State::ok(true)
+    // Special Case: Union & Static Method Instantiation e.g. State::ok(true) or Point::origin()
     if (auto* static_path = std::get_if<ast::Static_path_expr>(&expr.callee->node))
     {
         if (auto* base_var = std::get_if<ast::Variable_expr>(&static_path->base->node))
         {
+            std::vector<Value> arguments;
+            arguments.reserve(expr.arguments.size());
+            for (const auto& argument : expr.arguments)
+            {
+                arguments.push_back(__Try(evaluate(*argument)));
+            }
+
             if (m_union_signatures.count(base_var->name))
             {
                 auto union_type = m_union_signatures.at(base_var->name);
                 auto& tag = static_path->member.lexeme;
 
                 std::optional<Value> value = std::nullopt;
-                if (!expr.arguments.empty())
+                if (!arguments.empty())
                 {
-                    value = __Try(evaluate(*expr.arguments[0]));
+                    value = arguments[0];
                 }
 
                 auto union_value = mem::make_rc<Union_value>(union_type, tag, value);
                 return Value(union_value);
+            }
+            else if (model_data.count(base_var->name))
+            {
+                return call_static_method(base_var->name, static_path->member.lexeme, arguments, expr.loc);
             }
         }
     }
@@ -446,7 +465,7 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Field_access_expr& expr)
         if (model_val->fields.contains(expr.field_name))
             return model_val->fields.at(expr.field_name);
     }
-    
+
     return std::unexpected(err::msg("Field '" + expr.field_name + "' not found or object is not a model instance.", "interpreter", expr.loc.line, expr.loc.column));
 }
 
@@ -519,7 +538,7 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Method_call_expr& expr)
             return std::unexpected(err::msg("Union types only support the '.has()' method.", "interpreter", expr.loc.line, expr.loc.column));
         }
     }
-    
+
     // For all other methods, evaluate arguments now.
     std::vector<Value> arguments;
     for (const auto &argument : expr.arguments)
@@ -527,7 +546,7 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Method_call_expr& expr)
         auto arg_result = __Try(evaluate(*argument));
         arguments.push_back(arg_result);
     }
-    
+
     if (expr.method_name == "map")
     {
         if (!is_closure(arguments[0]))
@@ -570,9 +589,9 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Method_call_expr& expr)
         {
             const auto &method_data = model_data.at(model_name).methods.at(expr.method_name);
             auto new_env = mem::make_rc<Environment>(method_data.definition_environment);
-            new_env->define("this", object);
+            __Ignore(new_env->define("this", object));
             for (size_t i = 0; i < method_data.declaration->parameters.size(); ++i)
-                new_env->define(method_data.declaration->parameters[i].name, arguments[i]);
+                __Ignore(new_env->define(method_data.declaration->parameters[i].name, arguments[i]));
             auto result = __Try(execute_block(std::get<ast::Block_stmt>(method_data.declaration->body->node).statements, new_env));
             if (result.is_return)
                 return result.value;
@@ -777,6 +796,24 @@ Result<Value> Interpreter::call_closure(size_t id, const std::vector<Value> &arg
     return Value(std::monostate{});
 }
 
+Result<Value> Interpreter::call_static_method(const std::string& model_name, const std::string& method_name, const std::vector<Value>& arguments, const ast::Source_location& loc)
+{
+    if (!model_data.contains(model_name) || !model_data.at(model_name).static_methods.count(method_name))
+        return std::unexpected(err::msg("Undefined static method '" + method_name + "' for model '" + model_name + "'.", "interpreter", loc.line, loc.column));
+
+    const auto& method_data = model_data.at(model_name).static_methods.at(method_name);
+    auto new_env = mem::make_rc<Environment>(method_data.definition_environment);
+
+    for (size_t i = 0; i < method_data.declaration->parameters.size(); ++i)
+        __Ignore(new_env->define(method_data.declaration->parameters[i].name, arguments[i]));
+
+    auto result = __Try(execute_block(std::get<ast::Block_stmt>(method_data.declaration->body->node).statements, new_env));
+    if (result.is_return)
+        return result.value;
+
+    return Value(std::monostate{});
+}
+
 Result<Value> Interpreter::add(const Value &l, const Value &r)
 {
     if (is_int(l) && is_int(r))
@@ -970,5 +1007,3 @@ Result<Value> Interpreter::map_optional(Value &optional_val, const Value &closur
     return mapped_res;
 }
 } // namespace phos
-
-

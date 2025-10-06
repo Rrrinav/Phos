@@ -180,6 +180,7 @@ struct Return_stmt
 struct Function_stmt
 {
     std::string name;
+    bool is_static;
     std::vector<Function_param> parameters;
     types::Type return_type;
     struct Stmt* body;

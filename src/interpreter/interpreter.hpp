@@ -44,6 +44,7 @@ private:
     {
         mem::rc_ptr<types::Model_type> signature;
         std::unordered_map<std::string, FunctionData> methods;
+        std::unordered_map<std::string, FunctionData> static_methods;
     };
     // Environment management
     mem::rc_ptr<Environment> globals;
@@ -115,6 +116,7 @@ private:
     Result<Value> call(const Value& callee, const std::vector<Value>& arguments, const ast::Source_location& loc);
     Result<Value> call_function(const std::string &name, const std::vector<Value> &arguments, const ast::Source_location &loc);
     Result<Value> call_closure(size_t id, const std::vector<Value> &arguments, const ast::Source_location &loc);
+    Result<Value> call_static_method(const std::string& model_name, const std::string& method_name, const std::vector<Value>& arguments, const ast::Source_location& loc);
     // ========================================================================
     // Arithmetic Operations
     // ========================================================================

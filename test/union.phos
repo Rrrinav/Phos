@@ -17,3 +17,21 @@ if (res2.has(State::ok)) {
 } else {
     print("State res2 is no ok: "+ res2.err);
 }
+
+model State_getter {
+    let state: State;
+
+    static fn get_ok() -> State {
+        return State::ok(true);
+    }
+
+    static fn get_err() -> State {
+        return State::err("Some err");
+    }
+}
+
+let ok := State_getter::get_ok();
+let err := State_getter::get_err();
+
+print(ok.ok);
+print(err.err);
