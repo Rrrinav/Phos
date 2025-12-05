@@ -10,28 +10,28 @@ namespace phos::mem
 template <typename T>
 class rc_ptr
 {
-    struct _control_block_
+    struct __control_block_t__
     {
         T *ptr;
         std::size_t ref_count;
         void (*deleter)(T*);   // function pointer to delete logic
 
-        explicit _control_block_(T *p) : _control_block_(p, [](T *q) { delete q; }) {}
-        explicit _control_block_(T *p, void (*d)(T *)) : ptr(p), ref_count(1), deleter(d) {}
+        explicit __control_block_t__(T *p) : __control_block_t__(p, [](T *q) { delete q; }) {}
+        explicit __control_block_t__(T *p, void (*d)(T *)) : ptr(p), ref_count(1), deleter(d) {}
 
-        ~_control_block_()
+        ~__control_block_t__()
         {
             if (ptr)
                 deleter(ptr);
         }
     };
 
-    _control_block_ *ctrl;
+    __control_block_t__ *ctrl;
 
 public:
     // Constructors
     rc_ptr() : ctrl(nullptr) {}
-    explicit rc_ptr(T* raw) : ctrl(raw ? new _control_block_(raw, [](T* p){ delete p; }) : nullptr) {}
+    explicit rc_ptr(T* raw) : ctrl(raw ? new __control_block_t__(raw, [](T* p){ delete p; }) : nullptr) {}
     rc_ptr(std::nullptr_t) noexcept : ctrl(nullptr) {}
 
     rc_ptr(const rc_ptr &other) noexcept : ctrl(other.ctrl)
@@ -102,7 +102,7 @@ public:
         }
 
         if (new_ptr)
-            ctrl = new _control_block_(new_ptr, [](T *p) { delete p; });
+            ctrl = new __control_block_t__(new_ptr, [](T *p) { delete p; });
     }
 
 private:

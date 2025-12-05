@@ -102,17 +102,64 @@ Result<Return_value> Interpreter::execute_visitor(const ast::Expr_stmt &stmt)
     return Return_value{};
 }
 
+Value Interpreter::create_default_value(const types::Type &type)
+{
+    if (types::is_primitive(type))
+    {
+        switch (types::get_primitive_kind(type))
+        {
+            case types::Primitive_kind::Int:
+                return Value(static_cast<int64_t>(0));
+            case types::Primitive_kind::Float:
+                return Value(0.0);
+            case types::Primitive_kind::Bool:
+                return Value(false);
+            case types::Primitive_kind::String:
+                return Value("");  // Default to empty string
+            case types::Primitive_kind::Nil:
+                return Value(nullptr);
+            case types::Primitive_kind::Void:
+                return Value(std::monostate{});
+            case types::Primitive_kind::Any:
+                return Value(nullptr);  // 'any' can default to nil
+        }
+    }
+
+    if (types::is_array(type))
+    {
+        // The fix for your bug
+        return Value(mem::make_rc<Array_value>());
+    }
+
+    if (types::is_optional(type))
+    {
+        // Optionals default to nil
+        return Value(nullptr);
+    }
+
+    // Other complex types (Model, Closure, Function)
+    // can also default to nil.
+    return Value(nullptr);
+}
+
 Result<Return_value> Interpreter::execute_visitor(const ast::Var_stmt &stmt)
 {
-    Value value(std::monostate{});
+    Value value; // This will be initialized.
+
     if (stmt.initializer != nullptr)
     {
+        // Has an initializer, so evaluate it
         auto init_result = __Try(evaluate(*stmt.initializer));
         value = init_result;
     }
+    else
+    {
+        // No initializer, so create a default value based on the type
+        value = create_default_value(stmt.type);
+    }
+
     __TryVoid(environment->define(stmt.name, value));
     return Return_value{};
-
 }
 
 Result<Return_value> Interpreter::execute_visitor(const ast::Function_stmt &stmt)
@@ -975,8 +1022,65 @@ bool Interpreter::is_truthy(const Value &v)
 
 Result<Value> Interpreter::cast_value(const Value &v, const types::Type &t)
 {
-    if (types::is_primitive(t) && types::get_primitive_kind(t) == types::Primitive_kind::String)
-        return Value(value_to_string(v));
+    // Handle casting to primitive types
+    if (types::is_primitive(t))
+    {
+        auto target_kind = types::get_primitive_kind(t);
+        switch (target_kind)
+        {
+            case types::Primitive_kind::String:
+                // This handles all value types -> string
+                return Value(value_to_string(v));
+
+            case types::Primitive_kind::Int:
+                // Handle casts to i64
+                if (is_int(v))
+                    return v;  // No-op
+                if (is_float(v))
+                    return Value(static_cast<int64_t>(get_float(v)));
+                if (is_bool(v))
+                    return Value(get_bool(v) ? 1LL : 0LL);
+                break;  // Fall through to error if cast is not supported (e.g., array as i64)
+
+            case types::Primitive_kind::Float:
+                // Handle casts to f64
+                if (is_float(v))
+                    return v;  // No-op
+                if (is_int(v))
+                    return Value(static_cast<double>(get_int(v)));
+                if (is_bool(v))
+                    return Value(get_bool(v) ? 1.0 : 0.0);
+                break;  // Fall through to error
+
+            case types::Primitive_kind::Bool:
+                // Use the existing truthiness logic for all casts to bool
+                return Value(is_truthy(v));
+
+            case types::Primitive_kind::Any:
+                return v;  // Casting to 'any' is always a no-op
+
+            case types::Primitive_kind::Void:
+                return Value(std::monostate{});  // Casting to 'void'
+
+            default:
+                // Other primitive types (if any) are unhandled
+                break;
+        }
+    }
+
+    // Handle casting to complex types (e.g., T to T?)
+    if (types::is_optional(t))
+    {
+        // If the value is nil, it's already a valid optional.
+        if (is_nil(v))
+            return Value(nullptr);
+
+        // This assumes the type checker has already verified that 'v'
+        // is compatible with the base type of the optional.
+        // At runtime, we just pass the value through.
+        return v;
+    }
+
     return v;
 }
 

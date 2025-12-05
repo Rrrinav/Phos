@@ -1343,9 +1343,18 @@ Result<types::Type> Type_checker::check_expr_node(ast::Unary_expr &expr, std::op
 
 Result<types::Type> Type_checker::check_expr_node(ast::Array_literal_expr &expr, std::optional<types::Type> context_type)
 {
-    (void)context_type;
     if (expr.elements.empty())
+    {
+        // If we are an empty array, try to take the type from the context.
+        if (context_type && is_array(context_type.value()))
+        {
+            // Context is an array type (e.g., f64[]), so we become that type.
+            return expr.type = context_type.value();
+        }
+
+        // No context, or context is not an array. Default to void[].
         return expr.type = types::Type(mem::make_rc<types::Array_type>(types::Type(types::Primitive_kind::Void)));
+    }
 
     types::Type common_type = types::Primitive_kind::Nil;
     bool has_nil = false;

@@ -135,5 +135,7 @@ private:
     Result<Value> cast_value(const Value &v, const types::Type &t);
     Result<Value> map_array(Value &array_val, const Value &closure);
     Result<Value> map_optional(Value &optional_val, const Value &closure);
+
+    Value create_default_value(const types::Type &type);
 };
 }  // namespace phos
