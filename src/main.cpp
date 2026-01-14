@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <print>
 #include <fstream>
 #include <sstream>
@@ -11,7 +12,11 @@
 #include "parser/parser.hpp"
 #include "lexer/lexer.hpp"
 #include "lexer/token.hpp"
-#include "./memory/arena.hpp"
+#include "memory/arena.hpp"
+
+#define CL_IMPLEMENTATION
+#include "cli-args.hpp"
+
 //#include "repl.hpp"
 
 int main(int argc, char *argv[])
@@ -26,51 +31,25 @@ int main(int argc, char *argv[])
         //return 0;
     }
 
-    std::string filename;
-    bool print_ast = false;
-    bool print_use_unicode = true;
-    bool print_only_print = false;
 
-    for (int i = 1; i < argc; i++)
+    cl::Parser p("Phos", "Phos interpreted programming langauage");
+    phos::cli::add_arguemnts(p);
+    auto parse_res = p.parse(argc, argv);
+    if (!parse_res)
     {
-        std::string arg = argv[i];
-        if (arg == "--ast-dump")
-        {
-            print_ast = true;
-        }
-        else if (arg == "--no-unicode")
-        {
-            print_use_unicode = false;
-        }
-        else if (arg == "--print-only")
-        {
-            print_only_print = true;
-        }
-        else if (arg.starts_with('-'))
-        {
-            std::println(stderr, "Unknown option: {}", arg);
-            return 1;
-        }
-        else
-        {
-            if (!filename.empty())
-            {
-                std::println(stderr, "Error: Multiple input files provided: {} and {}", filename, arg);
-                return 1;
-            }
-            filename = arg;
-        }
+        std::println("{}", parse_res.error());
+        return EXIT_FAILURE;
     }
+
+    std::string filename;
+    bool print_ast = parse_res->is_subcmd_chosen(phos::cli::id::ast_print);
+    bool print_use_unicode = parse_res->get<cl::Flag>(phos::cli::id::ast_print_unicode).value_or(false);
+    bool print_only_print = false;
+    filename = parse_res->get<cl::Text>(phos::cli::id::file).value_or("");
 
     if (filename.empty())
     {
-        std::println(stderr,
-                     "Usage: {} <file.phos> [options]\n\n"
-                     "Options:\n"
-                     "  --ast-dump      Dump the parsed AST\n"
-                     "  --no-unicode    Disable Unicode tree symbols in AST print\n"
-                     "  --print-only    Only print AST, don’t run interpreter\n",
-                     argv[0]);
+        p.print_help();
         return 1;
     }
 

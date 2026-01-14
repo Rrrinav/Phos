@@ -39,7 +39,7 @@ public:
 
             if (fatal)
             {
-                std::cerr << "🚨 TODO FATAL!\n" << entry.format();
+                std::cerr << "TODO FATAL!\n" << entry.format();
                 std::abort();
             }
 
