@@ -18,12 +18,11 @@ namespace phos
 class Parser
 {
 public:
-    explicit Parser(std::vector<lex::Token> tokens, mem::Arena& arena) : tokens_(std::move(tokens)), arena_(arena) {}
-
-    Result<std::vector<ast::Stmt*>> parse();
+    explicit Parser(std::vector<lex::Token> tokens, mem::Arena &arena) : tokens_(std::move(tokens)), arena_(arena) {}
+    Result<std::vector<ast::Stmt *>> parse();
 
 private:
-    mem::Arena& arena_;
+    mem::Arena &arena_;
     std::vector<lex::Token> tokens_;
     size_t current_ = 0;
     std::string stage_ = "parser";
@@ -35,7 +34,6 @@ private:
     std::unordered_set<std::string> m_known_union_names;
     // This is used by your parser's function_declaration
     std::unordered_map<std::string, types::Type> function_types_;
-
 
     // --- Utility Methods ---
     void skip_newlines();
@@ -51,42 +49,42 @@ private:
     Result<types::Type> parse_type();
 
     // --- Declaration Parsers ---
-    Result<std::optional<ast::Stmt*>> declaration();
-    Result<ast::Stmt*> function_declaration();
-    Result<ast::Stmt*> model_declaration();
-    Result<ast::Stmt*> union_declaration();
-    Result<ast::Stmt*> var_declaration();
+    Result<std::optional<ast::Stmt *>> declaration();
+    Result<ast::Stmt *> function_declaration();
+    Result<ast::Stmt *> model_declaration();
+    Result<ast::Stmt *> union_declaration();
+    Result<ast::Stmt *> var_declaration();
     Result<std::pair<std::string, types::Type>> parse_model_field();
     Result<ast::Function_stmt> parse_model_method();
 
     // --- Statement Parsers ---
-    Result<ast::Stmt*> statement();
-    Result<ast::Stmt*> print_statement(ast::Print_stream stream = ast::Print_stream::STDOUT);
-    Result<ast::Stmt*> block_statement();
-    Result<ast::Stmt*> if_statement();
-    Result<ast::Stmt*> while_statement();
-    Result<ast::Stmt*> for_statement();
-    Result<ast::Stmt*> return_statement();
-    Result<ast::Stmt*> expression_statement();
+    Result<ast::Stmt *> statement();
+    Result<ast::Stmt *> print_statement(ast::Print_stream stream = ast::Print_stream::STDOUT);
+    Result<ast::Stmt *> block_statement();
+    Result<ast::Stmt *> if_statement();
+    Result<ast::Stmt *> while_statement();
+    Result<ast::Stmt *> for_statement();
+    Result<ast::Stmt *> return_statement();
+    Result<ast::Stmt *> expression_statement();
 
     // --- Expression Parsers (by precedence) ---
-    Result<ast::Expr*> expression();
-    Result<ast::Expr*> assignment();
-    Result<ast::Expr*> logical_or();
-    Result<ast::Expr*> logical_and();
-    Result<ast::Expr*> equality();
-    Result<ast::Expr*> comparison();
-    Result<ast::Expr*> term();
-    Result<ast::Expr*> factor();
-    Result<ast::Expr*> cast();
-    Result<ast::Expr*> unary();
-    Result<ast::Expr*> call();
-    Result<ast::Expr*> primary();
+    Result<ast::Expr *> expression();
+    Result<ast::Expr *> assignment();
+    Result<ast::Expr *> logical_or();
+    Result<ast::Expr *> logical_and();
+    Result<ast::Expr *> equality();
+    Result<ast::Expr *> comparison();
+    Result<ast::Expr *> term();
+    Result<ast::Expr *> factor();
+    Result<ast::Expr *> cast();
+    Result<ast::Expr *> unary();
+    Result<ast::Expr *> call();
+    Result<ast::Expr *> primary();
 
     // --- Specific Expression Parsers ---
-    Result<ast::Expr*> parse_closure_expression();
-    Result<ast::Expr*> parse_array_literal();
-    Result<ast::Expr*> parse_model_literal(const std::string& model_name);
+    Result<ast::Expr *> parse_closure_expression();
+    Result<ast::Expr *> parse_array_literal();
+    Result<ast::Expr *> parse_model_literal(const std::string &model_name);
 };
 
-} // namespace phos
+}  // namespace phos

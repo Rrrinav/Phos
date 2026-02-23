@@ -93,7 +93,7 @@ void build_interpreter(bool release = false)
     {
         std::string out_p = bld::fs::get_stem(bld::str::replace(f, SRC, BIN), true) + ".o";
 
-        bld::Command cmp_cmd = {"g++", "-c", f, "-o", out_p, "--std=c++23"};
+        bld::Command cmp_cmd = {"g++", "-c", f, "-o", out_p, "--std=c++23", "-pthread"};
         if (release)
             cmp_cmd.add_parts("-O2");
         else
@@ -111,7 +111,7 @@ void build_interpreter(bool release = false)
     bld::Command link_cmd = {"g++", "-o", TARGET};
     for (auto &o : objs)
         link_cmd.add_parts(o);
-    link_cmd.add_parts("--std=c++23");
+    link_cmd.add_parts("--std=c++23", "-pthread");
 
     if (release)
         link_cmd.add_parts("-O2");

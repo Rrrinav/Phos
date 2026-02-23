@@ -21,9 +21,9 @@ void Parser::skip_newlines()
     while (!is_at_end() && match({lex::TokenType::Newline})) {}
 }
 
-Result<std::vector<ast::Stmt*>> Parser::parse()
+Result<std::vector<ast::Stmt *>> Parser::parse()
 {
-    std::vector<ast::Stmt*> statements;
+    std::vector<ast::Stmt *> statements;
     while (!is_at_end())
     {
         skip_newlines();
@@ -33,10 +33,11 @@ Result<std::vector<ast::Stmt*>> Parser::parse()
         auto decl_result = declaration();
         if (!decl_result)
         {
-            if (!decl_result.error().message.empty()) std::println(stderr, "{}", decl_result.error().format());
+            if (!decl_result.error().message.empty())
+                std::println(stderr, "{}", decl_result.error().format());
 
             synchronize();
-            continue; // Continue parsing to find more errors
+            continue;  // Continue parsing to find more errors
         }
 
         if (decl_result.value())
@@ -1014,9 +1015,8 @@ Result<ast::Expr*> Parser::parse_model_literal(const std::string& model_name)
     {
         do
         {
-            __TryIgnore(consume(lex::TokenType::Dot, "Expect '.' before field name."));
             auto field_name = __Try(consume(lex::TokenType::Identifier, "Expect field name."));
-            __TryIgnore(consume(lex::TokenType::Assign, "Expect '=' after field name."));
+            __TryIgnore(consume(lex::TokenType::Colon, "Expect ':' after field name."));
             auto value = __Try(expression());
             fields.push_back({field_name.lexeme, value});
         } while (match({lex::TokenType::Comma}));
@@ -1028,7 +1028,7 @@ Result<ast::Expr*> Parser::parse_model_literal(const std::string& model_name)
         ast::Model_literal_expr {
             .model_name = model_name,
             .fields = fields,
-            .type = types::Type(types::Primitive_kind::Void), // Type checker resolves
+            .type = types::Type(types::Primitive_kind::Void),
             .loc = {brace.line, brace.column}
         }
     });

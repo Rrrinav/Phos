@@ -2,7 +2,7 @@ model Item { let name: string; }
 
 fn get_item(id: i64) -> Item? {
     if (id == 1) {
-        return Item{ .name = "Phos" };
+        return Item{ name : "Phos" };
     }
     return nil;
 }

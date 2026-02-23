@@ -135,7 +135,7 @@ std::string value_to_string_impl(const Value &value, int indent_level)
             {
                 if (!first)
                     ss << ", ";
-                ss << "." << name << " = " << value_to_string_impl(field_value, indent_level);
+                ss << name << ": " << value_to_string_impl(field_value, indent_level);
                 first = false;
             }
             ss << " }";
@@ -150,7 +150,7 @@ std::string value_to_string_impl(const Value &value, int indent_level)
             {
                 if (!first)
                     ss << ",\n";
-                ss << inner_indent << "." << name << " = " << value_to_string_impl(field_value, indent_level + 1);
+                ss << inner_indent << name << ": " << value_to_string_impl(field_value, indent_level + 1);
                 first = false;
             }
             ss << "\n" << base_indent << "}";

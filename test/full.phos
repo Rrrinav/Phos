@@ -29,10 +29,10 @@ fn get_point_name(p: Point?) -> string? {
 // ==========================================================
 
 let const PI: f64 = 3.14159;
-// PI = 3.0; // ✅ ERROR: Cannot assign to a constant variable 'PI'.
+// PI = 3.0;
 
 fn test_const_params(const config: Point?, mutable_id: i64) {
-    // config = nil; // ✅ ERROR: Cannot assign to a constant variable 'config'.
+    // config = nil;
     mutable_id = 100; // OK
     print("Mutable ID updated.");
 }
@@ -46,7 +46,7 @@ test_const_params(nil, 99);
 
 print("\n--- Optional Type Validation ---");
 
-let p1: Point? = Point{ .x = 1.0, .y = 2.0 };
+let p1: Point? = Point{ x : 1.0, y : 2.0 };
 let p2: Point? = nil;
 
 // Test .exists()
@@ -54,13 +54,13 @@ print("p1 exists: " + (p1.exists() as string));
 print("p2 exists: " + (p2.exists() as string));
 
 // Test .value_or()
-let p2_defaulted := p2.value_or(Point{ .x = 0.0, .y = 0.0 });
+let p2_defaulted := p2.value_or(Point{ x : 0.0, y : 0.0 });
 print_point(p2_defaulted);
 
 // Test .value()
 let p1_unwrapped := p1.value();
 print_point(p1_unwrapped);
-// let p2_unwrapped := p2.value(); // ✅ RUNTIME PANIC: Calling .value() on nil.
+// let p2_unwrapped := p2.value();
 
 // --- Type Narrowing ---
 
@@ -73,7 +73,7 @@ if (p1) {
 // Test nil comparison
 if (p2 == nil) {
     print("p2 is nil (equality check).");
-    // print_point(p2 as Point); // ✅ TYPE ERROR: Cannot cast nil to non-optional 'Point'.
+    // print_point(p2 as Point);
 }
 
 
@@ -84,9 +84,9 @@ if (p2 == nil) {
 print("\n--- Advanced Collections Validation ---");
 
 let matrix: (Point?)[] = [
-    Point{ .x = 10.0, .y = 20.0 },
+    Point{ x : 10.0, y : 20.0 },
     nil,
-    Point{ .x = 30.0, .y = 40.0 }
+    Point{ x : 30.0, y : 40.0 }
 ];
 
 for (let i := 0; i < len(matrix); i = i + 1) {
