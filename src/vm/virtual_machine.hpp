@@ -1,33 +1,35 @@
 #pragma once
 
 #include <vector>
+#include <string>
 #include "chunk.hpp"
 #include "../value/value.hpp"
+#include "../error/result.hpp"
+#include "../parser/ast.hpp"
 
 namespace phos::vm {
-
-enum class Interpret_result {
-    Ok,
-    Runtime_error
-};
 
 class Virtual_machine {
 public:
     std::string err{};
     Virtual_machine() = default;
 
-    Interpret_result interpret(Chunk* chunk);
+    Result<void> interpret(Chunk* target_chunk);
 
 private:
     Chunk* chunk = nullptr;
     uint8_t* ip = nullptr;
     std::vector<Value> stack;
 
-    Interpret_result run();
+    Result<void> run();
 
-    // Stack operations
     void push(Value value);
     Value pop();
+
+    ast::Source_location get_loc();
+
+    using Binary_op_func = Result<Value>(*)(const Value&, const Value&, ast::Source_location);
+    Result<void> execute_binary_op(Binary_op_func op);
 };
 
 } // namespace phos::vm

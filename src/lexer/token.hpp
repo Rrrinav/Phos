@@ -15,6 +15,7 @@ enum class TokenType : uint8_t
     Fn, Return, Print, PrintErr, Plus, Minus, Star, Slash, Percent, Equal, NotEqual, Static,
     Less, Greater, LessEqual, GreaterEqual, Assign, LogicalAnd, LogicalOr, ColonColon,
     LogicalNot, Arrow, LeftParen, RightParen, LeftBrace, RightBrace, LeftBracket, RightBracket, Semicolon,
+    BitAnd, BitXor, BitNot, BitLShift, BitRshift,
     Model, Union, Pipe, Dot, Comma, Colon, Question, As, This, Newline, Eof, Invalid
 };
 

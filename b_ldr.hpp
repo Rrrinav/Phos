@@ -19,6 +19,11 @@
 */
 
 /*
+  ==   HEAVILY INSPIRED BY nob.h by rexim/alexey/tsoding.  ==
+  ==   github.com/tsoding/nob.h                            ==
+*/
+
+/*
   INFO: DEFINES:
   01. B_LDR_IMPLEMENTATION          : Include all the implementation in the header file.
   02. BLD_REBUILD_YOURSELF_ONCHANGE : Rebuild the build executable if the source file is newer than the executable and run it.
@@ -36,6 +41,8 @@
 
 #pragma once
 
+#include <functional>
+#include <limits>
 #ifdef _WIN32
   #define WIN32_LEAN_AND_MEAN
   #define _WINUSER_
@@ -64,6 +71,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <filesystem>
 
 /* @brief: Rebuild the build executable if the source file is newer than the executable and run it
  * @description: Takes no parameters and calls bld::rebuild_yourself_onchange_and_run() with the current file and executable.
@@ -215,7 +223,7 @@ namespace bld
   // Redirection configuration
   struct Redirect
   {
-    Fd stdin_fd  = INVALID_FD;   // Redirect stdin from this fd
+    Fd stdin_fd  = INVALID_FD;  // Redirect stdin from this fd
     Fd stdout_fd = INVALID_FD;  // Redirect stdout to this fd
     Fd stderr_fd = INVALID_FD;  // Redirect stderr to this fd
 
@@ -256,6 +264,12 @@ namespace bld
     // Get the command as a printable string wrapped in single quotes
     std::string get_print_string() const;
     void clear() { parts.clear(); }
+
+    void append(std::vector<std::string> args)
+    {
+        for (auto a : args)
+            this->parts.push_back(a);
+    }
   };
 
   // Class to save configuration
@@ -596,6 +610,16 @@ namespace bld
 
   namespace fs
   {
+    struct Cpp_module
+    {
+      std::string name;
+      std::filesystem::path file;
+      std::vector<std::string> imports;
+    };
+
+    /* @brief: scans all the modules in 
+    */
+    std::vector<Cpp_module> scan_modules(const std::string& path);
     /* @brief: Read entire file content into a string
      * @param path: Path to the file
      * @param content: Reference to string where content will be stored
@@ -725,7 +749,22 @@ namespace bld
                                                            bool recursive = false, bool case_insensitive = false);
 
     std::vector<std::string> get_all_files_with_name(const std::string &dir, const std::string &name, bool recursive = false);
-  }  // namespace fs
+
+    enum class Walk_act : uint8_t { Continue, Ignore, Stop };
+    enum class Path_type { File, Directory, Symlink, Other };
+    struct Walk_fn_opt
+    {
+      std::filesystem::path path;
+      Path_type type;
+      std::size_t level{0};
+      Walk_act action = Walk_act::Continue;
+      void * args;
+    };
+    using Walk_func = std::function<bool(Walk_fn_opt&)>;
+    inline bool walk_directory(const std::string & path, Walk_func cb, std::size_t depth = std::numeric_limits<std::size_t>::max());
+    inline bool walk_directory(const std::string & path, Walk_func cb, void* arg);
+    inline bool walk_directory(const std::string & path, Walk_func cb, std::size_t depth, void * arg);
+    }  // namespace fs
 
   namespace env
   {
@@ -1139,24 +1178,6 @@ bld::Exit_status bld::wait_proc(bld::Proc proc)
   return status;
 }
 
-void print_progress(size_t completed, size_t total)
-{
-    int width = 40;  // progress bar width
-    float progress = float(completed) / total;
-    int pos = int(width * progress);
-
-    std::cout << "[";
-    for (int i = 0; i < width; ++i)
-        if (i < pos)
-            std::cout << "=";
-        else if (i == pos)
-            std::cout << ">";
-        else
-            std::cout << " ";
-    std::cout << "] " << int(progress * 100.0) << "% (" << completed << "/" << total << ")\r";
-    std::cout.flush();
-}
-
 bld::Par_exec_res bld::wait_procs(std::vector<bld::Proc> procs, int sleep_ms)
 {
   bld::Par_exec_res result;
@@ -1193,8 +1214,6 @@ bld::Par_exec_res bld::wait_procs(std::vector<bld::Proc> procs, int sleep_ms)
           result.failed_indices.push_back(i);
 
         bld::cleanup_process(procs[i]);
-
-        print_progress(result.completed, procs.size());
       }
       // If !status.exited, process is still running, continue polling
     }
@@ -2049,7 +2068,7 @@ void bld::rebuild_yourself_onchange_and_run(const std::string &filename, const s
 
   // Set up the compile command
   bld::Command cmd;
-  cmd.parts = {compiler, source_path.string(), "-o", exec_path.string(), "--std=c++2b"};
+  cmd.parts = {compiler, source_path.string(), "-o", exec_path.string(), "--std=c++23"};
 
   // Execute the compile command
   int compile_result = bld::execute(cmd);
@@ -2824,7 +2843,9 @@ bool bld::fs::create_directory(const std::string &path)
 bool bld::fs::create_dir_if_not_exists(const std::string &path)
 {
   if (std::filesystem::exists(path))
+  {
     return true;
+  }
 
   try
   {
@@ -3126,6 +3147,66 @@ std::vector<std::string> bld::fs::get_all_files_with_extensions(const std::strin
   return matching_files;
 }
 
+
+inline bld::fs::Path_type classify(const std::filesystem::directory_entry& e)
+{
+    if (e.is_directory()) return bld::fs::Path_type::Directory;
+    if (e.is_regular_file()) return bld::fs::Path_type::File;
+    if (e.is_symlink()) return bld::fs::Path_type::Symlink;
+    return bld::fs::Path_type::Other;
+}
+
+
+inline bool walk_directory_impl(const std::string &root, bld::fs::Walk_func cb, std::size_t max_depth, void *arg)
+{
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  fs::recursive_directory_iterator it(root, ec), end;
+
+  if (ec)
+    return false;
+
+  while (it != end)
+  {
+    const std::size_t level = it.depth();
+
+    if (level > max_depth)
+    {
+      it.disable_recursion_pending();
+      ++it;
+      continue;
+    }
+
+    bld::fs::Walk_fn_opt opt{
+      .path = it->path(),
+      .type = classify(*it),
+      .level = level,
+      .action = bld::fs::Walk_act::Continue,
+      .args = arg
+    };
+
+    // Callback failure propagates
+    if (!cb(opt))
+      return false;
+
+    // Normal early stop (SUCCESS)
+    if (opt.action == bld::fs::Walk_act::Stop)
+      return true;
+
+    // Skip recursion if requested
+    if (opt.action == bld::fs::Walk_act::Ignore && it->is_directory())
+      it.disable_recursion_pending();
+
+    ++it;
+  }
+
+  return true;  // normal completion
+}
+
+inline bool bld::fs::walk_directory( const std::string& path, bld::fs::Walk_func cb, std::size_t depth) { return walk_directory_impl(path, cb, depth, nullptr); }
+inline bool bld::fs::walk_directory( const std::string& path, bld::fs::Walk_func cb, void* arg) { return walk_directory_impl( path, cb, std::numeric_limits<std::size_t>::max(), arg); }
+inline bool bld::fs::walk_directory( const std::string& path, bld::fs::Walk_func cb, std::size_t depth, void* arg) { return walk_directory_impl(path, cb, depth, arg); }
+
 std::string bld::env::get(const std::string &key)
 {
 #ifdef _WIN32
@@ -3292,21 +3373,31 @@ bool bld::Dep_graph::needs_rebuild(const Node *node)
 {
   if (node->dep.is_phony)
     return true;
+
   if (!std::filesystem::exists(node->dep.target))
-    return !node->dep.dependencies.empty();
+    return true;
 
   auto target_time = std::filesystem::last_write_time(node->dep.target);
-  for (const auto &dep : node->dep.dependencies)
+
+  for (const auto &dep_name : node->dep.dependencies)
   {
-    if (!std::filesystem::exists(dep))
+    auto it = nodes.find(dep_name);
+    if (it != nodes.end())
     {
-      bld::internal_log(bld::Log_type::ERR, "Dependency does not exist: " + dep);
-      return true;  // Missing dependency forces rebuild
+      if (it->second->dep.is_phony)
+        return true;
     }
-    if (std::filesystem::last_write_time(dep) > target_time)
+
+    if (!std::filesystem::exists(dep_name))
+    {
+      bld::internal_log(bld::Log_type::ERR, "Dependency missing: " + dep_name + " for target " + node->dep.target);
+      return true;
+    }
+
+    if (std::filesystem::last_write_time(dep_name) > target_time)
       return true;
   }
-  return false;  // Explicit return when no rebuild needed
+  return false;
 }
 
 bool bld::Dep_graph::build(const std::string &target)
@@ -3424,93 +3515,170 @@ bool bld::Dep_graph::detect_cycle(const std::string &target, std::unordered_set<
   return false;
 }
 
-bool bld::Dep_graph::build_parallel(const std::string &target, size_t thread_count)
+struct BuildState
 {
-  if (thread_count > std::thread::hardware_concurrency() - 1)
-    thread_count = std::thread::hardware_concurrency() - 1;
-  if (thread_count == 0)
-    thread_count = 1;
+    int pending_dependencies = 0;
+    std::vector<std::string> parents;
+};
 
-  std::unordered_set<std::string> visited, in_progress;
-  if (detect_cycle(target, visited, in_progress))
+bool bld::Dep_graph::build_parallel(const std::string &root_target, size_t thread_count)
+{
+  // 1. Thread Count Validation
+  size_t hw_conc = std::thread::hardware_concurrency();
+  if (thread_count > hw_conc && hw_conc > 0) thread_count = hw_conc;
+  if (thread_count == 0) thread_count = 1;
+
+  // 2. Cycle Detection (Global check before starting)
+  std::unordered_set<std::string> visited_cycle, in_progress_cycle;
+  if (detect_cycle(root_target, visited_cycle, in_progress_cycle))
   {
-    bld::internal_log(bld::Log_type::ERR, "Circular dependency detected for target: " + target);
+    bld::internal_log(bld::Log_type::ERR, "Circular dependency detected for target: " + root_target);
     return false;
   }
 
-  bld::internal_log(bld::Log_type::INFO, "Building all targets in parallel using " + std::to_string(thread_count) + " threads");
+  bld::internal_log(bld::Log_type::INFO, "Starting parallel build with " + std::to_string(thread_count) + " threads.");
 
-  std::queue<std::string> ready_targets;
-  if (!prepare_build_graph(target, ready_targets))
-    return false;
+  // 3. Build Topology (Subgraph Analysis)
+  // We create a local map of build states for the relevant subgraph.
+  // This avoids processing the entire graph if we only want to build a specific target.
+  std::unordered_map<std::string, BuildState> build_map;
+  std::vector<std::string> topological_queue_init;
+  
+  // Helper to populate build_map using DFS
+  std::function<void(const std::string&)> prepare_topology = 
+    [&](const std::string& current) {
+      if (build_map.find(current) != build_map.end()) return; // Already visited
+      
+      // Ensure node exists in graph (if it's a source file, we ignore it in the map)
+      auto it = nodes.find(current);
+      if (it == nodes.end()) return; 
 
-  std::mutex queue_mutex, log_mutex;
+      // Initialize entry
+      build_map[current]; 
+
+      for (const auto& dep : it->second->dependencies) {
+        // Recurse first to build the graph bottom-up
+        prepare_topology(dep);
+
+        // If the dependency is also a managed Node (not just a source file)
+        if (nodes.count(dep)) {
+            build_map[current].pending_dependencies++;
+            build_map[dep].parents.push_back(current);
+        }
+      }
+  };
+
+  prepare_topology(root_target);
+
+  // 4. Initialize Ready Queue
+  // Add all nodes with 0 pending dependencies (leaves in the dependency tree)
+  std::queue<std::string> ready_queue;
+  for (auto& [name, state] : build_map) {
+      if (state.pending_dependencies == 0) {
+          ready_queue.push(name);
+      }
+  }
+
+  // 5. Worker Synchronization Primitives
+  std::mutex queue_mutex;
   std::condition_variable cv;
   std::atomic<bool> build_failed{false};
-  std::atomic<size_t> active_builds{0};
-  std::atomic<size_t> completed_targets{0};
-  const size_t total_targets = nodes.size();
+  std::atomic<int> active_workers{0};
+  
+  // Total tasks to track completion
+  size_t total_tasks_remaining = build_map.size();
 
-  auto worker = [&]()
-  {
-    while (!build_failed)
-    {
+  // 6. The Worker Function
+  auto worker = [&]() {
+    while (true) {
       std::string current_target;
+      
       {
         std::unique_lock<std::mutex> lock(queue_mutex);
-        if (ready_targets.empty() && completed_targets < total_targets)
-        {
-          cv.wait_for(lock, std::chrono::milliseconds(100),
-                      [&]() { return !ready_targets.empty() || build_failed || completed_targets == total_targets; });
-        }
+        
+        // Wait until there is work, or failure, or all tasks are done
+        cv.wait(lock, [&] {
+             return !ready_queue.empty() || build_failed || (active_workers == 0 && total_tasks_remaining == 0);
+        });
 
-        if (ready_targets.empty() || build_failed)
-          return;
+        if (build_failed) return;
+        
+        // If queue is empty here, it means we woke up because everything is done
+        if (ready_queue.empty()) return;
 
-        current_target = ready_targets.front();
-        ready_targets.pop();
-        nodes[current_target]->in_progress = true;
-        active_builds++;
+        current_target = ready_queue.front();
+        ready_queue.pop();
+        active_workers++;
       }
 
-      auto node = nodes[current_target].get();
-      if (needs_rebuild(node))
-      {
-        if (!node->dep.is_phony && !node->dep.command.is_empty())
-        {
-          {
-            std::lock_guard<std::mutex> log_lock(log_mutex);
-            bld::internal_log(bld::Log_type::INFO, "Building target: " + current_target);
-          }
+      // Processing Step
+      Node* node = nodes[current_target].get();
+      bool success = true;
 
-          if (execute(node->dep.command) <= 0)
-          {
-            {
-              std::lock_guard<std::mutex> log_lock(log_mutex);
-              bld::internal_log(bld::Log_type::ERR, "Failed to build target: " + current_target);
-            }
+      try {
+          // Double-check rebuild logic now that dependencies are guaranteed ready
+          if (needs_rebuild(node)) {
+             if (node->dep.is_phony) {
+                 bld::internal_log(bld::Log_type::INFO, "Processing phony target: " + current_target);
+             } else if (!node->dep.command.is_empty()) {
+                 {
+                    // Minimal lock for logging to prevent garbled output
+                    // (Assuming internal_log isn't thread-safe, otherwise remove lock)
+                     bld::internal_log(bld::Log_type::INFO, "Building: " + current_target);
+                 }
+                 
+                 if (execute(node->dep.command) <= 0) {
+                     bld::internal_log(bld::Log_type::ERR, "Build failed for: " + current_target);
+                     success = false;
+                 }
+             }
+          } else {
+             // Optional: Log up-to-date
+             // bld::internal_log(bld::Log_type::INFO, "Up-to-date: " + current_target);
+          }
+      } catch (const std::exception& e) {
+          bld::internal_log(bld::Log_type::ERR, "Exception building " + current_target + ": " + e.what());
+          success = false;
+      }
+
+      // Completion Handling
+      {
+        std::unique_lock<std::mutex> lock(queue_mutex);
+        active_workers--;
+        
+        if (!success) {
             build_failed = true;
-            cv.notify_all();
+            cv.notify_all(); // Wake everyone to exit
             return;
-          }
         }
-      }
-      else
-      {
-        process_completed_target(current_target, ready_targets, queue_mutex, cv);
-        completed_targets++;
-        active_builds--;
+
+        total_tasks_remaining--;
+
+        // Notify parents (Dependents)
+        // Since we are using a local map, we don't need to scan 'nodes'
+        auto& state = build_map[current_target];
+        for (const auto& parent_name : state.parents) {
+            build_map[parent_name].pending_dependencies--;
+            if (build_map[parent_name].pending_dependencies == 0) {
+                ready_queue.push(parent_name);
+            }
+        }
+        
+        // Notify other threads that new work might be available or we are done
         cv.notify_all();
       }
     }
   };
 
-  std::vector<std::thread> workers;
-  for (size_t i = 0; i < thread_count; ++i) workers.emplace_back(worker);
+  // 7. Spawn and Join
+  std::vector<std::thread> threads;
+  for (size_t i = 0; i < thread_count; ++i) {
+      threads.emplace_back(worker);
+  }
 
-  for (auto &t : workers)
-    if (t.joinable())
-      t.join();
+  for (auto& t : threads) {
+      if (t.joinable()) t.join();
+  }
 
   return !build_failed;
 }
@@ -3582,6 +3750,7 @@ void bld::Dep_graph::process_completed_target(const std::string &target, std::qu
 bool bld::Dep_graph::build_all_parallel(size_t thread_count)
 {
   std::vector<std::string> root_targets;
+  // Identify nodes that are not dependencies of any other node
   for (const auto &node : nodes)
   {
     bool is_dependency = false;
@@ -3598,12 +3767,19 @@ bool bld::Dep_graph::build_all_parallel(size_t thread_count)
       root_targets.push_back(node.first);
   }
 
-  // Create a master phony target that depends on all root targets
-  add_phony("__master_target__", root_targets);
-  bool result = build_parallel("__master_target__", thread_count);
+  if (root_targets.empty() && !nodes.empty()) {
+      // Edge case: Disconnected cycles or weird graph, pick arbitrary or fail
+      // For now, let's just pick the first one to try and unblock
+      root_targets.push_back(nodes.begin()->first);
+  }
 
-  // Clean up the master target
-  nodes.erase("__master_target__");
+  // Create a temporary master phony target
+  std::string master = "__master_parallel_root__";
+  add_phony(master, root_targets);
+  
+  bool result = build_parallel(master, thread_count);
+
+  nodes.erase(master);
   return result;
 }
 
@@ -3829,6 +4005,164 @@ std::string bld::str::replace_all(const std::string &str, const std::string &fro
   }
 
   return result;
+}
+
+std::string read_clean_source(const std::filesystem::path &path)
+{
+  std::ifstream file(path);
+  if (!file)
+    return "";
+
+  std::string src((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+  std::string clean;
+  clean.reserve(src.size());
+
+  bool in_block = false;
+  bool in_line = false;
+  bool in_str = false;
+
+  for (size_t i = 0; i < src.size(); ++i)
+  {
+    if (in_block)
+    {
+      if (src[i] == '*' && i + 1 < src.size() && src[i + 1] == '/')
+      {
+        in_block = false;
+        i++;
+        clean += ' ';
+      }
+    }
+    else if (in_line)
+    {
+      if (src[i] == '\n')
+      {
+        in_line = false;
+        clean += '\n';
+      }
+    }
+    else if (in_str)
+    {
+      clean += src[i];
+      if (src[i] == '"' && src[i - 1] != '\\')
+        in_str = false;
+    }
+    else if (src[i] == '/' && i + 1 < src.size() && src[i + 1] == '*')
+    {
+      in_block = true;
+      i++;
+      clean += ' ';
+    }
+    else if (src[i] == '/' && i + 1 < src.size() && src[i + 1] == '/')
+    {
+      in_line = true;
+      i++;
+    }
+    else if (src[i] == '"')
+    {
+      in_str = true;
+      clean += '"';
+    }
+    else
+  {
+      clean += src[i];
+    }
+  }
+  return clean;
+}
+
+std::vector<bld::fs::Cpp_module> bld::fs::scan_modules(const std::string& path) {
+  std::vector<bld::fs::Cpp_module> modules;
+
+  bld::fs::walk_directory(path, [&](bld::fs::Walk_fn_opt &opt) -> bool {
+    if (!std::filesystem::is_regular_file(opt.path) || opt.path.extension() != ".cppm")
+      return true;
+
+    std::string content = read_clean_source(opt.path);
+    if (content.empty())
+      return true;
+
+    // Tokenize
+    std::vector<std::string> tokens;
+    std::string token;
+    for (char c : content)
+    {
+      if (std::isspace(c) || c == ';')
+      {
+        if (!token.empty())
+        {
+          tokens.push_back(token);
+          token.clear();
+        }
+        if (c == ';')
+          tokens.push_back(";");
+      }
+      else
+      {
+        token += c;
+      }
+    }
+
+    bld::fs::Cpp_module mod;
+    mod.file = opt.path;
+    bool found_name = false;
+    std::string primary_name;
+    std::unordered_set<std::string> seen_imports;
+
+    for (size_t i = 0; i < tokens.size(); ++i)
+    {
+      if (tokens[i] == "export" && i + 2 < tokens.size() && tokens[i + 1] == "module")
+      {
+        mod.name = tokens[i + 2];
+        found_name = true;
+        // Get primary name from partition (rio:part -> rio)
+        size_t colon = mod.name.find(':');
+        primary_name = (colon != std::string::npos) ? mod.name.substr(0, colon) : mod.name;
+      }
+      // Handle: import name; OR export import name;
+      else if (tokens[i] == "import")
+      {
+        // Skip if this is part of "export import"
+        if (i > 0 && tokens[i - 1] == "export")
+          continue;
+
+        if (i + 1 < tokens.size())
+        {
+          std::string dep = tokens[i + 1];
+          // Skip std and empty
+          if (!bld::str::starts_with(dep, "std") && dep != ";" && !dep.empty())
+          {
+            if (bld::str::starts_with(dep, ":") && !primary_name.empty())
+              dep = primary_name + dep;
+
+            // Only add if not seen before
+            if (seen_imports.insert(dep).second)
+              mod.imports.push_back(dep);
+          }
+        }
+      }
+      else if (tokens[i] == "export" && i + 2 < tokens.size() && tokens[i + 1] == "import")
+      {
+        std::string dep = tokens[i + 2];
+        // Skip std and empty
+        if (!bld::str::starts_with(dep, "std") && dep != ";" && !dep.empty())
+        {
+          if (bld::str::starts_with(dep, ":") && !primary_name.empty())
+            dep = primary_name + dep;
+
+          // Only add if not seen before
+          if (seen_imports.insert(dep).second)
+            mod.imports.push_back(dep);
+        }
+      }
+    }
+
+    if (found_name)
+      modules.push_back(std::move(mod));
+    else
+      bld::internal_log(bld::Log_type::WARNING, "Skipped file (no module decl found): " + opt.path.string());
+    return true;
+  });
+  return modules;
 }
 
 #endif  // B_LDR_IMPLEMENTATION

@@ -14,8 +14,8 @@ namespace phos::ast
 
 struct Source_location
 {
-    size_t line = 0;
-    size_t column = 0;
+    size_t l = 0;
+    size_t c = 0;
 };
 
 struct Function_param

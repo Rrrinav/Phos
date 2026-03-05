@@ -4,14 +4,16 @@
 #include <vector>
 #include "opcodes.hpp"
 #include "../value/value.hpp"
+#include "../parser/ast.hpp"
 
 namespace phos::vm {
+
 
 struct Chunk
 {
     std::vector<uint8_t> code{};
     std::vector<Value> constants{};
-    std::vector<size_t> lines{};
+    std::vector<phos::ast::Source_location> locs{};
 
     Chunk() = default;
 
@@ -21,13 +23,16 @@ struct Chunk
     Chunk &operator=(const Chunk &other) = default;
     Chunk &operator=(Chunk &&other) noexcept = default;
 
-    void write(uint8_t byte, size_t line)
+    void write(uint8_t byte, phos::ast::Source_location loc)
     {
         code.push_back(byte);
-        lines.push_back(line);
+        locs.push_back(loc);
     }
 
-    void write(Op_code op, size_t line) { write(static_cast<uint8_t>(op), line); }
+    void write(Op_code op, phos::ast::Source_location loc)
+    {
+        write(static_cast<uint8_t>(op), loc);
+    }
 
     size_t add_constant(Value value)
     {

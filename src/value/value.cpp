@@ -20,10 +20,8 @@ bool operator==(const Value &lhs, const Value &rhs)
         {
             return true;  // nil == nil, void == void
         }
-        else if constexpr (std::is_same_v<T, mem::rc_ptr<Model_value>>||
-                           std::is_same_v<T, mem::rc_ptr<Function_value>> ||
-                           std::is_same_v<T, mem::rc_ptr<Closure_value>> ||
-                           std::is_same_v<T, mem::rc_ptr<Array_value>> ||
+        else if constexpr (std::is_same_v<T, mem::rc_ptr<Model_value>> || std::is_same_v<T, mem::rc_ptr<Function_value>> ||
+                           std::is_same_v<T, mem::rc_ptr<Closure_value>> || std::is_same_v<T, mem::rc_ptr<Array_value>> ||
                            std::is_same_v<T, mem::rc_ptr<Native_function_value>>)
         {
             if (!l_val || !r_val)
@@ -37,6 +35,7 @@ bool operator==(const Value &lhs, const Value &rhs)
     },
     lhs);
 }
+
 std::string value_to_string_impl(const Value &value, int indent_level)
 {
     // --- Primitives ---
@@ -206,30 +205,34 @@ std::string value_to_string(const Value &value) { return value_to_string_impl(va
 
 std::string get_value_type_string(const Value &value)
 {
-    return std::visit(
-        [](const auto &v) -> std::string {
-            using T = std::decay_t<decltype(v)>;
-            if constexpr (std::is_same_v<T, int64_t>) return "i64";
-            else if constexpr (std::is_same_v<T, double>) return "f64";
-            else if constexpr (std::is_same_v<T, bool>) return "bool";
-            else if constexpr (std::is_same_v<T, std::string>) return "string";
-            else if constexpr (std::is_same_v<T, mem::rc_ptr<Model_value>>)
-                return types::type_to_string(types::Type(phos::mem::make_rc<types::Model_type>(v->signature)));
-            else if constexpr (std::is_same_v<T, mem::rc_ptr<Function_value>>)
-                return types::type_to_string(types::Type(mem::make_rc<types::Function_type>(v->signature)));
-            else if constexpr (std::is_same_v<T, mem::rc_ptr<Closure_value>>)
-                return types::type_to_string(types::Type(mem::make_rc<types::Closure_type>(v->function->signature)));
-            else if constexpr (std::is_same_v<T, mem::rc_ptr<Array_value>>)
-                return types::type_to_string(v->type);
-            else if constexpr (std::is_same_v<T, mem::rc_ptr<Native_function_value>>)
-                return "native_fn<" + v->name + ">";
-            else if constexpr (std::is_same_v<T, mem::rc_ptr<Union_value>>)
-                return v->tag;
-            else if constexpr (std::is_same_v<T, std::nullptr_t>) return "nil";
-            else if constexpr (std::is_same_v<T, std::monostate>) return "void";
-            else return "unknown";
-        },
-        value);
+    return std::visit([](const auto &v) -> std::string {
+        using T = std::decay_t<decltype(v)>;
+        if constexpr (std::is_same_v<T, int64_t>)
+            return "i64";
+        else if constexpr (std::is_same_v<T, double>)
+            return "f64";
+        else if constexpr (std::is_same_v<T, bool>)
+            return "bool";
+        else if constexpr (std::is_same_v<T, std::string>)
+            return "string";
+        else if constexpr (std::is_same_v<T, mem::rc_ptr<Model_value>>)
+            return types::type_to_string(types::Type(phos::mem::make_rc<types::Model_type>(v->signature)));
+        else if constexpr (std::is_same_v<T, mem::rc_ptr<Function_value>>)
+            return types::type_to_string(types::Type(mem::make_rc<types::Function_type>(v->signature)));
+        else if constexpr (std::is_same_v<T, mem::rc_ptr<Closure_value>>)
+            return types::type_to_string(types::Type(mem::make_rc<types::Closure_type>(v->function->signature)));
+        else if constexpr (std::is_same_v<T, mem::rc_ptr<Array_value>>)
+            return types::type_to_string(v->type);
+        else if constexpr (std::is_same_v<T, mem::rc_ptr<Native_function_value>>)
+            return "native_fn<" + v->name + ">";
+        else if constexpr (std::is_same_v<T, mem::rc_ptr<Union_value>>)
+            return v->tag;
+        else if constexpr (std::is_same_v<T, std::nullptr_t>)
+            return "nil";
+        else if constexpr (std::is_same_v<T, std::monostate>)
+            return "void";
+        else
+            return "unknown";
+    }, value);
 }
-
-}  // namespace phos
+} // namespace phos

@@ -76,7 +76,7 @@ public:
 
     void type_error(const ast::Source_location &loc, const std::string &message)
     {
-        errors.push_back({message, this->phase, loc.line, loc.column});
+        errors.push_back({message, this->phase, loc.l, loc.c});
     }
 
     std::vector<err::msg> check(std::vector<ast::Stmt*> &statements);

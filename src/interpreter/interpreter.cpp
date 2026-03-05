@@ -336,15 +336,15 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Array_access_expr & expr)
         return index_res;
 
     if (!is_array(array_res.value()))
-        return std::unexpected(err::msg("Can only use subscript '[]' on arrays.", "interpreter", expr.loc.line, expr.loc.column));
+        return std::unexpected(err::msg("Can only use subscript '[]' on arrays.", "interpreter", expr.loc.l, expr.loc.c));
     if (!is_int(index_res.value()))
-        return std::unexpected(err::msg("Array index must be an integer.", "interpreter", expr.loc.line, expr.loc.column));
+        return std::unexpected(err::msg("Array index must be an integer.", "interpreter", expr.loc.l, expr.loc.c));
 
     auto array_val = get_array(array_res.value());
     auto index = get_int(index_res.value());
 
     if (index < 0 || static_cast<size_t>(index) >= array_val->elements.size())
-        return std::unexpected(err::msg("Array index out of bounds.", "interpreter", expr.loc.line, expr.loc.column));
+        return std::unexpected(err::msg("Array index out of bounds.", "interpreter", expr.loc.l, expr.loc.c));
 
     return array_val->elements.at(index);
 }
@@ -357,15 +357,15 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Array_assignment_expr & e
 
     if (!is_array(array_res))
         return std::unexpected(
-            err::msg("Can only use subscript '[]' on arrays for assignment.", "interpreter", expr.loc.line, expr.loc.column));
+            err::msg("Can only use subscript '[]' on arrays for assignment.", "interpreter", expr.loc.l, expr.loc.c));
     if (!is_int(index_res))
-        return std::unexpected(err::msg("Array index must be an integer.", "interpreter", expr.loc.line, expr.loc.column));
+        return std::unexpected(err::msg("Array index must be an integer.", "interpreter", expr.loc.l, expr.loc.c));
 
     auto array_val = get_array(array_res);
     auto index = get_int(index_res);
 
     if (index < 0 || static_cast<size_t>(index) >= array_val->elements.size())
-        return std::unexpected(err::msg("Array index out of bounds.", "interpreter", expr.loc.line, expr.loc.column));
+        return std::unexpected(err::msg("Array index out of bounds.", "interpreter", expr.loc.l, expr.loc.c));
 
     array_val->elements[index] = value_res;
     return value_res;
@@ -408,12 +408,12 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Binary_expr& expr)
         case lex::TokenType::LogicalOr:
             res = Value(is_truthy(left) || is_truthy(right)); break;
         default:
-            return std::unexpected(err::msg("Unknown binary operator " + util::operator_token_to_string(expr.op), "interpreter", expr.loc.line, expr.loc.column));
+            return std::unexpected(err::msg("Unknown binary operator " + util::operator_token_to_string(expr.op), "interpreter", expr.loc.l, expr.loc.c));
     }
     if (!res.has_value())
     {
-        res.error().line = expr.loc.line;
-        res.error().column = expr.loc.column;
+        res.error().line = expr.loc.l;
+        res.error().column = expr.loc.c;
     }
     return res;
 }
@@ -498,11 +498,11 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Field_access_expr& expr)
             {
                 return *union_val->value;
             }
-            return std::unexpected(err::msg("Variant '" + expr.field_name + "' has no associated value to access.", "interpreter", expr.loc.line, expr.loc.column));
+            return std::unexpected(err::msg("Variant '" + expr.field_name + "' has no associated value to access.", "interpreter", expr.loc.l, expr.loc.c));
         }
         else
         {
-            return std::unexpected(err::msg("Runtime Panic: Attempted to access variant '" + expr.field_name + "' but union holds variant '" + union_val->tag + "'.", "interpreter", expr.loc.line, expr.loc.column));
+            return std::unexpected(err::msg("Runtime Panic: Attempted to access variant '" + expr.field_name + "' but union holds variant '" + union_val->tag + "'.", "interpreter", expr.loc.l, expr.loc.c));
         }
     }
 
@@ -513,7 +513,7 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Field_access_expr& expr)
             return model_val->fields.at(expr.field_name);
     }
 
-    return std::unexpected(err::msg("Field '" + expr.field_name + "' not found or object is not a model instance.", "interpreter", expr.loc.line, expr.loc.column));
+    return std::unexpected(err::msg("Field '" + expr.field_name + "' not found or object is not a model instance.", "interpreter", expr.loc.l, expr.loc.c));
 }
 
 Result<Value> Interpreter::evaluate_visitor(const ast::Field_assignment_expr& expr)
@@ -521,7 +521,7 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Field_assignment_expr& ex
     auto object_result = __Try(evaluate(*expr.object));
     if (!is_model(object_result))
         return std::unexpected(
-            err::msg("Can only assign to fields of a model instance.", "interpreter", expr.loc.line, expr.loc.column));
+            err::msg("Can only assign to fields of a model instance.", "interpreter", expr.loc.l, expr.loc.c));
     auto value_res = __Try(evaluate(*expr.value));
     get_model(object_result)->fields[expr.field_name] = value_res;
     return value_res;
@@ -547,7 +547,7 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Unary_expr& expr)
         case lex::TokenType::LogicalNot:
             return Value(!is_truthy(right_result));
         default:
-            return std::unexpected(err::msg("Unknown unary operator.", "interpreter", expr.loc.line, expr.loc.column));
+            return std::unexpected(err::msg("Unknown unary operator.", "interpreter", expr.loc.l, expr.loc.c));
     }
 }
 
@@ -564,7 +564,7 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Method_call_expr& expr)
         {
             if (expr.arguments.size() != 1)
             {
-                return std::unexpected(err::msg(".has() expects exactly one argument.", "interpreter", expr.loc.line, expr.loc.column));
+                return std::unexpected(err::msg(".has() expects exactly one argument.", "interpreter", expr.loc.l, expr.loc.c));
             }
             // IMPORTANT: We do not evaluate the argument. We inspect the AST node directly.
             auto* arg_expr = expr.arguments[0];
@@ -578,11 +578,11 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Method_call_expr& expr)
                     }
                 }
             }
-            return std::unexpected(err::msg("Invalid argument to .has(). Expected a variant name (e.g. MyUnion::Variant).", "interpreter", ast::get_loc(arg_expr->node).line, ast::get_loc(arg_expr->node).column));
+            return std::unexpected(err::msg("Invalid argument to .has(). Expected a variant name (e.g. MyUnion::Variant).", "interpreter", ast::get_loc(arg_expr->node).l, ast::get_loc(arg_expr->node).c));
         }
         else 
         {
-            return std::unexpected(err::msg("Union types only support the '.has()' method.", "interpreter", expr.loc.line, expr.loc.column));
+            return std::unexpected(err::msg("Union types only support the '.has()' method.", "interpreter", expr.loc.l, expr.loc.c));
         }
     }
 
@@ -598,13 +598,13 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Method_call_expr& expr)
     {
         if (!is_closure(arguments[0]))
         {
-            return std::unexpected(err::msg("map() expects a closure as its argument.", "interpreter", expr.loc.line, expr.loc.column));
+            return std::unexpected(err::msg("map() expects a closure as its argument.", "interpreter", expr.loc.l, expr.loc.c));
         }
         if (is_array(object))
             return this->map_array(object, arguments[0]);
         if (is_optional(ast::get_type(expr.object->node)))
             return this->map_optional(object, arguments[0]);
-        return std::unexpected(err::msg(".map() is not supported for this type.", "interpreter", expr.loc.line, expr.loc.column));
+        return std::unexpected(err::msg(".map() is not supported for this type.", "interpreter", expr.loc.l, expr.loc.c));
     }
     if (is_optional(ast::get_type(expr.object->node)))
     {
@@ -646,14 +646,14 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Method_call_expr& expr)
         }
     }
     return std::unexpected(err::msg("No method named '" + expr.method_name + "' found for this type.", "interpreter",
-                                      expr.loc.line, expr.loc.column));
+                                      expr.loc.l, expr.loc.c));
 }
 
 Result<Value> Interpreter::evaluate_visitor(const ast::Model_literal_expr& expr)
 {
     // FIX #1: Access model_name as a direct string, not an optional
     if (!model_data.count(expr.model_name))
-        return std::unexpected( err::msg("Model type '" + expr.model_name + "' is not defined.", "interpreter", expr.loc.line, expr.loc.column));
+        return std::unexpected( err::msg("Model type '" + expr.model_name + "' is not defined.", "interpreter", expr.loc.l, expr.loc.c));
 
     auto model_type = model_data.at(expr.model_name).signature;
     auto instance = mem::make_rc<Model_value>(*model_type, std::unordered_map<std::string, Value>{});
@@ -675,7 +675,7 @@ Result<Value> Interpreter::evaluate_visitor(const ast::Assignment_expr& expr)
 
 Result<Value> Interpreter::evaluate_visitor(const ast::Static_path_expr& expr)
 {
-    return std::unexpected(err::msg("Cannot evaluate a static path directly. It can only be used as part of a call or method argument.", "interpreter", expr.loc.line, expr.loc.column));
+    return std::unexpected(err::msg("Cannot evaluate a static path directly. It can only be used as part of a call or method argument.", "interpreter", expr.loc.l, expr.loc.c));
 }
 
 // ========================================================================
@@ -787,7 +787,7 @@ Result<Value> Interpreter::call(const Value &callee, const std::vector<Value> &a
         auto func = get_function(callee);
         if (functions.count(func->name))
             return call_function(func->name, arguments, loc);
-        return std::unexpected(err::msg("Callable is not a known function.", "interpreter", loc.line, loc.column));
+        return std::unexpected(err::msg("Callable is not a known function.", "interpreter", loc.l, loc.c));
     }
     else if (is_closure(callee))
     {
@@ -801,18 +801,18 @@ Result<Value> Interpreter::call(const Value &callee, const std::vector<Value> &a
             return std::unexpected(
             err::msg(std::format("'{}' expected {} arguments but got {}", native_fn->name, native_fn->arity, arguments.size()),
                      "interpreter",
-                     loc.line,
-                     loc.column));
+                     loc.l,
+                     loc.c));
         }
         return native_fn->code(arguments);
     }
 
-    return std::unexpected(err::msg("Expression is not a function and cannot be called.", "interpreter", loc.line, loc.column));
+    return std::unexpected(err::msg("Expression is not a function and cannot be called.", "interpreter", loc.l, loc.c));
 }
 Result<Value> Interpreter::call_function(const std::string &name, const std::vector<Value> &arguments, const ast::Source_location &loc)
 {
     if (!functions.contains(name))
-        return std::unexpected(err::msg("Undefined function '" + name + "'.", "interpreter", loc.line, loc.column));
+        return std::unexpected(err::msg("Undefined function '" + name + "'.", "interpreter", loc.l, loc.c));
 
     const auto &func_data = functions.at(name);
     auto new_env = mem::make_rc<Environment>(func_data.definition_environment);
@@ -829,7 +829,7 @@ Result<Value> Interpreter::call_function(const std::string &name, const std::vec
 Result<Value> Interpreter::call_closure(size_t id, const std::vector<Value> &arguments, const ast::Source_location &loc)
 {
     if (!closures.contains(id))
-        return std::unexpected(err::msg("Invalid or stale closure.", "interpreter", loc.line, loc.column));
+        return std::unexpected(err::msg("Invalid or stale closure.", "interpreter", loc.l, loc.c));
 
     const auto &closure_data = closures.at(id);
     auto new_env = mem::make_rc<Environment>(closure_data.captured_environment);
@@ -846,7 +846,7 @@ Result<Value> Interpreter::call_closure(size_t id, const std::vector<Value> &arg
 Result<Value> Interpreter::call_static_method(const std::string& model_name, const std::string& method_name, const std::vector<Value>& arguments, const ast::Source_location& loc)
 {
     if (!model_data.contains(model_name) || !model_data.at(model_name).static_methods.count(method_name))
-        return std::unexpected(err::msg("Undefined static method '" + method_name + "' for model '" + model_name + "'.", "interpreter", loc.line, loc.column));
+        return std::unexpected(err::msg("Undefined static method '" + method_name + "' for model '" + model_name + "'.", "interpreter", loc.l, loc.c));
 
     const auto& method_data = model_data.at(model_name).static_methods.at(method_name);
     auto new_env = mem::make_rc<Environment>(method_data.definition_environment);

@@ -1,13 +1,11 @@
 #include "./virtual_machine.hpp"
+#include "../utility/binary_ops.hpp"
 #include <print>
 
 namespace phos::vm
 {
 
-void Virtual_machine::push(Value value)
-{
-    stack.push_back(std::move(value));
-}
+void Virtual_machine::push(Value value) { stack.push_back(std::move(value)); }
 
 Value Virtual_machine::pop()
 {
@@ -16,91 +14,87 @@ Value Virtual_machine::pop()
     return val;
 }
 
-Interpret_result Virtual_machine::interpret(Chunk *target_chunk)
+ast::Source_location Virtual_machine::get_loc()
+{
+    size_t offset = (ip - chunk->code.data()) - 1;
+    return chunk->locs[offset];
+}
+
+Result<void> Virtual_machine::interpret(Chunk *target_chunk)
 {
     chunk = target_chunk;
     ip = chunk->code.data();
     return run();
 }
 
-Interpret_result Virtual_machine::run()
+Result<void> Virtual_machine::execute_binary_op(Binary_op_func op)
 {
+    Value r = pop();
+    Value l = pop();
 
-#define READ_BYTE() (*ip++)
-#define READ_CONSTANT() (chunk->constants[READ_BYTE()])
+    auto res = op(l, r, get_loc());
+    if (!res)
+        return std::unexpected(res.error());
 
+    push(res.value());
+    return {};
+}
+
+Result<void> Virtual_machine::run()
+{
     for (;;)
     {
-        uint8_t instruction = READ_BYTE();
-        switch (static_cast<Op_code>(instruction))
-        {
-            case Op_code::Constant:
-            {
-                Value constant = READ_CONSTANT();
-                push(constant);
+        uint8_t instruction = *ip++;
+
+        switch (static_cast<Op_code>(instruction)) {
+
+            case Op_code::Constant: {
+                uint8_t index = *ip++;
+                push(chunk->constants[index]);
                 break;
-            }
-
-            case Op_code::Add:
-            {
-                Value b = pop();
-                Value a = pop();
-
-                if (is_int(a) && is_int(b))
-                {
-                    push(Value(get_int(a) + get_int(b)));
-                }
-                else if (is_float(a) && is_float(b))
-                {
-                    push(Value(get_float(a) + get_float(b)));
-                }
-                else
-                {
-                    return Interpret_result::Runtime_error;
-                }
-                break;
-            }
-
-            case Op_code::Multiply: {
-                auto a = pop(), b = pop();
-                if (is_int(a) && is_int(b))
-                {
-                    push(Value(get_int(a) + get_int(b)));
-                }
-                else if (is_float(a) && is_float(b))
-                {
-                    push(Value(get_float(a) + get_float(b)));
-                }
-                else
-                {
-                    this->err = "Not int or float, cant Multiply";
-                    return Interpret_result::Runtime_error;
-                }
             } break;
 
-            case Op_code::Print:
-            {
-                std::println("{}", value_to_string(pop()));
+            case Op_code::Add: {
+                if (auto err = execute_binary_op(phos::util::add_op); !err)
+                    return err;
+                break;
+            } break;
+            case Op_code::Subtract: {
+                if (auto err = execute_binary_op(phos::util::subtract_op); !err)
+                    return err;
+                break;
+            } break;
+            case Op_code::Multiply: {
+                if (auto err = execute_binary_op(phos::util::multiply_op); !err)
+                    return err;
+                break;
+            } break;
+            case Op_code::Divide: {
+                if (auto err = execute_binary_op(phos::util::divide_op); !err)
+                    return err;
+                break;
+            } break;
+
+            case Op_code::Pop: {
+                pop();
                 break;
             }
 
+            case Op_code::Print: {
+                std::println("{}", value_to_string(pop()));
+                break;
+            } break;
+
             case Op_code::Return:
-            {
-                return Interpret_result::Ok;
-            }
+            case Op_code::Halt: {
+                return {};
+            } break;
 
-            case Op_code::Halt:
-            {
-                return Interpret_result::Ok;
+            default: {
+                return std::unexpected(err::msg(std::format("Unknown opcode {}", instruction), "vm", 0, 0));
             }
-
-            default:
-                return Interpret_result::Runtime_error;
         }
     }
-
-#undef READ_BYTE
-#undef READ_CONSTANT
 }
 
 }  // namespace phos::vm

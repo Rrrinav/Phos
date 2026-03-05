@@ -16,10 +16,10 @@ size_t Chunk::disassemble_instruction(std::ostream &out, size_t offset)
 {
     out << std::format("{:04} ", offset);
 
-    if (offset > 0 && lines[offset] == lines[offset - 1])
+    if (offset > 0 && locs[offset].l == locs[offset - 1].l)
         out << "   | ";
     else
-        out << std::format("{:4} ", lines[offset]);
+        out << std::format("{:4} ", locs[offset].l);
 
     uint8_t instruction = code[offset];
     auto op = static_cast<Op_code>(instruction);
