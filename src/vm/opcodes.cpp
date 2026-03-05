@@ -30,6 +30,12 @@ std::string op_code_to_string(Op_code code)
         case Op_code::Divide:         return "Divide";
         case Op_code::Modulo:         return "Modulo";
         case Op_code::Not:            return "Not";
+        case Op_code::BitAnd:         return "BitAnd";
+        case Op_code::BitOr:          return "BitOr";
+        case Op_code::BitXor:         return "BitXor";
+        case Op_code::BitNot:         return "BitNot";
+        case Op_code::BitLShift:      return "BitLShift";
+        case Op_code::BitRShift:      return "BitRshift";
         case Op_code::Negate:         return "Negate";
         case Op_code::Equal:          return "Equal";
         case Op_code::Not_equal:      return "Not_equal";

@@ -64,4 +64,29 @@ inline Result<Value> divide_op(const Value &l, const Value &r, ast::Source_locat
     return std::unexpected(err::msg("Operands must be numbers for '/'.", "interpreter", loc.l, loc.c));
 }
 
+inline Result<Value> bitwise_or_op(const Value& l, const Value& r, ast::Source_location loc)
+{
+    return Value(get_int(l) | get_int(r));
+}
+
+inline Result<Value> bitwise_xor_op(const Value& l, const Value& r, ast::Source_location loc)
+{
+    return Value(get_int(l) ^ get_int(r));
+}
+
+inline Result<Value> bitwise_and_op(const Value& l, const Value& r, ast::Source_location loc)
+{
+    return Value(get_int(l) & get_int(r));
+}
+
+inline Result<Value> bitwise_lshift_op(const Value& l, const Value& r, ast::Source_location loc)
+{
+    return Value(get_int(l) << get_int(r));
+}
+
+inline Result<Value> bitwise_rshift_op(const Value& l, const Value& r, ast::Source_location loc)
+{
+    return Value(get_int(l) >> get_int(r));
+}
+
 }  // namespace phos::util

@@ -579,9 +579,78 @@ Result<ast::Expr*> Parser::logical_or()
 
 Result<ast::Expr*> Parser::logical_and()
 {
-    auto expr = __Try(equality());
+    auto expr = __Try(bitwise_or());
 
     while (match({lex::TokenType::LogicalAnd}))
+    {
+        lex::Token op = previous();
+        auto right_result = __Try(bitwise_or());
+
+        auto binary_expr = mem::Arena::alloc(this->arena_, ast::Expr {
+            ast::Binary_expr {
+                .left = expr,
+                .op = op.type,
+                .right = right_result,
+                .type = types::Type(types::Primitive_kind::Bool),
+                .loc = {op.line, op.column}
+            }
+        });
+        expr = binary_expr;
+    }
+    return expr;
+}
+
+Result<ast::Expr*> Parser::bitwise_or()
+{
+    auto expr = __Try(bitwise_xor());
+
+    while (match({lex::TokenType::Pipe}))
+    {
+        lex::Token op = previous();
+        auto right_result = __Try(bitwise_xor());
+
+        auto binary_expr = mem::Arena::alloc(this->arena_, ast::Expr {
+            ast::Binary_expr {
+                .left = expr,
+                .op = op.type,
+                .right = right_result,
+                .type = types::Type(types::Primitive_kind::Void),
+                .loc = {op.line, op.column}
+            }
+        });
+        expr = binary_expr;
+    }
+    return expr;
+}
+
+Result<ast::Expr*> Parser::bitwise_xor()
+{
+    auto expr = __Try(bitwise_and());
+
+    while (match({lex::TokenType::BitXor}))
+    {
+        lex::Token op = previous();
+        auto right_result = __Try(bitwise_and());
+
+        auto binary_expr = mem::Arena::alloc(this->arena_, ast::Expr {
+            ast::Binary_expr {
+                .left = expr,
+                .op = op.type,
+                .right = right_result,
+                .type = types::Type(types::Primitive_kind::Void), // Resolved by type checker
+                .loc = {op.line, op.column}
+            }
+        });
+        expr = binary_expr;
+    }
+    return expr;
+}
+
+Result<ast::Expr*> Parser::bitwise_and()
+{
+    auto expr = __Try(equality());
+
+    while (match({lex::TokenType::BitAnd}))
     {
         lex::Token op = previous();
         auto right_result = __Try(equality());
@@ -591,7 +660,7 @@ Result<ast::Expr*> Parser::logical_and()
                 .left = expr,
                 .op = op.type,
                 .right = right_result,
-                .type = types::Type(types::Primitive_kind::Bool),
+                .type = types::Type(types::Primitive_kind::Void), // Resolved by type checker
                 .loc = {op.line, op.column}
             }
         });
@@ -625,19 +694,42 @@ Result<ast::Expr*> Parser::equality()
 
 Result<ast::Expr*> Parser::comparison()
 {
-    auto expr = __Try(term());
+    auto expr = __Try(bitwise_shift());
 
     while (match({lex::TokenType::Less, lex::TokenType::LessEqual, lex::TokenType::Greater, lex::TokenType::GreaterEqual}))
+    {
+        lex::Token op = previous();
+        auto right = __Try(bitwise_shift());
+
+        auto binary_expr = mem::Arena::alloc(this->arena_, ast::Expr {
+            ast::Binary_expr {
+                .left = expr,
+                .op = op.type,
+                .right = right,
+                .type = types::Type(types::Primitive_kind::Bool),
+                .loc = {op.line, op.column}
+            }
+        });
+        expr = binary_expr;
+    }
+    return expr;
+}
+
+Result<ast::Expr*> Parser::bitwise_shift()
+{
+    auto expr = __Try(term());
+
+    while (match({lex::TokenType::BitLShift, lex::TokenType::BitRshift}))
     {
         lex::Token op = previous();
         auto right = __Try(term());
 
         auto binary_expr = mem::Arena::alloc(this->arena_, ast::Expr {
-            ast::Binary_expr{
+            ast::Binary_expr {
                 .left = expr,
                 .op = op.type,
                 .right = right,
-                .type = types::Type(types::Primitive_kind::Bool),
+                .type = types::Type(types::Primitive_kind::Void), // Resolved by type checker
                 .loc = {op.line, op.column}
             }
         });
@@ -715,16 +807,16 @@ Result<ast::Expr*> Parser::cast()
 
 Result<ast::Expr*> Parser::unary()
 {
-    if (match({lex::TokenType::LogicalNot, lex::TokenType::Minus}))
+    if (match({lex::TokenType::LogicalNot, lex::TokenType::Minus, lex::TokenType::BitNot}))
     {
         lex::Token op = previous();
         auto right = __Try(cast());
 
         return mem::Arena::alloc(this->arena_, ast::Expr {
-            ast::Unary_expr{
+            ast::Unary_expr {
                 .op = op.type,
                 .right = right,
-                .type = types::Type(types::Primitive_kind::Void), // Resolved by type checker
+                .type = types::Type(types::Primitive_kind::Void),
                 .loc = {op.line, op.column}
             }
         });

@@ -142,7 +142,7 @@ private:
                     return Token(TokenType::LogicalAnd, "&&", 0, line, start_col);
                 return Token(TokenType::BitAnd, "&", 0, line, start_col);
 
-            // Logical and Bitwise OR
+            // Logical and Bitwise OR/Pipe
             case '|':
                 if (match('|'))
                     return Token(TokenType::LogicalOr, "||", 0, line, start_col);

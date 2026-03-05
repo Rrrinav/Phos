@@ -771,6 +771,17 @@ Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr, std::o
     };
     switch (expr.op)
     {
+        case lex::TokenType::Pipe:
+        case lex::TokenType::BitXor:
+        case lex::TokenType::BitAnd:
+        case lex::TokenType::BitLShift:
+        case lex::TokenType::BitRshift:
+            if (left_type != types::Type(types::Primitive_kind::Int) || right_type != types::Type(types::Primitive_kind::Int))
+            {
+                report_error("Bitwise operators require 'i64' operands.");
+                return expr.type = types::Primitive_kind::Void;
+            }
+            return expr.type = types::Primitive_kind::Int;
         case lex::TokenType::Plus:
             if (is_string(left_type) && is_string(right_type))
                 return expr.type = types::Primitive_kind::String;
@@ -1335,6 +1346,10 @@ Result<types::Type> Type_checker::check_expr_node(ast::Unary_expr &expr, std::op
             if (!is_boolean(right_type))
                 type_error(expr.loc, "Operand for '!' must be a boolean");
             return expr.type = types::Primitive_kind::Bool;
+        case lex::TokenType::BitNot:
+            if (right_type != types::Type(types::Primitive_kind::Int))
+                type_error(expr.loc, "Operand for '~' must be an integer ('i64')");
+            return expr.type = types::Primitive_kind::Int;
         default:
             type_error(expr.loc, "Unsupported unary operator");
             return expr.type = types::Primitive_kind::Void;

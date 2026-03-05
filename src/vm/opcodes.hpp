@@ -25,6 +25,9 @@ enum class Op_code : uint8_t {
     Add, Subtract, Multiply, Divide, Modulo, Not, Negate, Equal, Not_equal,
     Greater, Greater_equal, Less, Less_equal,
 
+    // --- Bitwise ---
+    BitAnd, BitOr, BitXor, BitNot, BitLShift, BitRShift,
+
     // --- Arrays & Models ---
     Create_array, Get_index, Set_index,
     Get_field, Set_field, Unpack,

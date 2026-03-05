@@ -15,8 +15,9 @@ enum class TokenType : uint8_t
     Fn, Return, Print, PrintErr, Plus, Minus, Star, Slash, Percent, Equal, NotEqual, Static,
     Less, Greater, LessEqual, GreaterEqual, Assign, LogicalAnd, LogicalOr, ColonColon,
     LogicalNot, Arrow, LeftParen, RightParen, LeftBrace, RightBrace, LeftBracket, RightBracket, Semicolon,
-    BitAnd, BitXor, BitNot, BitLShift, BitRshift,
-    Model, Union, Pipe, Dot, Comma, Colon, Question, As, This, Newline, Eof, Invalid
+    BitAnd, BitXor, BitNot, BitLShift, BitRshift, PlusEqual, MinusEqual, StarEqual, SlashEqual,
+    Model, Union, Pipe, Dot, Comma, Colon, Question, As, This, Newline, Eof, Invalid,
+    Integer32, Integer16, Integer8, UInt64, UInt32, UInt16, UInt8
 };
 
 struct Token
@@ -31,19 +32,22 @@ struct Token
 };
 
 static const std::unordered_map<std::string_view, TokenType> token_keywords = {
-    {"let",    TokenType::Let},            {"print_err", TokenType::PrintErr},
-    {"if",     TokenType::If},             {"else",      TokenType::Else},
-    {"while",  TokenType::While},          {"for",       TokenType::For},
-    {"fn",     TokenType::Fn},             {"return",    TokenType::Return},
-    {"print",  TokenType::Print},          {"true",      TokenType::Bool},
-    {"false",  TokenType::Bool},           {"i64",       TokenType::Identifier},
-    {"f64",    TokenType::Identifier},     {"bool",      TokenType::Identifier},
-    {"string", TokenType::Identifier},     {"as",        TokenType::As},
-    {"arr",    TokenType::Array},          {"model",     TokenType::Model},
-    {"this",   TokenType::This},           {"const",     TokenType::Const},
-    {"nil",    TokenType::Nil},            {"union",     TokenType::Union},
-    {"static", TokenType::Static}
+    {"let",    TokenType::Let},                {"print_err", TokenType::PrintErr},
+    {"if",     TokenType::If},                 {"else",      TokenType::Else},
+    {"while",  TokenType::While},              {"for",       TokenType::For},
+    {"fn",     TokenType::Fn},                 {"return",    TokenType::Return},
+    {"print",  TokenType::Print},              {"true",      TokenType::Bool},
+    {"false",  TokenType::Bool},               {"i64",       TokenType::Identifier},
+    {"f64",    TokenType::Identifier},         {"bool",      TokenType::Identifier},
+    {"string", TokenType::Identifier},         {"as",        TokenType::As},
+    {"arr",    TokenType::Array},              {"model",     TokenType::Model},
+    {"this",   TokenType::This},               {"const",     TokenType::Const},
+    {"nil",    TokenType::Nil},                {"union",     TokenType::Union},
+    {"static", TokenType::Static},             {"i32",       TokenType::Identifier},
+    {"i16",    TokenType::Identifier},         {"i8",       TokenType::Identifier},
+    {"u8",     TokenType::Identifier},         {"u16",       TokenType::Identifier}
 };
 
+std::string token_to_string(TokenType t);
 } // namespace lex
 } // namespace phos

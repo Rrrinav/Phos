@@ -27,6 +27,7 @@ private:
     // Expression Visitors
     void visit_literal_expr(const ast::Literal_expr &expr);
     void visit_binary_expr(const ast::Binary_expr &expr);
+    void visit_unary_expr(const ast::Unary_expr &expr);
 
     // Bytecode Emitters
     void emit_byte(uint8_t byte, phos::ast::Source_location loc);

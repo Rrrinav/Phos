@@ -80,6 +80,10 @@ private:
     Result<ast::Expr *> unary();
     Result<ast::Expr *> call();
     Result<ast::Expr *> primary();
+    Result<ast::Expr *> bitwise_or();
+    Result<ast::Expr *> bitwise_xor();
+    Result<ast::Expr *> bitwise_and();
+    Result<ast::Expr *> bitwise_shift();
 
     // --- Specific Expression Parsers ---
     Result<ast::Expr *> parse_closure_expression();

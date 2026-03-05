@@ -1,5 +1,6 @@
 #include "compiler.hpp"
 #include <print>
+#include "opcodes.hpp"
 
 namespace phos::vm
 {
@@ -38,6 +39,8 @@ void Compiler::compile_expr(ast::Expr *expr)
         visit_literal_expr(*node);
     else if (auto *node = std::get_if<ast::Binary_expr>(&expr->node))
         visit_binary_expr(*node);
+    else if (auto *node = std::get_if<ast::Unary_expr>(&expr->node))
+        visit_unary_expr(*node);
     else
         std::println(stderr, "Unimplemented expr node at index: {}", expr->node.index());
 }
@@ -81,8 +84,42 @@ void Compiler::visit_binary_expr(const ast::Binary_expr &expr)
         case lex::TokenType::NotEqual:
             emit_op(Op_code::Not_equal, expr.loc);
             break;
-        default:
+        case lex::TokenType::BitAnd:
+            emit_op(Op_code::BitAnd, expr.loc);
             break;
+        case lex::TokenType::Pipe:
+            emit_op(Op_code::BitOr, expr.loc);
+            break;
+        case lex::TokenType::BitXor:
+            emit_op(Op_code::BitXor, expr.loc);
+            break;
+        case lex::TokenType::BitRshift:
+            emit_op(Op_code::BitRShift, expr.loc);
+            break;
+        case lex::TokenType::BitLShift:
+            emit_op(Op_code::BitLShift, expr.loc);
+            break;
+        default:
+            std::println("Binary op code: {} not supported by compiler.", lex::token_to_string(expr.op));
+            break;
+    }
+}
+
+void Compiler::visit_unary_expr(const ast::Unary_expr &expr)
+{
+    compile_expr(expr.right);
+    switch (expr.op) {
+        case lex::TokenType::LogicalNot: {
+            emit_op(Op_code::Not, expr.loc);
+        } break;
+        case lex::TokenType::BitNot: {
+            emit_op(Op_code::BitNot, expr.loc);
+        } break;
+        case lex::TokenType::Minus: {
+            emit_op(Op_code::Negate, expr.loc);
+        } break;
+        default:
+        break;
     }
 }
 
