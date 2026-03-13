@@ -1,6 +1,8 @@
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <format>
+#include <print>
 #include <vector>
 #include <tuple>
 #include <string>
@@ -366,6 +368,34 @@ std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::str
     return {passed, failed};
 }
 
+auto compile_custom(std::string ip, std::string op = "./new")
+{
+    namespace stdfs = std::filesystem;
+
+    // std::filesystem::equivalent only works if those files exist;
+    bld::fs::write_entire_file(op, "");
+
+    bld::Command cmd;
+    cmd.add_parts("g++", "-o", op, ip, "-Wall", "--std=c++23", "-lm", "-pthread", "-ggdb", "-O0");
+
+    bld::fs::walk_directory(BIN, [ip, op, &cmd] (bld::fs::Walk_fn_opt& opt) -> bool {
+        if (stdfs::is_directory(opt.path)) return true;
+        if (stdfs::equivalent(opt.path, "./bin/main.o")) return true;
+        if (stdfs::equivalent(opt.path, "./bin/phos")) return true;
+        if (stdfs::equivalent(opt.path, "./bin/new")) return true;
+        if (stdfs::equivalent(opt.path, op)) return true;
+        cmd.add_parts(opt.path.string());
+        return true;
+    });
+
+    if (!bld::execute(cmd))
+    {
+        bld::fs::remove(op);
+        return false;
+    }
+    return true;
+}
+
 int main(int argc, char *argv[])
 {
     BLD_REBUILD_AND_ARGS();
@@ -379,7 +409,6 @@ int main(int argc, char *argv[])
 
     bool release = static_cast<bool>(cfg["rel"]);
     bool force = static_cast<bool>(cfg["force"]);
-
     if (cfg["clean"])
     {
         bld::log(bld::Log_type::INFO, "Cleaning " + BIN);
@@ -409,6 +438,18 @@ int main(int argc, char *argv[])
     else
     {
         build_interpreter(release, force);
+    }
+
+    if (cfg["compile"])
+    {
+        std::string file{""};
+        if (cfg["o"])
+            file = std::string(cfg["o"]);
+        else
+            file =  "./bin/new";
+
+        compile_custom(cfg["compile"], file);
+        bld::log(bld::Log_type::INFO, "Build complete -> " + file);
     }
 
     return 0;

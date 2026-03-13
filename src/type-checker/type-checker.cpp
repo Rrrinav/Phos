@@ -35,35 +35,23 @@ void TypeResolver::resolve_type(types::Type &type)
         const std::string &name = (*model_type_ptr)->name;
 
         if (checker.model_signatures.count(name))
-        {
             type = checker.model_signatures.at(name);
-        }
         else if (checker.m_union_signatures.count(name))
-        {
             type = checker.m_union_signatures.at(name);
-        }
         else
-        {
             checker.type_error({}, "Unknown model or union type '" + name + "'.");
-        }
     }
-    else if (auto* union_type_ptr = std::get_if<mem::rc_ptr<types::Union_type>>(&type))
+    else if (auto *union_type_ptr = std::get_if<mem::rc_ptr<types::Union_type>>(&type))
     {
         if ((*union_type_ptr)->name.empty())
             return;
-        const std::string& name = (*union_type_ptr)->name;
+        const std::string &name = (*union_type_ptr)->name;
         if (checker.m_union_signatures.count(name))
-        {
             type = checker.m_union_signatures.at(name);
-        }
         else if (checker.model_signatures.count(name))
-        {
-             type = checker.model_signatures.at(name);
-        }
+            type = checker.model_signatures.at(name);
         else
-        {
             checker.type_error({}, "Unknown model or union type '" + name + "'.");
-        }
     }
     else if (auto *closure_type_ptr = std::get_if<mem::rc_ptr<types::Closure_type>>(&type))
     {
@@ -82,7 +70,6 @@ void TypeResolver::resolve_type(types::Type &type)
     }
 }
 
-
 void TypeResolver::visit(ast::Function_stmt &stmt)
 {
     resolve_type(stmt.return_type);
@@ -93,8 +80,7 @@ void TypeResolver::visit(ast::Function_stmt &stmt)
 
 void TypeResolver::visit(ast::Model_stmt &stmt)
 {
-    for(auto& field : stmt.fields)
-        resolve_type(field.second);
+    for (auto &field : stmt.fields) resolve_type(field.second);
     for (auto *method : stmt.methods)
         if (method)
             visit(*method);
@@ -102,10 +88,8 @@ void TypeResolver::visit(ast::Model_stmt &stmt)
 
 void TypeResolver::visit(ast::Union_stmt &stmt)
 {
-    for(auto& variant : stmt.variants)
-        resolve_type(variant.second);
+    for (auto &variant : stmt.variants) resolve_type(variant.second);
 }
-
 
 void TypeResolver::visit(ast::Block_stmt &stmt)
 {
@@ -161,6 +145,23 @@ void TypeResolver::visit(ast::For_stmt &stmt)
         resolve_expr(*stmt.increment);
     if (stmt.body)
         resolve_stmt(*stmt.body);
+}
+
+void TypeResolver::visit(ast::For_in_stmt &stmt)
+{
+    if (stmt.iterable)
+        resolve_expr(*stmt.iterable);
+    if (stmt.body)
+        resolve_stmt(*stmt.body);
+}
+
+void TypeResolver::visit(ast::Match_stmt &stmt)
+{
+    if (stmt.subject)
+        resolve_expr(*stmt.subject);
+    for (auto &arm : stmt.arms)
+        if (arm.body)
+            resolve_stmt(*arm.body);
 }
 
 void TypeResolver::visit(ast::Return_stmt &stmt)
@@ -243,18 +244,14 @@ void TypeResolver::visit(ast::Array_literal_expr &expr)
             resolve_expr(*element);
 }
 
-void TypeResolver::visit(ast::Static_path_expr &expr)
-{
-    resolve_expr(*expr.base);
-}
+void TypeResolver::visit(ast::Static_path_expr &expr) { resolve_expr(*expr.base); }
 
 void TypeResolver::visit(ast::Model_literal_expr &expr)
 {
-    for (auto& field : expr.fields)
+    for (auto &field : expr.fields)
         if (field.second)
             resolve_expr(*field.second);
 }
-
 
 void TypeResolver::visit(ast::Array_access_expr &expr)
 {
@@ -274,15 +271,48 @@ void TypeResolver::visit(ast::Array_assignment_expr &expr)
         resolve_expr(*expr.value);
 }
 
+void TypeResolver::visit(ast::Range_expr &expr)
+{
+    if (expr.start)
+        resolve_expr(*expr.start);
+    if (expr.end)
+        resolve_expr(*expr.end);
+}
+
+void TypeResolver::visit(ast::Spawn_expr &expr)
+{
+    if (expr.call)
+        resolve_expr(*expr.call);
+}
+
+void TypeResolver::visit(ast::Await_expr &expr)
+{
+    if (expr.thread)
+        resolve_expr(*expr.thread);
+}
+
+void TypeResolver::visit(ast::Yield_expr &expr)
+{
+    if (expr.value)
+        resolve_expr(*expr.value);
+}
+
+void TypeResolver::visit(ast::Fstring_expr &expr)
+{
+    for (auto *e : expr.interpolations)
+        if (e)
+            resolve_expr(*e);
+}
+
 // ===================================================================
 // TYPE CHECKER IMPLEMENTATIONS
 // ===================================================================
-std::vector<err::msg> Type_checker::check(std::vector<ast::Stmt*> &statements)
+std::vector<err::msg> Type_checker::check(std::vector<ast::Stmt *> &statements)
 {
     begin_scope();
 
     // First pass to find all type names
-    collect_signatures(statements); 
+    collect_signatures(statements);
 
     // Use the collected names to resolve all placeholder types in the AST
     TypeResolver resolver(*this);
@@ -305,7 +335,7 @@ std::vector<err::msg> Type_checker::check(std::vector<ast::Stmt*> &statements)
     return errors;
 }
 
-void Type_checker::collect_signatures(const std::vector<ast::Stmt*> &statements)
+void Type_checker::collect_signatures(const std::vector<ast::Stmt *> &statements)
 {
     for (const auto &stmt : statements)
     {
@@ -335,7 +365,8 @@ void Type_checker::collect_signatures(const std::vector<ast::Stmt*> &statements)
                     for (const auto &param : method_ast->parameters) method_type.parameter_types.push_back(param.type);
                     method_type.return_type = method_ast->return_type;
 
-                    if (method_ast->is_static) {
+                    if (method_ast->is_static)
+                    {
                         data.static_methods[method_ast->name] = {method_ast};
                         model_type->static_methods[method_ast->name] = method_type;
                     }
@@ -349,7 +380,7 @@ void Type_checker::collect_signatures(const std::vector<ast::Stmt*> &statements)
                 model_data[model_stmt->name] = std::move(data);
             }
         }
-        else if (const auto* union_stmt = std::get_if<ast::Union_stmt>(&stmt->node))
+        else if (const auto *union_stmt = std::get_if<ast::Union_stmt>(&stmt->node))
         {
             if (m_union_signatures.contains(union_stmt->name) || model_signatures.contains(union_stmt->name))
             {
@@ -359,7 +390,7 @@ void Type_checker::collect_signatures(const std::vector<ast::Stmt*> &statements)
             {
                 auto union_type = mem::make_rc<types::Union_type>();
                 union_type->name = union_stmt->name;
-                for (const auto& variant : union_stmt->variants)
+                for (const auto &variant : union_stmt->variants)
                 {
                     if (union_type->variants.contains(variant.first))
                         type_error(union_stmt->loc, "Duplicate variant '" + variant.first + "' in union '" + union_stmt->name + "'.");
@@ -503,13 +534,9 @@ Result<std::pair<types::Type, bool>> Type_checker::lookup(const std::string &nam
     }
 
     if (model_signatures.count(name))
-    {
         return std::make_pair(model_signatures.at(name), true);
-    }
     if (m_union_signatures.count(name))
-    {
         return std::make_pair(m_union_signatures.at(name), true);
-    }
 
     type_error(loc, "Undefined variable, function, or type '" + name + "'.");
     return std::unexpected(err::msg("", "", 0, 0));
@@ -532,7 +559,7 @@ void Type_checker::check_stmt_node(ast::Function_stmt &stmt)
     begin_scope();
     if (current_model_type && !stmt.is_static)
         declare("this", *current_model_type, true, stmt.loc);
-    for (const auto &p : stmt.parameters) declare(p.name, p.type, p.is_const, stmt.loc);
+    for (const auto &p : stmt.parameters) declare(p.name, p.type, !p.is_mut, stmt.loc);
     if (stmt.body)
         check_stmt(*stmt.body);
     end_scope();
@@ -556,15 +583,16 @@ void Type_checker::check_stmt_node(ast::Var_stmt &stmt)
         if (is_array(init_type) && types::get_array_type(init_type)->element_type == types::Type(types::Primitive_kind::Void))
             type_error(stmt.loc, "Cannot infer type of an empty array initializer.");
 
-        stmt.type = init_type; 
+        stmt.type = init_type;
     }
     else if (stmt.initializer && !is_compatible(stmt.type, init_type))
     {
-        type_error(stmt.loc, "Initializer type '" + types::type_to_string(init_type) + "' does not match variable's declared type '" + types::type_to_string(stmt.type) + "'.");
+        type_error(stmt.loc,
+                   "Initializer type '" + types::type_to_string(init_type) + "' does not match variable's declared type '" +
+                   types::type_to_string(stmt.type) + "'.");
     }
-    declare(stmt.name, stmt.type, stmt.is_const, stmt.loc);
+    declare(stmt.name, stmt.type, !stmt.is_mut, stmt.loc);
 }
-
 
 void Type_checker::check_stmt_node(ast::Model_stmt &stmt)
 {
@@ -574,11 +602,7 @@ void Type_checker::check_stmt_node(ast::Model_stmt &stmt)
     current_model_type = saved_model;
 }
 
-void Type_checker::check_stmt_node(ast::Union_stmt &stmt)
-{
-    (void)stmt;
-}
-
+void Type_checker::check_stmt_node(ast::Union_stmt &stmt) { (void)stmt; }
 
 void Type_checker::check_stmt_node(ast::Block_stmt &stmt)
 {
@@ -666,10 +690,11 @@ void Type_checker::check_stmt_node(ast::Return_stmt &stmt)
     }
     if (stmt.expression)
     {
-        if (auto val_res = check_expr(*stmt.expression, current_return_type); val_res && !is_compatible(current_return_type.value(), val_res.value()))
-            type_error(stmt.loc, "Return value type does not match function's return type: expected: " +
-                       types::type_to_string(current_return_type.value()) + " got: " +
-                       types::type_to_string(val_res.value()));
+        if (auto val_res = check_expr(*stmt.expression, current_return_type);
+            val_res && !is_compatible(current_return_type.value(), val_res.value()))
+            type_error(stmt.loc,
+                       "Return value type does not match function's return type: expected: " +
+                       types::type_to_string(current_return_type.value()) + " got: " + types::type_to_string(val_res.value()));
     }
     else if (current_return_type.value() != types::Type(types::Primitive_kind::Void))
     {
@@ -707,6 +732,70 @@ void Type_checker::check_stmt_node(ast::For_stmt &stmt)
     end_scope();
 }
 
+void Type_checker::check_stmt_node(ast::For_in_stmt &stmt)
+{
+    auto iterable_res = check_expr(*stmt.iterable);
+    if (!iterable_res)
+        return;
+
+    types::Type var_type = types::Primitive_kind::Void;
+    if (is_array(iterable_res.value()))
+        var_type = types::get_array_type(iterable_res.value())->element_type;
+    else if (std::holds_alternative<ast::Range_expr>(stmt.iterable->node))
+        var_type = types::Primitive_kind::Int;
+    else
+        type_error(stmt.loc, "Iterable in 'for..in' loop must be an array or a range.");
+
+    begin_scope();
+    declare(stmt.var_name, var_type, true, stmt.loc);  // Iterable bindings are const by default
+    if (stmt.body)
+        check_stmt(*stmt.body);
+    end_scope();
+}
+
+void Type_checker::check_stmt_node(ast::Match_stmt &stmt)
+{
+    auto subject_res = check_expr(*stmt.subject);
+    if (!subject_res)
+        return;
+
+    auto subject_type = subject_res.value();
+    bool is_union_type = is_union(subject_type);
+    mem::rc_ptr<types::Union_type> u_type = nullptr;
+    if (is_union_type)
+        u_type = types::get_union_type(subject_type);
+
+    for (auto &arm : stmt.arms)
+    {
+        begin_scope();
+        if (!arm.is_wildcard)
+        {
+            if (!is_union_type)
+            {
+                type_error(stmt.loc, "Can only match on union types for now.");
+            }
+            else if (!u_type->variants.contains(arm.variant_name))
+            {
+                type_error(stmt.loc, "Variant '" + arm.variant_name + "' not found in union '" + u_type->name + "'.");
+            }
+            else
+            {
+                auto variant_type = u_type->variants.at(arm.variant_name);
+                if (!arm.bind_name.empty())
+                {
+                    if (variant_type == types::Type(types::Primitive_kind::Void))
+                        type_error(stmt.loc, "Variant '" + arm.variant_name + "' does not contain a value to bind.");
+                    else
+                        declare(arm.bind_name, variant_type, true, stmt.loc);  // Bound variants are const
+                }
+            }
+        }
+        if (arm.body)
+            check_stmt(*arm.body);
+        end_scope();
+    }
+}
+
 Result<types::Type> Type_checker::check_expr_node(ast::Assignment_expr &expr, std::optional<types::Type> context_type)
 {
     (void)context_type;
@@ -715,7 +804,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Assignment_expr &expr, st
         return std::unexpected(err::msg("Variable not found", "", 0, 0));
     bool is_constant = var_info_res.value().second;
     if (is_constant)
-        type_error(expr.loc, "Cannot assign to a constant variable '" + expr.name + "'.");
+        type_error(expr.loc, "Cannot assign to an immutable/constant variable '" + expr.name + "'.");
     auto var_type = var_info_res.value().first;
     auto val_type_res = check_expr(*expr.value, var_type);
     if (!val_type_res)
@@ -763,11 +852,11 @@ Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr, std::o
     types::Type left_type = left_res.value();
     types::Type right_type = right_res.value();
 
-    auto report_error = [&](const std::string& message) {
-        type_error(expr.loc, std::format("{} (left is '{}', right is '{}')",
-                                         message,
-                                         types::type_to_string(left_type),
-                                         types::type_to_string(right_type)));
+    auto report_error = [&](const std::string &message)
+    {
+        type_error(
+        expr.loc,
+        std::format("{} (left is '{}', right is '{}')", message, types::type_to_string(left_type), types::type_to_string(right_type)));
     };
     switch (expr.op)
     {
@@ -841,16 +930,16 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
 {
     (void)context_type;
 
-    // Check for Union/Static Method Instantiation: State::ok(true) or Point::origin()
-    if (auto* static_path = std::get_if<ast::Static_path_expr>(&expr.callee->node))
+    if (auto *static_path = std::get_if<ast::Static_path_expr>(&expr.callee->node))
     {
         auto base_type_res = check_expr(*static_path->base);
-        if (!base_type_res) return base_type_res;
+        if (!base_type_res)
+            return base_type_res;
 
         if (is_union(*base_type_res))
         {
             auto union_type = types::get_union_type(*base_type_res);
-            auto& variant_name = static_path->member.lexeme;
+            auto &variant_name = static_path->member.lexeme;
 
             if (!union_type->variants.count(variant_name))
             {
@@ -868,7 +957,9 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
             else
             {
                 if (expr.arguments.empty())
-                    type_error(expr.loc, "Variant '" + variant_name + "' requires a value of type '" + types::type_to_string(expected_value_type) + "' but none was provided.");
+                    type_error(expr.loc,
+                               "Variant '" + variant_name + "' requires a value of type '" + types::type_to_string(expected_value_type) +
+                               "' but none was provided.");
                 else if (expr.arguments.size() > 1)
                     type_error(expr.loc, "Variant '" + variant_name + "' constructor takes exactly one argument.");
                 else
@@ -876,7 +967,10 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
                     auto value_type_res = check_expr(*expr.arguments[0], expected_value_type);
                     if (value_type_res && !is_compatible(expected_value_type, *value_type_res))
                     {
-                        type_error(ast::get_loc(expr.arguments[0]->node), "Value for variant '" + variant_name + "' is incorrect. Expected '" + types::type_to_string(expected_value_type) + "' but got '" + types::type_to_string(*value_type_res) + "'");
+                        type_error(ast::get_loc(expr.arguments[0]->node),
+                                   "Value for variant '" + variant_name + "' is incorrect. Expected '" +
+                                   types::type_to_string(expected_value_type) + "' but got '" + types::type_to_string(*value_type_res) +
+                                   "'");
                     }
                 }
             }
@@ -885,7 +979,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
         else if (is_model(*base_type_res))
         {
             auto model_type = types::get_model_type(*base_type_res);
-            auto& method_name = static_path->member.lexeme;
+            auto &method_name = static_path->member.lexeme;
 
             if (!model_type->static_methods.count(method_name))
             {
@@ -893,11 +987,14 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
                 return expr.type = types::Primitive_kind::Void;
             }
 
-            const auto& signature = model_type->static_methods.at(method_name);
-            // Re-use general function call logic
+            const auto &signature = model_type->static_methods.at(method_name);
             if (expr.arguments.size() != signature.parameter_types.size())
             {
-                type_error(expr.loc, std::format("Incorrect number of arguments for static method '{}'. Expected {}, but got {}.", method_name, signature.parameter_types.size(), expr.arguments.size()));
+                type_error(expr.loc,
+                           std::format("Incorrect number of arguments for static method '{}'. Expected {}, but got {}.",
+                                       method_name,
+                                       signature.parameter_types.size(),
+                                       expr.arguments.size()));
             }
             else
             {
@@ -905,31 +1002,32 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
                 {
                     auto arg_type_res = check_expr(*expr.arguments[i], signature.parameter_types[i]);
                     if (arg_type_res && !is_compatible(signature.parameter_types[i], *arg_type_res))
-                    {
                         type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch for static method.");
-                    }
                 }
             }
             return expr.type = signature.return_type;
         }
     }
 
-    if (auto* var_expr = std::get_if<ast::Variable_expr>(&expr.callee->node))
+    if (auto *var_expr = std::get_if<ast::Variable_expr>(&expr.callee->node))
     {
         if (m_native_signatures.count(var_expr->name))
         {
-            const auto& signature = m_native_signatures.at(var_expr->name);
+            const auto &signature = m_native_signatures.at(var_expr->name);
             if (expr.arguments.size() != signature.allowed_params.size())
             {
                 type_error(expr.loc,
                            std::format("Incorrect number of arguments for native function '{}'. Expected {}, but got {}.",
-                                       var_expr->name, signature.allowed_params.size(), expr.arguments.size()));
+                                       var_expr->name,
+                                       signature.allowed_params.size(),
+                                       expr.arguments.size()));
                 return expr.type = signature.return_type;
             }
             for (size_t i = 0; i < expr.arguments.size(); ++i)
             {
                 auto arg_type_res = check_expr(*expr.arguments[i]);
-                if (!arg_type_res) continue;
+                if (!arg_type_res)
+                    continue;
                 if (!is_argument_compatible(signature.allowed_params[i], arg_type_res.value()))
                 {
                     type_error(ast::get_loc(expr.arguments[i]->node),
@@ -961,9 +1059,9 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
 
     if (expr.arguments.size() != signature->parameter_types.size())
     {
-        type_error(expr.loc,
-                   std::format("Incorrect number of arguments. Expected {}, but got {}.",
-                               signature->parameter_types.size(), expr.arguments.size()));
+        type_error(
+        expr.loc,
+        std::format("Incorrect number of arguments. Expected {}, but got {}.", signature->parameter_types.size(), expr.arguments.size()));
     }
     else
     {
@@ -1029,7 +1127,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Closure_expr &expr, std::
     current_return_type = expr.return_type;
 
     begin_scope();
-    for (auto const &p : expr.parameters) declare(p.name, p.type, p.is_const, expr.loc);
+    for (auto const &p : expr.parameters) declare(p.name, p.type, !p.is_mut, expr.loc);
     if (expr.body)
         check_stmt(*expr.body);
     end_scope();
@@ -1088,11 +1186,12 @@ Result<types::Type> Type_checker::check_expr_node(ast::Field_access_expr &expr, 
     return expr.type = types::Primitive_kind::Void;
 }
 
-Result<types::Type> Type_checker::check_expr_node(ast::Static_path_expr& expr, std::optional<types::Type> context_type)
+Result<types::Type> Type_checker::check_expr_node(ast::Static_path_expr &expr, std::optional<types::Type> context_type)
 {
     (void)context_type;
     auto base_res = check_expr(*expr.base);
-    if (!base_res) return base_res;
+    if (!base_res)
+        return base_res;
 
     if (is_union(*base_res))
     {
@@ -1106,9 +1205,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Static_path_expr& expr, s
         auto variant_type = union_type->variants.at(expr.member.lexeme);
         auto constructor_type = mem::make_rc<types::Function_type>();
         if (variant_type != types::Type(types::Primitive_kind::Void))
-        {
             constructor_type->parameter_types.push_back(variant_type);
-        }
         constructor_type->return_type = *base_res;
         return expr.type = types::Type(constructor_type);
     }
@@ -1126,7 +1223,6 @@ Result<types::Type> Type_checker::check_expr_node(ast::Static_path_expr& expr, s
     type_error(expr.loc, "Scope resolution operator '::' is only supported for union variants and static model methods.");
     return expr.type = types::Primitive_kind::Void;
 }
-
 
 Result<types::Type> Type_checker::check_expr_node(ast::Field_assignment_expr &expr, std::optional<types::Type> context_type)
 {
@@ -1174,21 +1270,29 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
                 return expr.type = types::Primitive_kind::Bool;
             }
 
-            auto* arg_expr = expr.arguments[0];
-            if (auto* static_path = std::get_if<ast::Static_path_expr>(&arg_expr->node))
+            auto *arg_expr = expr.arguments[0];
+            if (auto *static_path = std::get_if<ast::Static_path_expr>(&arg_expr->node))
             {
-                if(auto* var_expr = std::get_if<ast::Variable_expr>(&static_path->base->node))
+                if (auto *var_expr = std::get_if<ast::Variable_expr>(&static_path->base->node))
                 {
                     if (var_expr->name != union_type->name)
-                        type_error(ast::get_loc(arg_expr->node), "Argument to .has() must be a variant of the same union type '" + union_type->name + "'");
+                        type_error(ast::get_loc(arg_expr->node),
+                                   "Argument to .has() must be a variant of the same union type '" + union_type->name + "'");
 
                     if (!union_type->variants.count(static_path->member.lexeme))
-                        type_error(ast::get_loc(arg_expr->node), "Union '" + union_type->name + "' has no variant named '" + static_path->member.lexeme + "'");
-                } else {
-                     type_error(ast::get_loc(arg_expr->node), "Argument to .has() must be a static-like variant access (e.g. MyUnion::Variant).");
+                        type_error(ast::get_loc(arg_expr->node),
+                                   "Union '" + union_type->name + "' has no variant named '" + static_path->member.lexeme + "'");
                 }
-            } else {
-                 type_error(ast::get_loc(arg_expr->node), "Argument to .has() must be a static-like variant access (e.g. MyUnion::Variant).");
+                else
+                {
+                    type_error(ast::get_loc(arg_expr->node),
+                               "Argument to .has() must be a static-like variant access (e.g. MyUnion::Variant).");
+                }
+            }
+            else
+            {
+                type_error(ast::get_loc(arg_expr->node),
+                           "Argument to .has() must be a static-like variant access (e.g. MyUnion::Variant).");
             }
 
             return expr.type = types::Primitive_kind::Bool;
@@ -1199,7 +1303,6 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
             return expr.type = types::Primitive_kind::Void;
         }
     }
-
 
     if (expr.method_name == "map")
     {
@@ -1282,13 +1385,9 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
             if (is_any(return_type))
             {
                 if (is_optional(obj_type))
-                {
                     return_type = types::get_optional_type(obj_type)->base_type;
-                }
                 else if (is_array(obj_type))
-                {
                     return_type = types::get_array_type(obj_type)->element_type;
-                }
             }
             return expr.type = return_type;
         }
@@ -1307,7 +1406,11 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
             const auto &method_signature = (*mt)->methods.at(expr.method_name);
             if (expr.arguments.size() != method_signature.parameter_types.size())
             {
-                type_error(expr.loc, std::format("Incorrect number of arguments for method '{}'. Expected {}, but got {}.", expr.method_name, method_signature.parameter_types.size(), expr.arguments.size()));
+                type_error(expr.loc,
+                           std::format("Incorrect number of arguments for method '{}'. Expected {}, but got {}.",
+                                       expr.method_name,
+                                       method_signature.parameter_types.size(),
+                                       expr.arguments.size()));
             }
             else
             {
@@ -1315,9 +1418,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
                 {
                     auto arg_res = check_expr(*expr.arguments[i], method_signature.parameter_types[i]);
                     if (arg_res && !is_compatible(method_signature.parameter_types[i], *arg_res))
-                    {
                         type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch for method '" + expr.method_name + "'.");
-                    }
                 }
             }
             return expr.type = method_signature.return_type;
@@ -1360,14 +1461,14 @@ Result<types::Type> Type_checker::check_expr_node(ast::Array_literal_expr &expr,
 {
     if (expr.elements.empty())
     {
-        // If we are an empty array, try to take the type from the context.
+        // If we are an empty array, try to take the type from the context (e.g., `let x: i64[] = []`)
         if (context_type && is_array(context_type.value()))
-        {
-            // Context is an array type (e.g., f64[]), so we become that type.
             return expr.type = context_type.value();
-        }
 
-        // No context, or context is not an array. Default to void[].
+        // Hard Error: No context and no elements.
+        type_error(expr.loc, "Cannot infer the element type of an empty array. Please provide an explicit type annotation (e.g., 'let arr: i64[] = []').");
+
+        // Return void[] purely as error recovery so the parser doesn't crash on subsequent checks
         return expr.type = types::Type(mem::make_rc<types::Array_type>(types::Type(types::Primitive_kind::Void)));
     }
 
@@ -1396,8 +1497,37 @@ Result<types::Type> Type_checker::check_expr_node(ast::Array_literal_expr &expr,
         }
     }
 
-    if (has_nil && !is_optional(common_type) && !is_nil(common_type))
+    // If common_type is STILL Nil, it means the array is like: `let arr = [nil, nil];`
+    if (is_nil(common_type))
+    {
+        if (context_type && is_array(context_type.value()))
+        {
+            // We can derive it from context! (e.g. `let arr: i64?[] = [nil, nil];`)
+            return expr.type = context_type.value();
+        }
+        else
+        {
+            // Hard Error: We don't know what this is an optional OF.
+            type_error(expr.loc, "Cannot infer type of an array containing only 'nil'. Please provide an explicit type annotation.");
+            return expr.type = types::Type(mem::make_rc<types::Array_type>(types::Primitive_kind::Void));
+        }
+    }
+
+    // Upgrade the derived type to Optional if we encountered a nil among valid types
+    if (has_nil && !is_optional(common_type))
         common_type = types::Type(mem::make_rc<types::Optional_type>(common_type));
+
+    // If context expects an optional array (e.g. `let arr: i64?[] = [1, 2];`),
+    // upgrade our derived common_type to match the context so assignments don't fail later.
+    if (context_type && is_array(context_type.value()))
+    {
+        auto ctx_element_type = types::get_array_type(context_type.value())->element_type;
+        if (is_optional(ctx_element_type) && !is_optional(common_type))
+        {
+            if (is_compatible(ctx_element_type, common_type))
+                common_type = ctx_element_type;
+        }
+    }
 
     return expr.type = types::Type(mem::make_rc<types::Array_type>(common_type));
 }
@@ -1461,28 +1591,21 @@ Result<types::Type> Type_checker::check_expr_node(ast::Model_literal_expr &expr,
     auto model_type = model_signatures.at(expr.model_name);
 
     std::unordered_set<std::string> provided_fields;
-    for (const auto& field : expr.fields)
-    {
-        provided_fields.insert(field.first);
-    }
+    for (const auto &field : expr.fields) provided_fields.insert(field.first);
 
-    for (const auto& expected_field : model_type->fields)
-    {
+    for (const auto &expected_field : model_type->fields)
         if (!provided_fields.count(expected_field.first))
-        {
             type_error(expr.loc, "Missing required field '" + expected_field.first + "' in model literal for '" + expr.model_name + "'");
-        }
-    }
 
-    for (const auto& provided_field : expr.fields)
+    for (const auto &provided_field : expr.fields)
     {
-        const auto& field_name = provided_field.first;
+        const auto &field_name = provided_field.first;
         if (!model_type->fields.count(field_name))
         {
             type_error(expr.loc, "Unknown field '" + field_name + "' in model '" + expr.model_name + "'");
             continue;
         }
-        
+
         auto expected_type = model_type->fields.at(field_name);
         auto actual_type_res = check_expr(*provided_field.second, expected_type);
 
@@ -1498,4 +1621,56 @@ Result<types::Type> Type_checker::check_expr_node(ast::Model_literal_expr &expr,
     return expr.type;
 }
 
-} //namespace phos
+Result<types::Type> Type_checker::check_expr_node(ast::Range_expr &expr, std::optional<types::Type> context_type)
+{
+    (void)context_type;
+    auto start_res = check_expr(*expr.start);
+    auto end_res = check_expr(*expr.end);
+    if (start_res && start_res.value() != types::Type(types::Primitive_kind::Int))
+        type_error(expr.loc, "Range start must be an integer.");
+    if (end_res && end_res.value() != types::Type(types::Primitive_kind::Int))
+        type_error(expr.loc, "Range end must be an integer.");
+
+    // For now, since there isn't a dedicated RangeType, we evaluate it to Any/Void internally
+    // but the for_in_stmt logic will correctly handle the Range_expr variant.
+    return expr.type = types::Primitive_kind::Any;
+}
+
+Result<types::Type> Type_checker::check_expr_node(ast::Spawn_expr &expr, std::optional<types::Type> context_type)
+{
+    (void)context_type;
+    if (expr.call)
+        std::ignore = check_expr(*expr.call);
+    // Until Thread<T> is explicitly added to the type system, assume thread returns 'Any'
+    return expr.type = types::Primitive_kind::Any;
+}
+
+Result<types::Type> Type_checker::check_expr_node(ast::Await_expr &expr, std::optional<types::Type> context_type)
+{
+    (void)context_type;
+    if (expr.thread)
+        std::ignore = check_expr(*expr.thread);
+    return expr.type = types::Primitive_kind::Any;
+}
+
+Result<types::Type> Type_checker::check_expr_node(ast::Yield_expr &expr, std::optional<types::Type> context_type)
+{
+    (void)context_type;
+    if (expr.value)
+    {
+        auto val_res = check_expr(*expr.value);
+        return expr.type = val_res.value_or(types::Primitive_kind::Void);
+    }
+    return expr.type = types::Primitive_kind::Void;
+}
+
+Result<types::Type> Type_checker::check_expr_node(ast::Fstring_expr &expr, std::optional<types::Type> context_type)
+{
+    (void)context_type;
+    for (auto *interp : expr.interpolations)
+        if (interp)
+            std::ignore = check_expr(*interp);
+    return expr.type = types::Primitive_kind::String;
+}
+
+}  //namespace phos

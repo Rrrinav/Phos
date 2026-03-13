@@ -27,21 +27,34 @@ size_t Chunk::disassemble_instruction(std::ostream &out, size_t offset)
 
     switch (op)
     {
+        // 3-byte instructions (Opcode + 2-byte offset)
+        case Op_code::Jump:
+        case Op_code::Jump_if_false:
+            return jump_instruction(out, op_code_to_string(op), 1, offset);
+        case Op_code::Loop:
+            return jump_instruction(out, op_code_to_string(op), -1, offset);
+        // 2 byte instructions (Opcode + 1-byte index)
         case Op_code::Constant:
-            return constant_instruction(out, "Constant", offset);
+        case Op_code::Define_global:
+        case Op_code::Get_global:
+        case Op_code::Set_global:
+            return constant_instruction(out, op_code_to_string(op), offset);
+        // 1-byte simple instructions
+        case Op_code::Pop:
+        case Op_code::Nil:
         case Op_code::Add:
         case Op_code::Subtract:
         case Op_code::Multiply:
         case Op_code::Divide:
+        case Op_code::Modulo:
+        case Op_code::Equal:
+        case Op_code::Not_equal:
+        case Op_code::Less:
+        case Op_code::Less_equal:
+        case Op_code::Greater:
+        case Op_code::Greater_equal:
         case Op_code::Print:
         case Op_code::Return:
-        case Op_code::BitAnd:
-        case Op_code::BitLShift:
-        case Op_code::BitRShift:
-        case Op_code::BitOr:
-        case Op_code::Negate:
-        case Op_code::BitNot:
-        case Op_code::Not:
             return simple_instruction(out, op_code_to_string(op), offset);
         case Op_code::Halt:
             return simple_instruction(out, "Halt", offset);
@@ -63,6 +76,14 @@ size_t Chunk::constant_instruction(std::ostream &out, const std::string &name, s
     out << std::format("{:<20} {:>8} '", name, constant_idx);
     out << value_to_string(constants[constant_idx]) << "'\n";
     return offset + 2;
+}
+
+size_t Chunk::jump_instruction(std::ostream &out, const std::string &name, int sign, size_t offset)
+{
+    uint16_t jump = static_cast<uint16_t>(code[offset + 1] << 8);
+    jump |= code[offset + 2];
+    out << std::format("{:<20} {:>4} -> {}\n", name, offset, offset + 3 + sign * jump);
+    return offset + 3;
 }
 
 }  // namespace phos::vm

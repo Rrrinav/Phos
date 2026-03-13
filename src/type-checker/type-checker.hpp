@@ -1,6 +1,5 @@
 #pragma once
 
-#include <memory>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -46,6 +45,8 @@ private:
     void visit(ast::If_stmt &stmt);
     void visit(ast::While_stmt &stmt);
     void visit(ast::For_stmt &stmt);
+    void visit(ast::For_in_stmt &stmt);
+    void visit(ast::Match_stmt &stmt);
     void visit(ast::Return_stmt &stmt);
     void visit(ast::Assignment_expr &expr);
     void visit(ast::Binary_expr &expr);
@@ -61,6 +62,11 @@ private:
     void visit(ast::Array_literal_expr &expr);
     void visit(ast::Array_access_expr &expr);
     void visit(ast::Array_assignment_expr &expr);
+    void visit(ast::Range_expr &expr);
+    void visit(ast::Spawn_expr &expr);
+    void visit(ast::Await_expr &expr);
+    void visit(ast::Yield_expr &expr);
+    void visit(ast::Fstring_expr &expr);
 };
 
 // ===================================================================
@@ -152,6 +158,8 @@ private:
     void check_stmt_node(ast::Var_stmt &stmt);
     void check_stmt_node(ast::While_stmt &stmt);
     void check_stmt_node(ast::For_stmt &stmt);
+    void check_stmt_node(ast::For_in_stmt &stmt);
+    void check_stmt_node(ast::Match_stmt &stmt);
 
     Result<types::Type> check_expr_node(ast::Assignment_expr &expr, std::optional<types::Type> context_type);
     Result<types::Type> check_expr_node(ast::Binary_expr &expr, std::optional<types::Type> context_type);
@@ -169,5 +177,10 @@ private:
     Result<types::Type> check_expr_node(ast::Array_literal_expr &expr, std::optional<types::Type> context_type);
     Result<types::Type> check_expr_node(ast::Array_access_expr &expr, std::optional<types::Type> context_type);
     Result<types::Type> check_expr_node(ast::Array_assignment_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Range_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Spawn_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Await_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Yield_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Fstring_expr &expr, std::optional<types::Type> context_type);
 };
 } // namespace phos

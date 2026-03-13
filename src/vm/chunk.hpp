@@ -46,6 +46,7 @@ struct Chunk
 private:
     size_t simple_instruction(std::ostream &out, const std::string &name, size_t offset);
     size_t constant_instruction(std::ostream &out, const std::string &name, size_t offset);
+    size_t jump_instruction(std::ostream &out, const std::string &name, int sign, size_t offset);
 };
 
 }  // namespace phos::vm

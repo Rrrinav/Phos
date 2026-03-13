@@ -20,195 +20,265 @@ struct Source_location
 
 struct Function_param
 {
-    std::string name;
-    types::Type type;
-    bool is_const;
+    std::string  name;
+    types::Type  type;
+    bool         is_mut   = false;
 };
-// =================================
-// Expression node types
-// =================================
+
 struct Literal_expr
 {
-    Value value;
-    types::Type type;
+    Value           value;
+    types::Type     type;
     Source_location loc;
 };
 
 struct Variable_expr
 {
-    std::string name;
-    types::Type type;
+    std::string     name;
+    types::Type     type;
     Source_location loc;
 };
 
 struct Binary_expr
 {
-    struct Expr* left;
-    lex::TokenType op;
-    struct Expr* right;
-    types::Type type;
+    struct Expr*    left;
+    lex::TokenType  op;
+    struct Expr*    right;
+    types::Type     type;
     Source_location loc;
 };
 
 struct Unary_expr
 {
-    lex::TokenType op;
-    struct Expr* right;
-    types::Type type;
+    lex::TokenType  op;
+    struct Expr*    right;
+    types::Type     type;
     Source_location loc;
 };
 
 struct Call_expr
 {
-    Expr* callee;
+    struct Expr*              callee;
     std::vector<struct Expr*> arguments;
-    types::Type type;
+    types::Type               type;
+    Source_location           loc;
+};
+
+// Simple variable assignment:  name = value
+struct Assignment_expr
+{
+    std::string     name;
+    struct Expr*    value;
+    types::Type     type;
     Source_location loc;
 };
 
-struct Assignment_expr
+// Field mutation:  obj.field = value
+struct Field_assignment_expr
 {
-    std::string name;
-    struct Expr* value;
-    types::Type type;
+    struct Expr*    object;
+    std::string     field_name;
+    struct Expr*    value;
+    types::Type     type;
+    Source_location loc;
+};
+
+// Array element mutation:  arr[idx] = value
+struct Array_assignment_expr
+{
+    struct Expr*    array;
+    struct Expr*    index;
+    struct Expr*    value;
+    types::Type     type;
     Source_location loc;
 };
 
 struct Cast_expr
 {
-    struct Expr* expression;
-    types::Type target_type;
+    struct Expr*    expression;
+    types::Type     target_type;
     Source_location loc;
 };
 
 struct Field_access_expr
 {
-    struct Expr* object;
-    std::string field_name;
-    types::Type type;
-    Source_location loc;
-};
-
-struct Field_assignment_expr
-{
-    Expr* object;
-    std::string field_name;
-    Expr* value;
-    types::Type type;
+    struct Expr*    object;
+    std::string     field_name;
+    types::Type     type;
     Source_location loc;
 };
 
 struct Method_call_expr
 {
-    struct Expr* object;
-    std::string method_name;
+    struct Expr*              object;
+    std::string               method_name;
     std::vector<struct Expr*> arguments;
-    types::Type type;
-    Source_location loc;
+    types::Type               type;
+    Source_location           loc;
 };
 
 struct Model_literal_expr
 {
-    std::string model_name;
-    std::vector<std::pair<std::string, struct Expr*>> fields;
-    types::Type type;
-    Source_location loc;
+    std::string                                        model_name;
+    std::vector<std::pair<std::string, struct Expr*>>  fields;
+    types::Type                                        type;
+    Source_location                                    loc;
 };
 
 struct Closure_expr
 {
     std::vector<Function_param> parameters;
-    types::Type return_type;
-    struct Stmt* body;
-    types::Type type;
-    Source_location loc;
+    types::Type                 return_type;
+    struct Stmt*                body;
+    types::Type                 type;
+    Source_location             loc;
 };
 
 struct Array_literal_expr
 {
-    std::vector<Expr*> elements;
-    types::Type type;
-    Source_location loc;
+    std::vector<struct Expr*> elements;
+    types::Type               type;
+    Source_location           loc;
 };
 
 struct Array_access_expr
 {
-    Expr* array;
-    Expr* index;
-    types::Type type;
+    struct Expr*    array;
+    struct Expr*    index;
+    types::Type     type;
     Source_location loc;
 };
 
-struct Array_assignment_expr
-{
-    Expr* array;
-    Expr* index;
-    Expr* value;
-    types::Type type;
-    Source_location loc;
-};
-
+// Type::Member  or  Union::Variant
 struct Static_path_expr
 {
-    Expr* base;
-    lex::Token member;
-    types::Type type;
+    struct Expr*    base;
+    lex::Token      member;
+    types::Type     type;
     Source_location loc;
 };
 
-// =================================
+// start..end  or  start..=end
+struct Range_expr
+{
+    struct Expr*    start;
+    struct Expr*    end;
+    bool            inclusive; // true => ..=   false => ..
+    types::Type     type;
+    Source_location loc;
+};
+
+// spawn fn(args)  =>  Thread<T>
+struct Spawn_expr
+{
+    struct Expr*    call;
+    types::Type     type;
+    Source_location loc;
+};
+
+// await thread_val  =>  T
+struct Await_expr
+{
+    struct Expr*    thread;
+    types::Type     type;
+    Source_location loc;
+};
+
+// yield  /  yield value
+struct Yield_expr
+{
+    struct Expr*    value; // nullptr for bare yield
+    types::Type     type;
+    Source_location loc;
+};
+
+// f"hello {name}, result {x + 1}"
+// The parser expands this into a Binary_expr concat tree at parse time.
+// This node is kept only for the AST printer.
+struct Fstring_expr
+{
+    std::string               raw_template;    // e.g. "hello {name}"
+    std::vector<struct Expr*> interpolations;  // exprs extracted from {}
+    types::Type               type;            // always String
+    Source_location           loc;
+};
+
+// =============================================================================
 // Unified expression wrapper
-// =================================
+// =============================================================================
+
 struct Expr
 {
-    using Node = std::variant<Literal_expr, Variable_expr, Binary_expr, Unary_expr, Call_expr, Assignment_expr, Cast_expr,
-                              Field_access_expr, Method_call_expr, Model_literal_expr, Closure_expr, Field_assignment_expr,
-                              Array_literal_expr, Array_assignment_expr, Array_access_expr, Static_path_expr>;
+    using Node = std::variant<
+        Literal_expr,
+        Variable_expr,
+        Binary_expr,
+        Unary_expr,
+        Call_expr,
+        Assignment_expr,
+        Field_assignment_expr,
+        Array_assignment_expr,
+        Cast_expr,
+        Field_access_expr,
+        Method_call_expr,
+        Model_literal_expr,
+        Closure_expr,
+        Array_literal_expr,
+        Array_access_expr,
+        Static_path_expr,
+        Range_expr,
+        Spawn_expr,
+        Await_expr,
+        Yield_expr,
+        Fstring_expr
+    >;
 
     Node node;
 };
 
-// =================================
+// =============================================================================
 // Statement node types
-// =================================
+// =============================================================================
+
 struct Return_stmt
 {
-    Expr* expression;
+    struct Expr*    expression; // nullptr for bare return
     Source_location loc;
 };
 
 struct Function_stmt
 {
-    std::string name;
-    bool is_static;
+    std::string                 name;
+    bool                        is_static;
     std::vector<Function_param> parameters;
-    types::Type return_type;
-    struct Stmt* body;
-    Source_location loc;
+    types::Type                 return_type;
+    struct Stmt*                body;
+    Source_location             loc;
 };
 
 struct Model_stmt
 {
-    std::string name;
+    std::string                                  name;
     std::vector<std::pair<std::string, types::Type>> fields;
-    std::vector<Function_stmt *> methods;
-    Source_location loc;
+    std::vector<Function_stmt*>                  methods;
+    Source_location                              loc;
 };
 
 struct Union_stmt
 {
-    std::string name;
+    std::string                                      name;
     std::vector<std::pair<std::string, types::Type>> variants;
-    Source_location loc;
+    Source_location                                  loc;
 };
 
 struct Var_stmt
 {
-    bool is_const;
-    std::string name;
-    types::Type type;
-    Expr* initializer;
-    bool type_inferred = false;
+    bool            is_mut          = false; // let mut  => reassignable
+    bool            is_const        = false; // const    => compile-time inline
+    std::string     name;
+    types::Type     type;
+    struct Expr*    initializer     = nullptr;
+    bool            type_inferred   = false;
     Source_location loc;
 };
 
@@ -216,62 +286,106 @@ enum class Print_stream { STDOUT, STDERR };
 
 struct Print_stmt
 {
-    Print_stream stream;
-    Expr* expression;
+    Print_stream    stream;
+    struct Expr*    expression;
     Source_location loc;
 };
 
 struct Expr_stmt
 {
-    Expr* expression;
+    struct Expr*    expression;
     Source_location loc;
 };
 
 struct Block_stmt
 {
     std::vector<struct Stmt*> statements;
-    Source_location loc;
+    Source_location           loc;
 };
 
 struct If_stmt
 {
-    Expr* condition;
-    struct Stmt* then_branch;
-    struct Stmt* else_branch;
+    struct Expr*    condition;
+    struct Stmt*    then_branch;
+    struct Stmt*    else_branch; // nullptr if no else
     Source_location loc;
 };
 
 struct While_stmt
 {
-    Expr* condition;
-    struct Stmt* body;
+    struct Expr*    condition;
+    struct Stmt*    body;
     Source_location loc;
 };
 
+// C-style for  (kept for compatibility)
 struct For_stmt
 {
-    struct Stmt* initializer;
-    Expr* condition;
-    Expr* increment;
-    struct Stmt* body;
+    struct Stmt*    initializer;
+    struct Expr*    condition;
+    struct Expr*    increment;
+    struct Stmt*    body;
     Source_location loc;
 };
 
-// =================================
+// for x in iterable { ... }
+struct For_in_stmt
+{
+    std::string     var_name;  // always immutable inside body
+    struct Expr*    iterable;  // Range_expr or array expr
+    struct Stmt*    body;
+    Source_location loc;
+};
+
+// One arm of a match statement
+struct Match_arm
+{
+    std::string  variant_name; // "" when is_wildcard
+    std::string  bind_name;    // "" when no binding or is_wildcard
+    bool         is_wildcard = false;
+    struct Stmt* body        = nullptr;
+};
+
+struct Match_stmt
+{
+    struct Expr*            subject;
+    std::vector<Match_arm>  arms;
+    Source_location         loc;
+};
+
+// =============================================================================
 // Unified statement wrapper
-// =================================
+// =============================================================================
+
 struct Stmt
 {
-    using Node = std::variant<Return_stmt, Function_stmt, Model_stmt, Var_stmt, Print_stmt, Expr_stmt, Block_stmt, If_stmt, While_stmt,
-                              For_stmt, Union_stmt>;
+    using Node = std::variant<
+        Return_stmt,
+        Function_stmt,
+        Model_stmt,
+        Var_stmt,
+        Print_stmt,
+        Expr_stmt,
+        Block_stmt,
+        If_stmt,
+        While_stmt,
+        For_stmt,
+        For_in_stmt,
+        Union_stmt,
+        Match_stmt
+    >;
 
     Node node;
 };
 
-inline types::Type &get_type(Expr::Node &node)
+// =============================================================================
+// Inline helpers
+// =============================================================================
+
+inline types::Type& get_type(Expr::Node& node)
 {
     return std::visit(
-        [](auto &expr) -> types::Type &
+        [](auto& expr) -> types::Type&
         {
             using T = std::decay_t<decltype(expr)>;
             if constexpr (std::is_same_v<T, Cast_expr>)
@@ -282,11 +396,10 @@ inline types::Type &get_type(Expr::Node &node)
         node);
 }
 
-// const version
-inline const types::Type &get_type(const Expr::Node &node)
+inline const types::Type& get_type(const Expr::Node& node)
 {
     return std::visit(
-        [](auto const &expr) -> const types::Type &
+        [](const auto& expr) -> const types::Type&
         {
             using T = std::decay_t<decltype(expr)>;
             if constexpr (std::is_same_v<T, Cast_expr>)
@@ -297,53 +410,43 @@ inline const types::Type &get_type(const Expr::Node &node)
         node);
 }
 
-inline Source_location &get_loc(Expr::Node &node)
+inline Source_location& get_loc(Expr::Node& node)
 {
-    return std::visit([](auto &expr) -> Source_location & { return expr.loc; }, node);
+    return std::visit([](auto& expr) -> Source_location& { return expr.loc; }, node);
 }
 
-inline Source_location &loc_copy(Expr::Node node)
+inline Source_location get_loc(const Expr::Node& node)
 {
-    return std::visit([](auto &expr) -> Source_location & { return expr.loc; }, node);
+    return std::visit([](const auto& expr) -> Source_location { return expr.loc; }, node);
 }
 
-inline Source_location &get_loc(Stmt::Node &node)
+inline Source_location& get_loc(Stmt::Node& node)
 {
-    return std::visit([](auto &stmt) -> Source_location & { return stmt.loc; }, node);
+    return std::visit([](auto& stmt) -> Source_location& { return stmt.loc; }, node);
 }
 
-inline Source_location loc_copy(const Stmt::Node &node)
+inline Source_location get_loc(const Stmt::Node& node)
 {
-    return std::visit([](auto &stmt) -> Source_location { return stmt.loc; }, node);
+    return std::visit([](const auto& stmt) -> Source_location { return stmt.loc; }, node);
 }
 
-
-inline types::Type get_type(const Stmt::Node &node)
+inline types::Type get_type(const Stmt::Node& node)
 {
     return std::visit(
-        [](auto const &stmt) -> types::Type
+        [](const auto& stmt) -> types::Type
         {
             using T = std::decay_t<decltype(stmt)>;
-            if constexpr (std::is_same_v<T, ast::Var_stmt>)
-            {
+            if constexpr (std::is_same_v<T, Var_stmt>)
                 return stmt.type;
-            }
-            else if constexpr (std::is_same_v<T, ast::Return_stmt>)
-            {
-                if (stmt.expression)
-                    return get_type(stmt.expression->node);
-                return types::Primitive_kind::Void;
-            }
-            else if constexpr (std::is_same_v<T, ast::Expr_stmt>)
-            {
+            else if constexpr (std::is_same_v<T, Return_stmt>)
+                return stmt.expression ? get_type(stmt.expression->node)
+                                       : types::Type(types::Primitive_kind::Void);
+            else if constexpr (std::is_same_v<T, Expr_stmt>)
                 return get_type(stmt.expression->node);
-            }
             else
-            {
-                // For Block, If, While, For, etc., the "type" is void.
-                return types::Primitive_kind::Void;
-            }
+                return types::Type(types::Primitive_kind::Void);
         },
         node);
 }
-}  // namespace phos::ast
+
+} // namespace phos::ast
