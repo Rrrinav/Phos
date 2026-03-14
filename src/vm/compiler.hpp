@@ -18,9 +18,9 @@ public:
     Compiler() = default;
 
     Result<Chunk> compile(const std::vector<ast::Stmt*> &statements);
-
-private:
     Chunk current_chunk;
+    std::vector<Local> locals;
+    int scope_depth = 0;
 
     // Dispatchers
     void compile_stmt(ast::Stmt *stmt);
@@ -51,6 +51,10 @@ private:
     void emit_loop(size_t loop_start, phos::ast::Source_location loc);
 
     uint8_t identifier_constant(const std::string& name, phos::ast::Source_location loc);
+
+    void begin_scope();
+    void end_scope(phos::ast::Source_location loc);
+    int resolve_local(const std::string& name);
 };
 
 } // namespace phos::vm

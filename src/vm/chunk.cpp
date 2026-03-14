@@ -40,6 +40,10 @@ size_t Chunk::disassemble_instruction(std::ostream &out, size_t offset)
         case Op_code::Get_global:
         case Op_code::Set_global:
             return constant_instruction(out, op_code_to_string(op), offset);
+        // 2 byte instructions (Opcode + 1-byte index)
+        case Op_code::Get_local:
+        case Op_code::Set_local:
+            return local_instruction(out, op_code_to_string(op), offset);
         // 1-byte simple instructions
         case Op_code::Pop:
         case Op_code::Nil:
@@ -85,6 +89,13 @@ size_t Chunk::jump_instruction(std::ostream &out, const std::string &name, int s
     jump |= code[offset + 2];
     out << std::format("{:<20} {:>4} -> {}\n", name, offset, offset + 3 + sign * jump);
     return offset + 3;
+}
+
+size_t Chunk::local_instruction(std::ostream &out, const std::string &name, size_t offset)
+{
+    uint8_t slot = code[offset + 1];
+    out << std::format("{:<20} {:>8}\n", name, slot);
+    return offset + 2;
 }
 
 }  // namespace phos::vm

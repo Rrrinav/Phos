@@ -241,6 +241,19 @@ Result<void> Virtual_machine::run()
                 break;
             }
 
+            case Op_code::Get_local:
+            {
+                uint8_t slot = *ip++;
+                push(stack[slot]);
+                break;
+            }
+            case Op_code::Set_local:
+            {
+                uint8_t slot = *ip++;
+                stack[slot] = peek(0);
+                break;
+            }
+
             // --- General ---
             case Op_code::Pop:
             {
