@@ -73,29 +73,62 @@ void Compiler::visit_literal_expr(const ast::Literal_expr &expr) { emit_constant
 
 void Compiler::visit_binary_expr(const ast::Binary_expr &expr)
 {
+    // --- SHORT CIRCUITING LOGICAL OPERATORS ---
+    if (expr.op == lex::TokenType::LogicalAnd)
+    {
+        compile_expr(expr.left);
+
+        // If left is false, jump completely over the right side.
+        // It leaves the 'false' value on the stack as the result of the whole expression.
+        size_t end_jump = emit_jump(Op_code::Jump_if_false, expr.loc);
+
+        // If we didn't jump, left was true. Pop it off so we can evaluate the right side.
+        emit_op(Op_code::Pop, expr.loc);
+
+        compile_expr(expr.right);
+        patch_jump(end_jump, expr.loc);
+        return;
+    }
+    else if (expr.op == lex::TokenType::LogicalOr)
+    {
+        compile_expr(expr.left);
+
+        // If left is true, jump over the right side.
+        // Leaves the 'true' value on the stack as the result.
+        size_t end_jump = emit_jump(Op_code::Jump_if_true, expr.loc);
+
+        // If we didn't jump, left was false. Pop it.
+        emit_op(Op_code::Pop, expr.loc);
+
+        compile_expr(expr.right);
+        patch_jump(end_jump, expr.loc);
+        return;
+    }
+
+    // --- NORMAL BINARY OPERATORS ---
     compile_expr(expr.left);
     compile_expr(expr.right);
 
     switch (expr.op)
     {
-        case lex::TokenType::Plus:         emit_op(Op_code::Add, expr.loc); break;
-        case lex::TokenType::Minus:        emit_op(Op_code::Subtract, expr.loc); break;
-        case lex::TokenType::Star:         emit_op(Op_code::Multiply, expr.loc); break;
-        case lex::TokenType::Slash:        emit_op(Op_code::Divide, expr.loc); break;
-        case lex::TokenType::Percent:      emit_op(Op_code::Modulo, expr.loc); break;
+        case lex::TokenType::Plus:         emit_op(Op_code::Add, expr.loc);           break;
+        case lex::TokenType::Minus:        emit_op(Op_code::Subtract, expr.loc);      break;
+        case lex::TokenType::Star:         emit_op(Op_code::Multiply, expr.loc);      break;
+        case lex::TokenType::Slash:        emit_op(Op_code::Divide, expr.loc);        break;
+        case lex::TokenType::Percent:      emit_op(Op_code::Modulo, expr.loc);        break;
 
-        case lex::TokenType::Equal:        emit_op(Op_code::Equal, expr.loc); break;
-        case lex::TokenType::NotEqual:     emit_op(Op_code::Not_equal, expr.loc); break;
-        case lex::TokenType::Less:         emit_op(Op_code::Less, expr.loc); break;
-        case lex::TokenType::LessEqual:    emit_op(Op_code::Less_equal, expr.loc); break;
-        case lex::TokenType::Greater:      emit_op(Op_code::Greater, expr.loc); break;
+        case lex::TokenType::Equal:        emit_op(Op_code::Equal, expr.loc);         break;
+        case lex::TokenType::NotEqual:     emit_op(Op_code::Not_equal, expr.loc);     break;
+        case lex::TokenType::Less:         emit_op(Op_code::Less, expr.loc);          break;
+        case lex::TokenType::LessEqual:    emit_op(Op_code::Less_equal, expr.loc);    break;
+        case lex::TokenType::Greater:      emit_op(Op_code::Greater, expr.loc);       break;
         case lex::TokenType::GreaterEqual: emit_op(Op_code::Greater_equal, expr.loc); break;
 
-        case lex::TokenType::BitAnd:       emit_op(Op_code::BitAnd, expr.loc); break;
-        case lex::TokenType::Pipe:         emit_op(Op_code::BitOr, expr.loc); break;
-        case lex::TokenType::BitXor:       emit_op(Op_code::BitXor, expr.loc); break;
-        case lex::TokenType::BitRshift:    emit_op(Op_code::BitRShift, expr.loc); break;
-        case lex::TokenType::BitLShift:    emit_op(Op_code::BitLShift, expr.loc); break;
+        case lex::TokenType::BitAnd:       emit_op(Op_code::BitAnd, expr.loc);        break;
+        case lex::TokenType::Pipe:         emit_op(Op_code::BitOr, expr.loc);         break;
+        case lex::TokenType::BitXor:       emit_op(Op_code::BitXor, expr.loc);        break;
+        case lex::TokenType::BitRshift:    emit_op(Op_code::BitRShift, expr.loc);     break;
+        case lex::TokenType::BitLShift:    emit_op(Op_code::BitLShift, expr.loc);     break;
         default:
             std::println(stderr, "Binary op code: {} not supported by compiler.", lex::token_to_string(expr.op));
             break;

@@ -1,107 +1,95 @@
-(* ======================================== *)
-(* 1. Program Structure & Declarations      *)
-(* ======================================== *)
+program         ::= declaration* EOF ;
 
-program              = { declaration | newline } ;
+declaration     ::= fn_decl
+                  | model_decl
+                  | union_decl
+                  | var_decl
+                  | statement ;
 
-declaration          = function_declaration
-                     | model_declaration
-                     | variable_declaration
-                     | statement ;
+fn_decl         ::= "fn" IDENT "(" param_list? ")" ("->" type)? block ;
+param_list      ::= param ("," param)* ;
+param           ::= "mut"? IDENT ":" type ;
 
-function_declaration = "fn" identifier "(" [ parameter_list ] ")" [ "->" type ] block_statement ;
-model_declaration    = "model" identifier "{" { field_declaration | function_declaration } "}" ;
-field_declaration    = "let" [ "const" ] identifier ":" type [ "=" expression ] ";" ;
-variable_declaration = "let" [ "const" ] identifier ( ":" type [ "=" expression ] | ":=" expression ) ";" ;
+model_decl      ::= "model" IDENT "{" (model_field | model_method)* "}" ;
+model_field     ::= "let" IDENT ":" type ";" ;
+model_method    ::= "static"? "fn" IDENT "(" param_list? ")" ("->" type)? block ;
 
-parameter_list       = parameter { "," parameter } ;
-parameter            = [ "const" ] identifier ":" type ;
+union_decl      ::= "union" IDENT "{" union_variant* "}" ;
+union_variant   ::= "let" IDENT ":" type ";" ;
 
+var_decl        ::= "let" ("mut" | "const")? IDENT ( ":=" expr | ":" type ("=" expr)? ) ";" ;
 
-(* ======================================== *)
-(* 2. Statements                            *)
-(* ======================================== *)
+statement       ::= print_stmt
+                  | block
+                  | if_stmt
+                  | while_stmt
+                  | for_stmt
+                  | for_in_stmt
+                  | match_stmt
+                  | return_stmt
+                  | expr_stmt ;
 
-statement            = print_statement
-                     | if_statement
-                     | while_statement
-                     | for_statement
-                     | return_statement
-                     | block_statement
-                     | expression_statement ;
+print_stmt      ::= ("print" | "print_err") "(" expr ")" ";" ;
+block           ::= "{" declaration* "}" ;
+if_stmt         ::= "if" expr block ("else" (if_stmt | block))? ;
+while_stmt      ::= "while" expr block ;
+for_stmt        ::= "for" "(" (var_decl | expr_stmt | ";") expr? ";" expr? ")" block ;
+for_in_stmt     ::= "for" IDENT "in" expr block ;
 
-expression_statement = expression ";" ;
-print_statement      = ( "print" | "print_err" ) "(" expression ")" ";" ;
-block_statement      = "{" { declaration } "}" ;
-if_statement         = "if" "(" expression ")" statement [ "else" statement ] ;
-while_statement      = "while" "(" expression ")" statement ;
-for_statement        = "for" "(" ( variable_declaration | expression_statement | ";" ) [ expression ] ";" [ expression ] ")" statement ;
-return_statement     = "return" [ expression ] ";" ;
+match_stmt      ::= "match" expr "{" match_arm* "}" ;
+match_arm       ::= (IDENT ("(" IDENT ")")? | "_") ":" statement ","? ;
 
+return_stmt     ::= "return" expr? ";" ;
+expr_stmt       ::= expr ";" ;
 
-(* ======================================== *)
-(* 3. Expressions (by precedence)           *)
-(* ======================================== *)
+type            ::= type_base type_suffix* ;
+type_base       ::= "(" type ")"
+                  | closure_type
+                  | "i64" | "f64" | "bool" | "string" | "void" | "any"
+                  | IDENT ;
 
-expression           = assignment ;
+closure_type    ::= ("|" type_list? "|" | "||") "->" type ;
+type_list       ::= type ("," type)* ;
+type_suffix     ::= "[]" | "?" ;
 
-assignment           = ( call ( "." identifier | "[" expression "]" ) | identifier ) "=" assignment
-                     | logical_or ;
+expr            ::= assignment ;
+assignment      ::= range_expr ("=" assignment)? ;
+range_expr      ::= logical_or ((".." | "..=") logical_or)? ;
+logical_or      ::= logical_and ("||" logical_and)* ;
+logical_and     ::= bitwise_or ("&&" bitwise_or)* ;
+bitwise_or      ::= bitwise_xor ("|" bitwise_xor)* ;
+bitwise_xor     ::= bitwise_and ("^" bitwise_and)* ;
+bitwise_and     ::= equality ("&" equality)* ;
+equality        ::= comparison (("==" | "!=") comparison)* ;
+comparison      ::= bitwise_shift (("<" | "<=" | ">" | ">=") bitwise_shift)* ;
+bitwise_shift   ::= term (("<<" | ">>") term)* ;
+term            ::= factor (("+" | "-") factor)* ;
+factor          ::= cast_expr (("*" | "/" | "%") cast_expr)* ;
+cast_expr       ::= unary ("as" type)* ;
+unary           ::= ("!" | "-" | "~") cast_expr | call ;
 
-logical_or           = logical_and { "||" logical_and } ;
-logical_and          = equality { "&&" equality } ;
-equality             = comparison { ( "==" | "!=" ) comparison } ;
-comparison           = term { ( ">" | ">=" | "<" | "<=" ) term } ;
-term                 = factor { ( "+" | "-" ) factor } ;
-factor               = cast { ( "*" | "/" | "%" ) cast } ;
-cast                 = unary { "as" type } ;
-unary                = ( "!" | "-" ) unary
-                     | call ;
+call            ::= primary ("(" arg_list? ")" | "[" expr "]" | "." IDENT ("(" arg_list? ")")? | "::" IDENT)* ;
+arg_list        ::= expr ("," expr)* ;
 
-call                 = primary { call_suffix } ;
-call_suffix          = "(" [ argument_list ] ")"
-                     | "." identifier
-                     | "[" expression "]" ;
+primary         ::= INT | FLOAT | STRING | FSTRING | BOOL | "nil"
+                  | "this"
+                  | closure_expr
+                  | array_literal
+                  | model_literal
+                  | "spawn" expr
+                  | "await" expr
+                  | "yield" expr?
+                  | IDENT
+                  | "(" expr ")" ;
 
-primary              = literal
-                     | "this"
-                     | identifier
-                     | array_literal
-                     | model_literal
-                     | closure_expression
-                     | "(" expression ")" ;
+closure_expr    ::= ("|" param_list? "|" | "||") ("->" type)? block ;
+array_literal   ::= "[" arg_list? "]" ;
+model_literal   ::= IDENT "{" (field_init ("," field_init)*)? "}" ;
+field_init      ::= IDENT ":" expr ;
 
-argument_list        = expression { "," expression } ;
-
-
-(* ======================================== *)
-(* 4. Literals & Types                      *)
-(* ======================================== *)
-
-literal              = "true" | "false" | "nil" | integer | float | string ;
-array_literal        = "[" [ argument_list ] "]" ;
-model_literal        = identifier "{" [ field_initializer { "," field_initializer } ] "}" ;
-field_initializer    = "." identifier "=" expression ;
-closure_expression   = "|" [ parameter_list ] "|" [ "->" type ] block_statement ;
-
-type                 = base_type { "[]" | "?" } ;
-base_type            = primitive_type 
-                     | identifier
-                     | closure_type
-                     | "(" type ")" ;
-
-primitive_type       = "i64" | "f64" | "bool" | "string" | "void" | "any" ;
-closure_type         = "|" [ type { "," type } ] "|" "->" type ;
-
-
-(* ======================================== *)
-(* 5. Terminals (Lexer Tokens)              *)
-(* ======================================== *)
-
-identifier           = letter { letter | digit | "_" } ;
-integer              = digit { digit } ;
-float                = digit { digit } "." digit { digit } ;
-string               = '"' { any_character_except_quote } '"' ;
-letter               = "a"..."z" | "A"..."Z" ;
-digit                = "0"..."9" ;
-newline              = ? platform-specific newline character(s) ? ;
+INT             ::= [0-9]+ ;
+FLOAT           ::= [0-9]+ "." [0-9]+ ;
+STRING          ::= '"' [^"]* '"' ;
+FSTRING         ::= 'f"' [^"]* '"' ; /* Internal expansion handles {} */
+BOOL            ::= "true" | "false" ;
+IDENT           ::= [a-zA-Z_][a-zA-Z0-9_]* ;

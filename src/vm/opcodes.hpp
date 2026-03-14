@@ -16,7 +16,7 @@ enum class Op_code : uint8_t {
     Get_upvalue, Set_upvalue,
 
     // --- Control Flow ---
-    Jump, Jump_if_false, Loop,
+    Jump, Jump_if_false, Jump_if_true, Loop,
 
     // --- Optionals ---
     Jump_if_nil, Unwrap,

@@ -21,6 +21,7 @@ std::string op_code_to_string(Op_code code)
         case Op_code::Set_upvalue:    return "Set_upvalue";
         case Op_code::Jump:           return "Jump";
         case Op_code::Jump_if_false:  return "Jump_if_false";
+        case Op_code::Jump_if_true:   return "Jump_if_true";
         case Op_code::Loop:           return "Loop";
         case Op_code::Jump_if_nil:    return "Jump_if_nil";
         case Op_code::Unwrap:         return "Unwrap";

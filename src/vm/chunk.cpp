@@ -30,6 +30,7 @@ size_t Chunk::disassemble_instruction(std::ostream &out, size_t offset)
         // 3-byte instructions (Opcode + 2-byte offset)
         case Op_code::Jump:
         case Op_code::Jump_if_false:
+        case Op_code::Jump_if_true:
             return jump_instruction(out, op_code_to_string(op), 1, offset);
         case Op_code::Loop:
             return jump_instruction(out, op_code_to_string(op), -1, offset);

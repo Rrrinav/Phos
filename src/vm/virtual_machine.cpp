@@ -212,6 +212,18 @@ Result<void> Virtual_machine::run()
                     ip += offset;
                 break;
             }
+            case Op_code::Jump_if_true:
+            {
+                uint16_t offset = (static_cast<uint16_t>(*ip) << 8) | *(ip + 1);
+                ip += 2;
+
+                Value cond = peek(0);  // Peek, don't pop. The result becomes the expression value!
+                bool is_true = is_bool(cond) ? get_bool(cond) : !is_nil(cond);
+
+                if (is_true)
+                    ip += offset;
+                break;
+            }
 
             case Op_code::Jump:
             {

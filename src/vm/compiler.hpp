@@ -7,6 +7,12 @@
 
 namespace phos::vm {
 
+struct Local
+{
+    std::string name;
+    int depth;
+};
+
 class Compiler {
 public:
     Compiler() = default;
