@@ -112,6 +112,8 @@ void Compiler::compile_expr(ast::Expr *expr)
         visit_field_assignment_expr(*node);
     else if (auto *node = std::get_if<ast::Method_call_expr>(&expr->node))
         visit_method_call_expr(*node);
+    else if (auto *node = std::get_if<ast::Static_path_expr>(&expr->node))
+        visit_static_path_expr(*node);
     else
         std::println(stderr, "Unimplemented expr node at index: {}", expr->node.index());
 }
@@ -552,27 +554,36 @@ void Compiler::visit_field_assignment_expr(const ast::Field_assignment_expr &exp
 
 void Compiler::visit_method_call_expr(const ast::Method_call_expr &expr)
 {
+    // --- NEW: Closure Field Execution ---
+    if (expr.is_closure_field)
+    {
+        compile_expr(expr.object);  // Pushes the Model
+
+        emit_op(Op_code::Get_field, expr.loc);
+        emit_byte(expr.field_index, expr.loc);  // Replaces Model with the Closure on the stack!
+
+        for (auto *arg : expr.arguments) compile_expr(arg);  // Push args
+
+        emit_op(Op_code::Call, expr.loc);  // Execute!
+        emit_byte(static_cast<uint8_t>(expr.arguments.size()), expr.loc);
+        return;
+    }
+
     auto type_var = ast::get_type(expr.object->node);
     auto model_type_ptr = std::get<mem::rc_ptr<types::Model_type>>(type_var);
 
     std::string global_name = model_type_ptr->name + "::" + expr.method_name;
 
-    // 1. Push Closure to bottom of frame
     uint8_t name_idx = identifier_constant(global_name, expr.loc);
     emit_op(Op_code::Get_global, expr.loc);
     emit_byte(name_idx, expr.loc);
 
-    // 2. Compile object -> becomes the hidden 'this' parameter!
-    compile_expr(expr.object);
-
-    // 3. Compile the explicit arguments
+    compile_expr(expr.object);  // The hidden 'this'
     for (auto *arg : expr.arguments) compile_expr(arg);
 
-    // 4. Call (Add 1 to argument count to account for 'this')
     emit_op(Op_code::Call, expr.loc);
-    emit_byte(static_cast<uint8_t>(expr.arguments.size() + 1), expr.loc);
+    emit_byte(static_cast<uint8_t>(expr.arguments.size() + 1), expr.loc);  // +1 for 'this'
 }
-
 
 void Compiler::visit_static_path_expr(const ast::Static_path_expr &expr)
 {

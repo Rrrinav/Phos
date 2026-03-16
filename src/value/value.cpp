@@ -75,15 +75,20 @@ std::string value_to_string_impl(const Value &value, int indent_level)
     {
         auto model = get_model(value);
         if (model->fields.empty())
-            return model->signature.name + " { }";
+            return model->signature.name + " {}";
+
         std::stringstream ss;
         ss << model->signature.name << " { ";
         for (size_t i = 0; i < model->fields.size(); ++i)
         {
             if (i > 0)
                 ss << ", ";
-            // The name is safely stored in the compile-time signature!
-            ss << model->signature.fields[i].first << ": " << value_to_string_impl(model->fields[i], indent_level);
+
+            // Bounds-check: If the VM provided a rich signature, print the name.
+            if (i < model->signature.fields.size())
+                ss << model->signature.fields[i].first << ": ";
+
+            ss << value_to_string_impl(model->fields[i], indent_level);
         }
         return ss.str() + " }";
     }

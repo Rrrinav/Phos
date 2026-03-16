@@ -115,6 +115,9 @@ struct Method_call_expr
     std::vector<struct Expr*> arguments;
     types::Type               type;
     Source_location           loc;
+
+    bool                      is_closure_field = false;
+    uint8_t                   field_index = 0;
 };
 
 struct Model_literal_expr

@@ -1348,6 +1348,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
     {
         if (contains_key((*mt)->methods, expr.method_name))
         {
+            // --- EXISTING STANDARD METHOD LOGIC ---
             const auto &method_signature = find_by_key((*mt)->methods, expr.method_name)->second;
             if (expr.arguments.size() != method_signature.parameter_types.size())
             {
@@ -1368,9 +1369,50 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
             }
             return expr.type = method_signature.return_type;
         }
+        else
+        {
+            // --- NEW: CLOSURE FIELD FALLBACK LOGIC ---
+            for (size_t i = 0; i < (*mt)->fields.size(); ++i)
+            {
+                if ((*mt)->fields[i].first == expr.method_name)
+                {
+                    auto field_type = (*mt)->fields[i].second;
+
+                    // Check if the field is actually a Function
+                    if (auto *func_type = std::get_if<mem::rc_ptr<types::Function_type>>(&field_type))
+                    {
+                        // Tag the AST so the Compiler knows to emit Get_field instead of Get_global
+                        expr.is_closure_field = true;
+                        expr.field_index = static_cast<uint8_t>(i);
+
+                        // Validate arguments just like a normal method call
+                        if (expr.arguments.size() != (*func_type)->parameter_types.size())
+                        {
+                            type_error(expr.loc,
+                                       std::format("Incorrect number of arguments for closure field '{}'. Expected {}, but got {}.",
+                                                   expr.method_name,
+                                                   (*func_type)->parameter_types.size(),
+                                                   expr.arguments.size()));
+                        }
+                        else
+                        {
+                            for (size_t j = 0; j < expr.arguments.size(); ++j)
+                            {
+                                auto arg_res = check_expr(*expr.arguments[j], (*func_type)->parameter_types[j]);
+                                if (arg_res && !is_compatible((*func_type)->parameter_types[j], *arg_res))
+                                    type_error(ast::get_loc(expr.arguments[j]->node),
+                                               "Argument type mismatch for closure field '" + expr.method_name + "'.");
+                            }
+                        }
+                        return expr.type = (*func_type)->return_type;
+                    }
+                }
+            }
+        }
     }
 
-    type_error(expr.loc, "No method named '" + expr.method_name + "' found for type '" + types::type_to_string(obj_type) + "'.");
+    type_error(expr.loc,
+               "No method or closure field named '" + expr.method_name + "' found for type '" + types::type_to_string(obj_type) + "'.");
     return expr.type = types::Primitive_kind::Void;
 }
 

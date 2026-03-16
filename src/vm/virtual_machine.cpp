@@ -143,6 +143,11 @@ Result<void> Virtual_machine::run()
 
                 if (auto err = call_value(callee, arg_count, frame, ip); !err)
                     return err;
+
+                // IMPORTANT: The frame pointer might have been invalidated by vector reallocation!
+                // Refresh our local pointers!
+                frame = &current_thread->frames.back();
+                ip = frame->ip;
                 break;
             }
 
@@ -159,11 +164,10 @@ Result<void> Virtual_machine::run()
                     return {};
                 }
 
-                // Erase all locals and parameters for the function that just finished
                 current_thread->stack.resize(old_stack_offset);
                 push(result);
 
-                // Resume the outer function exactly where it left off
+                // Refresh our local pointers to the caller's frame!
                 frame = &current_thread->frames.back();
                 ip = frame->ip;
                 break;
