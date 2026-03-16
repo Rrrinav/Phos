@@ -50,6 +50,7 @@ std::string op_code_to_string(Op_code code)
         case Op_code::Get_field:      return "Get_field";
         case Op_code::Set_field:      return "Set_field";
         case Op_code::Unpack:         return "Unpack";
+        case Op_code::Construct_model:return "Construct_model";
         case Op_code::Construct_union:return "Construct_union";
         case Op_code::Match_variant:  return "Match_variant";
         case Op_code::Call:           return "Call";
@@ -61,7 +62,7 @@ std::string op_code_to_string(Op_code code)
         case Op_code::Await:          return "Await";
         case Op_code::Print:          return "Print";
         case Op_code::Halt:           return "Halt";
-        default:                      return "unknown--hawwwwww!--miki, you?";
+        default:                      return "unknown";
     }
 }
 }

@@ -39,6 +39,9 @@ private:
 
     // return types of top-level functions, used downstream by the type checker
     std::unordered_map<std::string, types::Type> function_types_;
+    
+    // Memory of parsed models so the 'bind' block can find them
+    std::unordered_map<std::string, ast::Model_stmt*> parsed_models;
 
     void               skip_newlines();
     const lex::Token&  peek()     const;
@@ -46,7 +49,7 @@ private:
     lex::Token         advance();
     bool               match(std::initializer_list<lex::TokenType> types);
     bool               check(lex::TokenType type) const { return peek().type == type; }
-    bool               is_at_end()               const { return peek().type == lex::TokenType::Eof; }
+    bool               is_at_end()                const { return peek().type == lex::TokenType::Eof; }
     Result<lex::Token> consume(lex::TokenType type, const std::string& message);
     err::msg           create_error(const lex::Token& token, const std::string& message);
     void               synchronize();
@@ -56,6 +59,7 @@ private:
     Result<std::optional<ast::Stmt*>>           declaration();
     Result<ast::Stmt*>                          function_declaration();
     Result<ast::Stmt*>                          model_declaration();
+    Result<ast::Stmt*>                          parse_bind_statement();
     Result<ast::Stmt*>                          union_declaration();
     Result<ast::Stmt*>                          var_declaration();
     Result<std::pair<std::string, types::Type>> parse_model_field();

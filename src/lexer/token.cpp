@@ -38,6 +38,7 @@ std::string phos::lex::token_to_string(phos::lex::TokenType t)
         case TokenType::Static:       return "Static";
         case TokenType::Model:        return "Model";
         case TokenType::Union:        return "Union";
+        case TokenType::Bind:         return "Bind";
         case TokenType::Spawn:        return "Spawn";
         case TokenType::Await:        return "Await";
         case TokenType::Yield:        return "Yield";

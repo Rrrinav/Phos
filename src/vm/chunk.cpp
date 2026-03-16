@@ -40,7 +40,17 @@ size_t Chunk::disassemble_instruction(std::ostream &out, size_t offset)
         case Op_code::Get_global:
         case Op_code::Set_global:
             return constant_instruction(out, op_code_to_string(op), offset);
-        // 2 byte instructions (Opcode + 1-byte index)
+        case Op_code::Construct_model: {
+            uint8_t field_count = code[offset + 1];
+            uint8_t name_idx = code[offset + 2];
+            out << std::format("{:<20} {:>4} fields, name idx {}\n", "Construct_model", field_count, name_idx);
+            return offset + 3;
+        }
+
+        // Add to the 2-byte instructions (Opcode + 1-byte index)
+        case Op_code::Get_field:
+        case Op_code::Set_field:
+            return local_instruction(out, op_code_to_string(op), offset);
         case Op_code::Get_local:
         case Op_code::Set_local:
             return local_instruction(out, op_code_to_string(op), offset);

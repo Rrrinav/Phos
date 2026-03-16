@@ -80,6 +80,8 @@ void Compiler::compile_stmt(ast::Stmt *stmt)
         visit_function_stmt(*node);
     else if (auto *node = std::get_if<ast::Return_stmt>(&stmt->node))
         visit_return_stmt(*node);
+    else if (auto *node = std::get_if<ast::Model_stmt>(&stmt->node))
+        visit_model_stmt(*node);
     else
         std::println(stderr, "Unimplemented stmt node at index: {}", stmt->node.index());
 }
@@ -102,6 +104,14 @@ void Compiler::compile_expr(ast::Expr *expr)
         visit_call_expr(*node);
     else if (auto *node = std::get_if<ast::Closure_expr>(&expr->node))
         visit_closure_expr(*node);
+    else if (auto *node = std::get_if<ast::Model_literal_expr>(&expr->node))
+        visit_model_literal_expr(*node);
+    else if (auto *node = std::get_if<ast::Field_access_expr>(&expr->node))
+        visit_field_access_expr(*node);
+    else if (auto *node = std::get_if<ast::Field_assignment_expr>(&expr->node))
+        visit_field_assignment_expr(*node);
+    else if (auto *node = std::get_if<ast::Method_call_expr>(&expr->node))
+        visit_method_call_expr(*node);
     else
         std::println(stderr, "Unimplemented expr node at index: {}", expr->node.index());
 }
@@ -300,6 +310,50 @@ void Compiler::visit_for_stmt(const ast::For_stmt &stmt)
     end_scope(stmt.loc);
 }
 
+void Compiler::visit_model_stmt(const ast::Model_stmt &stmt)
+{
+    // Compile every method bound to this model
+    for (const auto *method : stmt.methods)
+    {
+        types::Function_type sig;
+        for (const auto &p : method->parameters) sig.parameter_types.push_back(p.type);
+        sig.return_type = method->return_type;
+
+        auto chunk = mem::make_rc<Chunk>();
+        std::string global_name = stmt.name + "::" + method->name;
+
+        // Arity accounts for the hidden 'this' parameter if it's an instance method
+        size_t arity = method->parameters.size() + (method->is_static ? 0 : 1);
+        auto closure = mem::make_rc<Closure_value>(global_name, arity, sig, chunk);
+        states.push_back({closure, {}, 0});
+
+        // Slot 0: The function itself
+        current()->locals.push_back(Local{global_name, 0});
+
+        // Slot 1: 'this' (if instance method)
+        if (!method->is_static)
+            current()->locals.push_back(Local{"this", 0});
+
+        for (const auto &p : method->parameters) current()->locals.push_back(Local{p.name, 0});
+
+        compile_stmt(method->body);
+
+        emit_op(Op_code::Nil, method->loc);
+        emit_op(Op_code::Return, method->loc);
+
+        auto finished_closure = current()->closure;
+        states.pop_back();
+
+        size_t idx = current_chunk()->add_constant(Value(finished_closure));
+        emit_op(Op_code::Constant, method->loc);
+        emit_byte(idx, method->loc);
+
+        uint8_t name_idx = identifier_constant(global_name, method->loc);
+        emit_op(Op_code::Define_global, method->loc);
+        emit_byte(name_idx, method->loc);
+    }
+}
+
 void Compiler::visit_variable_expr(const ast::Variable_expr &expr)
 {
     int arg = resolve_local(expr.name);
@@ -427,6 +481,107 @@ void Compiler::visit_unary_expr(const ast::Unary_expr &expr)
             break;
         default:
             break;
+    }
+}
+
+void Compiler::visit_model_literal_expr(const ast::Model_literal_expr &expr)
+{
+    auto type_var = expr.type;
+    auto model_type_ptr = std::get<mem::rc_ptr<types::Model_type>>(type_var);
+
+    // Compile fields in the EXACT memory order dictated by the signature
+    for (const auto &sig_field : model_type_ptr->fields)
+    {
+        for (const auto &ast_field : expr.fields)
+        {
+            if (ast_field.first == sig_field.first)
+            {
+                compile_expr(ast_field.second);
+                break;
+            }
+        }
+    }
+
+    emit_op(Op_code::Construct_model, expr.loc);
+    emit_byte(static_cast<uint8_t>(model_type_ptr->fields.size()), expr.loc);
+    emit_byte(identifier_constant(model_type_ptr->name, expr.loc), expr.loc);
+}
+
+void Compiler::visit_field_access_expr(const ast::Field_access_expr &expr)
+{
+    compile_expr(expr.object);
+
+    auto type_var = ast::get_type(expr.object->node);
+    auto model_type_ptr = std::get<mem::rc_ptr<types::Model_type>>(type_var);
+
+    uint8_t index = 0;
+    for (size_t i = 0; i < model_type_ptr->fields.size(); ++i)
+    {
+        if (model_type_ptr->fields[i].first == expr.field_name)
+        {
+            index = i;
+            break;
+        }
+    }
+
+    emit_op(Op_code::Get_field, expr.loc);
+    emit_byte(index, expr.loc);
+}
+
+void Compiler::visit_field_assignment_expr(const ast::Field_assignment_expr &expr)
+{
+    compile_expr(expr.value);   // Pushes the value
+    compile_expr(expr.object);  // Pushes the object
+
+    auto type_var = ast::get_type(expr.object->node);
+    auto model_type_ptr = std::get<mem::rc_ptr<types::Model_type>>(type_var);
+
+    uint8_t index = 0;
+    for (size_t i = 0; i < model_type_ptr->fields.size(); ++i)
+    {
+        if (model_type_ptr->fields[i].first == expr.field_name)
+        {
+            index = i;
+            break;
+        }
+    }
+
+    emit_op(Op_code::Set_field, expr.loc);
+    emit_byte(index, expr.loc);
+}
+
+void Compiler::visit_method_call_expr(const ast::Method_call_expr &expr)
+{
+    auto type_var = ast::get_type(expr.object->node);
+    auto model_type_ptr = std::get<mem::rc_ptr<types::Model_type>>(type_var);
+
+    std::string global_name = model_type_ptr->name + "::" + expr.method_name;
+
+    // 1. Push Closure to bottom of frame
+    uint8_t name_idx = identifier_constant(global_name, expr.loc);
+    emit_op(Op_code::Get_global, expr.loc);
+    emit_byte(name_idx, expr.loc);
+
+    // 2. Compile object -> becomes the hidden 'this' parameter!
+    compile_expr(expr.object);
+
+    // 3. Compile the explicit arguments
+    for (auto *arg : expr.arguments) compile_expr(arg);
+
+    // 4. Call (Add 1 to argument count to account for 'this')
+    emit_op(Op_code::Call, expr.loc);
+    emit_byte(static_cast<uint8_t>(expr.arguments.size() + 1), expr.loc);
+}
+
+
+void Compiler::visit_static_path_expr(const ast::Static_path_expr &expr)
+{
+    // e.g., User::new -> Compiles down to Get_global "User::new"
+    if (auto* base_var = std::get_if<ast::Variable_expr>(&expr.base->node)) {
+        std::string global_name = base_var->name + "::" + expr.member.lexeme;
+        uint8_t name_idx = identifier_constant(global_name, expr.loc);
+        emit_op(Op_code::Get_global, expr.loc);
+        emit_byte(name_idx, expr.loc);
     }
 }
 

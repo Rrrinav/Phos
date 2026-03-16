@@ -56,6 +56,7 @@ public:
     void visit_for_stmt(const ast::For_stmt &stmt);
     void visit_function_stmt(const ast::Function_stmt &stmt);
     void visit_return_stmt(const ast::Return_stmt &stmt);
+    void visit_model_stmt(const ast::Model_stmt &stmt);
 
     // --- Expression Visitors ---
     void visit_literal_expr(const ast::Literal_expr &expr);
@@ -65,6 +66,11 @@ public:
     void visit_assignment_expr(const ast::Assignment_expr &expr);
     void visit_call_expr(const ast::Call_expr &expr);
     void visit_closure_expr(const ast::Closure_expr &expr);
+    void visit_model_literal_expr(const ast::Model_literal_expr &expr);
+    void visit_field_access_expr(const ast::Field_access_expr &expr);
+    void visit_field_assignment_expr(const ast::Field_assignment_expr &expr);
+    void visit_method_call_expr(const ast::Method_call_expr &expr);
+    void visit_static_path_expr(const ast::Static_path_expr &expr);
 
     // --- Bytecode Emitters ---
     void emit_byte(uint8_t byte, phos::ast::Source_location loc);

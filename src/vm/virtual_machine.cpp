@@ -205,6 +205,43 @@ Result<void> Virtual_machine::run()
                 break;
             }
 
+            case Op_code::Construct_model:
+            {
+                uint8_t field_count = *ip++;
+                uint8_t name_idx = *ip++;
+                std::string sig_name = get_string(frame->closure->chunk->constants[name_idx]);
+
+                std::vector<Value> fields(field_count);
+                // Pop fields backwards because the compiler pushed them left-to-right
+                for (int i = field_count - 1; i >= 0; --i) fields[i] = pop();
+
+                // Construct a lightweight signature reference
+                types::Model_type sig;
+                sig.name = sig_name;
+                push(Value(mem::make_rc<Model_value>(sig, std::move(fields))));
+                break;
+            }
+
+            case Op_code::Get_field:
+            {
+                uint8_t index = *ip++;
+                Value obj = pop();
+                auto model_val = get_model(obj);
+                push(model_val->fields[index]);
+                break;
+            }
+
+            case Op_code::Set_field:
+            {
+                uint8_t index = *ip++;
+                Value obj = pop();
+                Value val = peek(0);  // The assigned value was pushed first, so it's under the object
+                auto model_val = get_model(obj);
+                model_val->fields[index] = val;
+                // Leave the assigned value right there on the stack as the result of the expression
+                break;
+            }
+
             case Op_code::Add:
                 if (auto err = execute_binary_op(phos::util::add_op, frame, ip); !err)
                     return err;

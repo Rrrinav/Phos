@@ -94,6 +94,7 @@ void Parser::synchronize()
             case lex::TokenType::Print:
             case lex::TokenType::Return:
             case lex::TokenType::Model:
+            case lex::TokenType::Bind:
             case lex::TokenType::Union:
                 return;
             default:
@@ -140,6 +141,11 @@ Result<std::optional<ast::Stmt*>> Parser::declaration()
 
     if (match({lex::TokenType::Fn}))    return std::optional<ast::Stmt*>{__Try(function_declaration())};
     if (match({lex::TokenType::Model})) return std::optional<ast::Stmt*>{__Try(model_declaration())};
+    if (match({lex::TokenType::Bind}))
+    {
+        __Try(parse_bind_statement());
+        return std::optional<ast::Stmt*>{std::nullopt};
+    }
     if (match({lex::TokenType::Union})) return std::optional<ast::Stmt*>{__Try(union_declaration())};
     if (match({lex::TokenType::Let}))   return std::optional<ast::Stmt*>{__Try(var_declaration())};
 
@@ -187,7 +193,7 @@ Result<ast::Stmt*> Parser::function_declaration()
     });
 }
 
-// model_decl -> "model" IDENT "{" (field_decl | method_decl)* "}"
+// model_decl -> "model" IDENT "{" field_decl* "}"
 Result<ast::Stmt*> Parser::model_declaration()
 {
     auto name = __Try(consume(lex::TokenType::Identifier, "Expected model name"));
@@ -204,29 +210,14 @@ Result<ast::Stmt*> Parser::model_declaration()
         skip_newlines();
         if (check(lex::TokenType::RightBrace)) break;
 
-        bool next_is_static_fn = peek().type == lex::TokenType::Static
-                              && current_ + 1 < tokens_.size()
-                              && tokens_[current_ + 1].type == lex::TokenType::Fn;
-
-        if (match({lex::TokenType::Fn}) || next_is_static_fn)
-        {
-            methods.push_back(this->arena_.create<ast::Function_stmt>(__Try(parse_model_method())));
-        }
-        else if (match({lex::TokenType::Let}))
-        {
-            fields.push_back(__Try(parse_model_field()));
-        }
-        else
-        {
-            return std::unexpected(create_error(peek(),
-                "Expect field ('let') or method ('fn') declaration in model"));
-        }
+        fields.push_back(__Try(parse_model_field()));
+        skip_newlines();
     }
 
     __TryIgnore(consume(lex::TokenType::RightBrace, "Expect '}' after model body"));
     current_model_.clear();
 
-    return mem::Arena::alloc(this->arena_, ast::Stmt{
+    auto stmt = mem::Arena::alloc(this->arena_, ast::Stmt{
         ast::Model_stmt{
             .name    = name.lexeme,
             .fields  = fields,
@@ -234,6 +225,42 @@ Result<ast::Stmt*> Parser::model_declaration()
             .loc     = {name.line, name.column},
         }
     });
+
+    // Save a direct pointer to the Model AST node so 'bind' can find it later!
+    parsed_models[name.lexeme] = std::get_if<ast::Model_stmt>(&stmt->node);
+
+    return stmt;
+}
+
+// bind_stmt -> "bind" IDENT "{" method_decl* "}"
+Result<ast::Stmt*> Parser::parse_bind_statement()
+{
+    auto name = __Try(consume(lex::TokenType::Identifier, "Expected model name to bind to"));
+
+    if (!parsed_models.count(name.lexeme)) {
+        return std::unexpected(create_error(name, "Cannot bind methods to undeclared model '" + name.lexeme + "'. Please declare the model first."));
+    }
+
+    auto target_model = parsed_models[name.lexeme];
+    current_model_ = name.lexeme;
+
+    __TryIgnore(consume(lex::TokenType::LeftBrace, "Expect '{' before bind body"));
+
+    while (!check(lex::TokenType::RightBrace) && !is_at_end())
+    {
+        skip_newlines();
+        if (check(lex::TokenType::RightBrace)) break;
+
+        auto method_ast = this->arena_.create<ast::Function_stmt>(__Try(parse_model_method()));
+        target_model->methods.push_back(method_ast);
+
+        skip_newlines();
+    }
+
+    __TryIgnore(consume(lex::TokenType::RightBrace, "Expect '}' after bind body"));
+    current_model_.clear();
+
+    return nullptr;
 }
 
 // union_decl -> "union" IDENT "{" ("let" IDENT ":" type ";")* "}"
@@ -286,12 +313,12 @@ Result<std::pair<std::string, types::Type>> Parser::parse_model_field()
 }
 
 // method_decl -> "static"? "fn" IDENT "(" param* ")" ("->" type)? block
-// param       -> "mut"? IDENT ":" type
 Result<ast::Function_stmt> Parser::parse_model_method()
 {
     bool is_static = match({lex::TokenType::Static});
-    if (is_static)
-        __TryIgnore(consume(lex::TokenType::Fn, "Expect 'fn' after 'static'"));
+
+    // We consume 'fn' here now so the parser correctly expects it inside the bind block
+    __TryIgnore(consume(lex::TokenType::Fn, is_static ? "Expect 'fn' after 'static'" : "Expect 'fn' keyword for method"));
 
     auto name = __Try(consume(lex::TokenType::Identifier, "Expect method name"));
     __TryIgnore(consume(lex::TokenType::LeftParen, "Expect '(' after method name"));
@@ -336,7 +363,7 @@ Result<ast::Stmt*> Parser::var_declaration()
     auto name = __Try(consume(lex::TokenType::Identifier, "Expect variable name"));
 
     types::Type var_type    = types::Type(types::Primitive_kind::Void);
-    ast::Expr*  initializer = nullptr;
+    ast::Expr* initializer = nullptr;
     bool        type_inferred = false;
 
     if (match({lex::TokenType::Colon}))
@@ -673,6 +700,7 @@ Result<ast::Expr*> Parser::assignment()
                     .object     = field_access_expr->object,
                     .field_name = field_access_expr->field_name,
                     .value      = value_result,
+                    .type       = types::Type(types::Primitive_kind::Void),
                     .loc        = {equals.line, equals.column},
                 }
             });
@@ -1008,7 +1036,7 @@ Result<ast::Expr*> Parser::call()
         }
         else if (match({lex::TokenType::LeftBracket}))
         {
-            auto index_result        = __Try(expression());
+            auto index_result         = __Try(expression());
             auto right_bracket_result = __Try(consume(lex::TokenType::RightBracket, "Expect ']' after array index"));
 
             auto* array_access_node = mem::Arena::alloc(arena_, ast::Array_access_expr{

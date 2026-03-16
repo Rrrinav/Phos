@@ -896,11 +896,17 @@ Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr, std::o
         case lex::TokenType::Plus:
             if (is_string(left_type) && is_string(right_type))
                 return expr.type = types::Primitive_kind::String;
+            if (is_numeric(left_type) && is_numeric(right_type))
+                return expr.type = promote_numeric_type(left_type, right_type);
+
+            report_error("Operands must be two numbers or two strings for '+'");
+            return expr.type = types::Primitive_kind::Void;
+
         case lex::TokenType::Minus:
         case lex::TokenType::Star:
             if (!is_numeric(left_type) || !is_numeric(right_type))
             {
-                report_error("Operands must be two numbers or two strings for '+'");
+                report_error("Operands must be two numbers for this operator.");
                 return expr.type = types::Primitive_kind::Void;
             }
             return expr.type = promote_numeric_type(left_type, right_type);

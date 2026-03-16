@@ -36,7 +36,7 @@ enum class TokenType : uint8_t
     If, Else, While, For, In, Return, Match,
 
     //  Declarations
-    Fn, Static, Model, Union,
+    Fn, Static, Model, Union, Bind,
 
     //  Concurrency
     Spawn, Await, Yield,
@@ -128,6 +128,7 @@ static const std::unordered_map<std::string_view, TokenType> token_keywords =
     { "static",    TokenType::Static    },
     { "model",     TokenType::Model     },
     { "union",     TokenType::Union     },
+    { "bind",      TokenType::Bind      },
 
     // concurrency
     { "spawn",     TokenType::Spawn     },
