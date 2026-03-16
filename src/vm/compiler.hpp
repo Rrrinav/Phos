@@ -5,6 +5,7 @@
 #include "../parser/ast.hpp"
 #include "chunk.hpp"
 #include "../error/result.hpp"
+#include "../value/value.hpp"
 
 namespace phos::vm
 {
@@ -15,20 +16,28 @@ struct Local
     int depth;
 };
 
+// Tracks the chunk and local variables for the currently compiling function
+struct Compiler_state
+{
+    mem::rc_ptr<Closure_value> closure;
+    std::vector<Local> locals;
+    int scope_depth = 0;
+};
+
 class Compiler
 {
 public:
     Compiler() = default;
 
-    Result<Chunk> compile(const std::vector<ast::Stmt *> &statements);
+    // The compiler now returns a fully constructed Script function!
+    Result<mem::rc_ptr<Closure_value>> compile(const std::vector<ast::Stmt *> &statements);
+    std::vector<Compiler_state> states;
 
-private:
-    Chunk current_chunk;
+    // --- State Accessors ---
+    Compiler_state *current() { return &states.back(); }
+    Chunk *current_chunk() { return current()->closure->chunk.get(); }
 
     // --- Scoping & Locals ---
-    std::vector<Local> locals;
-    int scope_depth = 0;
-
     void begin_scope();
     void end_scope(phos::ast::Source_location loc);
     int resolve_local(const std::string &name);
@@ -44,6 +53,9 @@ private:
     void visit_block_stmt(const ast::Block_stmt &stmt);
     void visit_if_stmt(const ast::If_stmt &stmt);
     void visit_while_stmt(const ast::While_stmt &stmt);
+    void visit_for_stmt(const ast::For_stmt &stmt);
+    void visit_function_stmt(const ast::Function_stmt &stmt);
+    void visit_return_stmt(const ast::Return_stmt &stmt);
 
     // --- Expression Visitors ---
     void visit_literal_expr(const ast::Literal_expr &expr);
@@ -51,6 +63,8 @@ private:
     void visit_unary_expr(const ast::Unary_expr &expr);
     void visit_variable_expr(const ast::Variable_expr &expr);
     void visit_assignment_expr(const ast::Assignment_expr &expr);
+    void visit_call_expr(const ast::Call_expr &expr);
+    void visit_closure_expr(const ast::Closure_expr &expr);
 
     // --- Bytecode Emitters ---
     void emit_byte(uint8_t byte, phos::ast::Source_location loc);

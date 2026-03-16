@@ -11,7 +11,6 @@
 #include "../error/err.hpp"
 #include "../error/result.hpp"
 #include "../value/type.hpp"
-#include "../interpreter/native_signatures.hpp"
 
 namespace phos
 {
@@ -25,7 +24,7 @@ class TypeResolver
 {
 public:
     TypeResolver(Type_checker &checker) : checker(checker) {}
-    void resolve(std::vector<ast::Stmt*> &statements);
+    void resolve(std::vector<ast::Stmt *> &statements);
 
 private:
     Type_checker &checker;
@@ -34,7 +33,9 @@ private:
     void resolve_type(types::Type &type);
 
     template <typename T>
-    void visit(T &node) { } // Default visitor
+    void visit(T &node)
+    {
+    }  // Default visitor
     void visit(ast::Function_stmt &stmt);
     void visit(ast::Model_stmt &stmt);
     void visit(ast::Union_stmt &stmt);
@@ -80,18 +81,11 @@ public:
     std::unordered_map<std::string, mem::rc_ptr<types::Model_type>> model_signatures;
     std::unordered_map<std::string, mem::rc_ptr<types::Union_type>> m_union_signatures;
 
-    void type_error(const ast::Source_location &loc, const std::string &message)
-    {
-        errors.push_back({message, this->phase, loc.l, loc.c});
-    }
+    void type_error(const ast::Source_location &loc, const std::string &message) { errors.push_back({message, this->phase, loc.l, loc.c}); }
 
-    std::vector<err::msg> check(std::vector<ast::Stmt*> &statements);
+    std::vector<err::msg> check(std::vector<ast::Stmt *> &statements);
 
-    Type_checker()
-    {
-        m_native_signatures = native::get_native_fn_signatures();
-        m_native_methods = native::get_native_method_signatures();
-    }
+    Type_checker() = default;
 
 private:
     struct FunctionData
@@ -112,8 +106,6 @@ private:
 
     std::unordered_map<std::string, FunctionData> functions;
     std::unordered_map<std::string, ModelData> model_data;
-    std::unordered_map<std::string, native::Native_function_signature> m_native_signatures;
-    std::unordered_map<std::string, native::Native_method_signature> m_native_methods;
 
     std::optional<types::Type> current_return_type;
     std::optional<mem::rc_ptr<types::Model_type>> current_model_type;
@@ -129,12 +121,12 @@ private:
     Result<std::pair<types::Type, bool>> lookup(const std::string &name, const ast::Source_location &loc);
     Result<std::pair<types::Type, bool>> lookup_variable(const std::string &name, const ast::Source_location &loc);
     types::Type promote_numeric_type(const types::Type &left, const types::Type &right) const;
+
     bool is_numeric(const types::Type &type) const;
     bool is_boolean(const types::Type &type) const;
     bool is_string(const types::Type &type) const;
     bool is_array(const types::Type &type) const;
     bool is_function(const types::Type &type) const;
-    bool is_closure(const types::Type &type) const;
     bool is_model(const types::Type &type) const;
     bool is_union(const types::Type &type) const;
     bool is_any(const types::Type &type) const;
@@ -142,7 +134,7 @@ private:
     bool is_optional(const types::Type &type) const;
 
     // --- Main Checking Logic ---
-    void collect_signatures(const std::vector<ast::Stmt*> &statements);
+    void collect_signatures(const std::vector<ast::Stmt *> &statements);
     void check_stmt(ast::Stmt &stmt);
     Result<types::Type> check_expr(ast::Expr &expr, std::optional<types::Type> context_type = std::nullopt);
 
@@ -183,4 +175,4 @@ private:
     Result<types::Type> check_expr_node(ast::Yield_expr &expr, std::optional<types::Type> context_type);
     Result<types::Type> check_expr_node(ast::Fstring_expr &expr, std::optional<types::Type> context_type);
 };
-} // namespace phos
+}  // namespace phos

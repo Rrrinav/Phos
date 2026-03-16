@@ -1291,10 +1291,9 @@ Result<ast::Expr*> Parser::parse_closure_expression()
     __TryIgnore(consume(lex::TokenType::LeftBrace, "Expect '{' before closure body"));
     auto body = __Try(block_statement());
 
-    auto closure_type = mem::make_rc<types::Closure_type>();
-    for (const auto& param : parameters)
-        closure_type->function_type.parameter_types.push_back(param.type);
-    closure_type->function_type.return_type = return_type;
+    auto closure_type = mem::make_rc<types::Function_type>();
+    for (const auto &param : parameters) closure_type->parameter_types.push_back(param.type);
+    closure_type->return_type = return_type;
 
     return mem::Arena::alloc(this->arena_, ast::Expr{
         ast::Closure_expr{
@@ -1488,9 +1487,9 @@ Result<types::Type> Parser::parse_type()
         __TryIgnore(consume(lex::TokenType::Arrow, "Expect '->' after closure parameters"));
         auto return_type_result = __Try(parse_type());
 
-        auto closure_t = mem::make_rc<types::Closure_type>();
-        closure_t->function_type.parameter_types = parameter_types;
-        closure_t->function_type.return_type     = return_type_result;
+        auto closure_t = mem::make_rc<types::Function_type>();
+        closure_t->parameter_types = parameter_types;
+        closure_t->return_type     = return_type_result;
         current_type = types::Type(closure_t);
     }
     else if (match({lex::TokenType::TInt64}))   current_type = types::Type(types::Primitive_kind::Int);

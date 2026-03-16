@@ -5,6 +5,7 @@
 
 namespace phos
 {
+
 bool operator==(const Value &lhs, const Value &rhs)
 {
     if (lhs.index() != rhs.index())
@@ -18,12 +19,13 @@ bool operator==(const Value &lhs, const Value &rhs)
 
         if constexpr (std::is_same_v<T, std::nullptr_t> || std::is_same_v<T, std::monostate>)
         {
-            return true;  // nil == nil, void == void
+            return true;
         }
-        else if constexpr (std::is_same_v<T, mem::rc_ptr<Model_value>> || std::is_same_v<T, mem::rc_ptr<Function_value>> ||
-                           std::is_same_v<T, mem::rc_ptr<Closure_value>> || std::is_same_v<T, mem::rc_ptr<Array_value>> ||
-                           std::is_same_v<T, mem::rc_ptr<Native_function_value>>)
+        else if constexpr (std::is_same_v<T, mem::rc_ptr<Model_value>> || std::is_same_v<T, mem::rc_ptr<Closure_value>> ||
+                           std::is_same_v<T, mem::rc_ptr<Array_value>> || std::is_same_v<T, mem::rc_ptr<Native_function_value>> ||
+                           std::is_same_v<T, mem::rc_ptr<Green_thread_value>>)
         {
+            // Pointer identity check for heap objects is much faster for VM execution
             if (!l_val || !r_val)
                 return l_val == r_val;
             return l_val == r_val;
@@ -38,7 +40,6 @@ bool operator==(const Value &lhs, const Value &rhs)
 
 std::string value_to_string_impl(const Value &value, int indent_level)
 {
-    // --- Primitives ---
     if (is_int(value))
         return std::to_string(get_int(value));
     if (is_float(value))
@@ -52,57 +53,22 @@ std::string value_to_string_impl(const Value &value, int indent_level)
     if (is_void(value))
         return "void";
 
-    // --- Array Printing ---
     if (is_array(value))
     {
         auto arr = get_array(value);
         if (arr->elements.empty())
             return "[]";
-
-        // Heuristic: check if any element is complex or if the array is long
-        bool is_complex = arr->elements.size() > 10;
-        if (!is_complex)
-        {
-            for (const auto &el : arr->elements)
-            {
-                if (is_array(el) || is_model(el))
-                {
-                    is_complex = true;
-                    break;
-                }
-            }
-        }
-
         std::stringstream ss;
-        if (!is_complex)  // Single-line format
+        ss << "[";
+        bool first = true;
+        for (const auto &element : arr->elements)
         {
-            ss << "[";
-            bool first = true;
-            for (const auto &element : arr->elements)
-            {
-                if (!first)
-                    ss << ", ";
-                ss << value_to_string_impl(element, indent_level);
-                first = false;
-            }
-            ss << "]";
+            if (!first)
+                ss << ", ";
+            ss << value_to_string_impl(element, indent_level);
+            first = false;
         }
-        else  // Multi-line format
-        {
-            std::string base_indent(indent_level * 2, ' ');
-            std::string inner_indent((indent_level + 1) * 2, ' ');
-            ss << "[\n";
-            bool first = true;
-            for (const auto &element : arr->elements)
-            {
-                if (!first)
-                    ss << ",\n";
-                ss << inner_indent << value_to_string_impl(element, indent_level + 1);
-                first = false;
-            }
-            ss << "\n" << base_indent << "]";
-        }
-        return ss.str();
+        return ss.str() + "]";
     }
 
     if (is_model(value))
@@ -110,93 +76,32 @@ std::string value_to_string_impl(const Value &value, int indent_level)
         auto model = get_model(value);
         if (model->fields.empty())
             return model->signature.name + " { }";
-
-        // Heuristic: check if any field is complex or if there are many fields
-        bool is_complex = model->fields.size() > 3;
-        if (!is_complex)
-        {
-            for (const auto &[name, field_val] : model->fields)
-            {
-                if ((is_array(field_val) && get_array(field_val)->elements.size() > 5) || is_model(field_val))
-                {
-                    is_complex = true;
-                    break;
-                }
-            }
-        }
-
         std::stringstream ss;
-        if (!is_complex)  // Single-line format
+        ss << model->signature.name << " { ";
+        for (size_t i = 0; i < model->fields.size(); ++i)
         {
-            ss << model->signature.name << " { ";
-            bool first = true;
-            for (const auto &[name, field_value] : model->fields)
-            {
-                if (!first)
-                    ss << ", ";
-                ss << name << ": " << value_to_string_impl(field_value, indent_level);
-                first = false;
-            }
-            ss << " }";
-        }
-        else  // Multi-line format
-        {
-            std::string base_indent(indent_level * 2, ' ');
-            std::string inner_indent((indent_level + 1) * 2, ' ');
-            ss << model->signature.name << " {\n";
-            bool first = true;
-            for (const auto &[name, field_value] : model->fields)
-            {
-                if (!first)
-                    ss << ",\n";
-                ss << inner_indent << name << ": " << value_to_string_impl(field_value, indent_level + 1);
-                first = false;
-            }
-            ss << "\n" << base_indent << "}";
-        }
-        return ss.str();
-    }
-
-    // --- Functions & Closures (signatures are single-line) ---
-    if (is_function(value))
-    {
-        auto func = get_function(value);
-        std::stringstream ss;
-        ss << "fn(";
-        bool first = true;
-        for (const auto &param : func->parameters)
-        {
-            if (!first)
+            if (i > 0)
                 ss << ", ";
-            ss << param.first << ": " << types::type_to_string(param.second);
-            first = false;
+            // The name is safely stored in the compile-time signature!
+            ss << model->signature.fields[i].first << ": " << value_to_string_impl(model->fields[i], indent_level);
         }
-        ss << ") -> " << types::type_to_string(func->signature.return_type);
-        return ss.str();
+        return ss.str() + " }";
     }
+
     if (is_closure(value))
-    {
-        auto func = get_closure(value)->function;
-        std::stringstream ss;
-        ss << "closure fn(";
-        bool first = true;
-        for (const auto &param : func->parameters)
-        {
-            if (!first)
-                ss << ", ";
-            ss << param.first << ": " << types::type_to_string(param.second);
-            first = false;
-        }
-        ss << ") -> " << types::type_to_string(func->signature.return_type);
-        return ss.str();
-    }
+        return "fn " + get_closure(value)->name + "()";
+
     if (is_union(value))
+        return "union<" + get_union(value)->tag + ">";
+
+    if (is_thread(value))
     {
-        auto un = get_union(value);
-        std::stringstream ss;
-        ss << "union<" << un->tag << ">";
-        return ss.str();
+        auto t = get_thread(value);
+        return t->is_completed ? "<thread: dead>" : "<thread: suspended>";
     }
+
+    if (is_native_function(value))
+        return "native_fn " + get_native_function(value)->name + "()";
 
     return "unknown";
 }
@@ -205,7 +110,9 @@ std::string value_to_string(const Value &value) { return value_to_string_impl(va
 
 std::string get_value_type_string(const Value &value)
 {
-    return std::visit([](const auto &v) -> std::string {
+    return std::visit(
+    [](const auto &v) -> std::string
+    {
         using T = std::decay_t<decltype(v)>;
         if constexpr (std::is_same_v<T, int64_t>)
             return "i64";
@@ -217,22 +124,24 @@ std::string get_value_type_string(const Value &value)
             return "string";
         else if constexpr (std::is_same_v<T, mem::rc_ptr<Model_value>>)
             return types::type_to_string(types::Type(phos::mem::make_rc<types::Model_type>(v->signature)));
-        else if constexpr (std::is_same_v<T, mem::rc_ptr<Function_value>>)
-            return types::type_to_string(types::Type(mem::make_rc<types::Function_type>(v->signature)));
         else if constexpr (std::is_same_v<T, mem::rc_ptr<Closure_value>>)
-            return types::type_to_string(types::Type(mem::make_rc<types::Closure_type>(v->function->signature)));
+            return types::type_to_string(types::Type(mem::make_rc<types::Function_type>(v->signature)));
         else if constexpr (std::is_same_v<T, mem::rc_ptr<Array_value>>)
             return types::type_to_string(v->type);
         else if constexpr (std::is_same_v<T, mem::rc_ptr<Native_function_value>>)
             return "native_fn<" + v->name + ">";
         else if constexpr (std::is_same_v<T, mem::rc_ptr<Union_value>>)
             return v->tag;
+        else if constexpr (std::is_same_v<T, mem::rc_ptr<Green_thread_value>>)
+            return "thread";
         else if constexpr (std::is_same_v<T, std::nullptr_t>)
             return "nil";
         else if constexpr (std::is_same_v<T, std::monostate>)
             return "void";
         else
             return "unknown";
-    }, value);
+    },
+    value);
 }
-} // namespace phos
+
+}  // namespace phos

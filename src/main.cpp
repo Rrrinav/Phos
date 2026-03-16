@@ -6,7 +6,6 @@
 #include <string>
 #include <vector>
 
-#include "interpreter/interpreter.hpp"
 #include "type-checker/type-checker.hpp"
 #include "parser/ast-printer.hpp"
 #include "parser/parser.hpp"
@@ -115,13 +114,6 @@ int main(int argc, char *argv[])
                 return 0;
         }
         auto statements = std::move(*parse_result);
-        phos::Interpreter interpreter;
-        auto interpret_result = interpreter.interpret(statements);
-        if (!interpret_result)
-        {
-            std::println(stderr, "{}:{}", filename, interpret_result.error().format());
-            return 1;
-        }
     }
     catch (const std::exception &e)
     {
