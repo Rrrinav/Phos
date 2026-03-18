@@ -72,6 +72,9 @@ public:
 
     template <typename Op>
     Result<void> execute_unary_op(Op &&op, Call_frame *frame, uint8_t *ip);
+
+    mem::rc_ptr<Upvalue_value> capture_upvalue(size_t stack_index);
+    void close_upvalues(size_t last_stack_index);
 };
 
 // ============================================================================

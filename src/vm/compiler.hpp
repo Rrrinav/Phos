@@ -16,11 +16,18 @@ struct Local
     int depth;
 };
 
+struct Compiler_upvalue
+{
+    uint8_t index;
+    bool is_local;
+};
+
 // Tracks the chunk and local variables for the currently compiling function
 struct Compiler_state
 {
     mem::rc_ptr<Closure_value> closure;
     std::vector<Local> locals;
+    std::vector<Compiler_upvalue> upvalues;
     int scope_depth = 0;
 };
 
@@ -84,6 +91,10 @@ public:
     size_t emit_jump(Op_code instruction, phos::ast::Source_location loc);
     void patch_jump(size_t offset, phos::ast::Source_location loc);
     void emit_loop(size_t loop_start, phos::ast::Source_location loc);
+
+    int resolve_local_in_state(Compiler_state* state, const std::string &name);
+    int resolve_upvalue(Compiler_state* state, const std::string &name);
+    int add_upvalue(Compiler_state* state, uint8_t index, bool is_local);
 };
 
 }  // namespace phos::vm

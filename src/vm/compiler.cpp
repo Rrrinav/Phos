@@ -15,7 +15,7 @@ Result<mem::rc_ptr<Closure_value>> Compiler::compile(const std::vector<ast::Stmt
     auto main_chunk = mem::make_rc<Chunk>();
     auto main_closure = mem::make_rc<Closure_value>("<main>", 0, main_sig, main_chunk);
 
-    states.push_back({main_closure, {}, 0});
+    states.push_back({main_closure, {}, {}, 0});
 
     // Stack Slot 0 is reserved for the running function itself
     current()->locals.push_back(Local{"<script>", 0});
@@ -33,9 +33,7 @@ Result<mem::rc_ptr<Closure_value>> Compiler::compile(const std::vector<ast::Stmt
     return finished_script;
 }
 
-// ============================================================================
 // Scoping & Locals
-// ============================================================================
 
 void Compiler::begin_scope() { current()->scope_depth++; }
 
@@ -135,7 +133,8 @@ void Compiler::visit_function_stmt(const ast::Function_stmt &stmt)
     // 2. Setup isolated Chunk and State
     auto chunk = mem::make_rc<Chunk>();
     auto closure = mem::make_rc<Closure_value>(stmt.name, stmt.parameters.size(), sig, chunk);
-    states.push_back({closure, {}, 0});
+
+    states.push_back({closure, {}, {}, 0});
 
     // 3. Slot 0 is always the function object itself
     current()->locals.push_back(Local{stmt.name, 0});
@@ -150,14 +149,22 @@ void Compiler::visit_function_stmt(const ast::Function_stmt &stmt)
     emit_op(Op_code::Nil, stmt.loc);
     emit_op(Op_code::Return, stmt.loc);
 
-    // 7. Pop the finished compiler state
+    // 7. Pop the finished compiler state AND grab upvalues
     auto finished_closure = current()->closure;
+    auto upvalues = current()->upvalues;  // <--- Grab before pop!
     states.pop_back();
 
-    // 8. Emit the new function as a Constant in the OUTER scope
+    // 8. Emit the new function as a Closure
     size_t idx = current_chunk()->add_constant(Value(finished_closure));
-    emit_op(Op_code::Constant, stmt.loc);
-    emit_byte(idx, stmt.loc);
+    emit_op(Op_code::Make_closure, stmt.loc);
+    emit_byte(static_cast<uint8_t>(idx), stmt.loc);
+
+    // Loop through upvalues and emit their routing instructions
+    for (const auto &uv : upvalues)
+    {
+        emit_byte(uv.is_local ? 1 : 0, stmt.loc);
+        emit_byte(uv.index, stmt.loc);
+    }
 
     // 9. Bind it to the variable name!
     if (current()->scope_depth == 0)
@@ -180,7 +187,8 @@ void Compiler::visit_closure_expr(const ast::Closure_expr &expr)
 
     auto chunk = mem::make_rc<Chunk>();
     auto closure = mem::make_rc<Closure_value>("<closure>", expr.parameters.size(), sig, chunk);
-    states.push_back({closure, {}, 0});
+
+    states.push_back({closure, {}, {}, 0});
 
     current()->locals.push_back(Local{"<closure>", 0});
     for (const auto &p : expr.parameters) current()->locals.push_back(Local{p.name, 0});
@@ -191,11 +199,19 @@ void Compiler::visit_closure_expr(const ast::Closure_expr &expr)
     emit_op(Op_code::Return, expr.loc);
 
     auto finished_closure = current()->closure;
+    auto upvalues = current()->upvalues;  // <--- Grab before pop!
     states.pop_back();
 
+    // Emit Make_closure and routing bytes
     size_t idx = current_chunk()->add_constant(Value(finished_closure));
-    emit_op(Op_code::Constant, expr.loc);
-    emit_byte(idx, expr.loc);
+    emit_op(Op_code::Make_closure, expr.loc);
+    emit_byte(static_cast<uint8_t>(idx), expr.loc);
+
+    for (const auto &uv : upvalues)
+    {
+        emit_byte(uv.is_local ? 1 : 0, expr.loc);
+        emit_byte(uv.index, expr.loc);
+    }
 }
 
 void Compiler::visit_call_expr(const ast::Call_expr &expr)
@@ -338,7 +354,8 @@ void Compiler::visit_model_stmt(const ast::Model_stmt &stmt)
         // Arity accounts for the hidden 'this' parameter if it's an instance method
         size_t arity = method->parameters.size() + (method->is_static ? 0 : 1);
         auto closure = mem::make_rc<Closure_value>(global_name, arity, sig, chunk);
-        states.push_back({closure, {}, 0});
+
+        states.push_back({closure, {}, {}, 0});
 
         // Slot 0: The function itself
         current()->locals.push_back(Local{global_name, 0});
@@ -355,11 +372,19 @@ void Compiler::visit_model_stmt(const ast::Model_stmt &stmt)
         emit_op(Op_code::Return, method->loc);
 
         auto finished_closure = current()->closure;
+        auto upvalues = current()->upvalues;  // <--- Grab before pop!
         states.pop_back();
 
+        // Emit Make_closure and routing bytes
         size_t idx = current_chunk()->add_constant(Value(finished_closure));
-        emit_op(Op_code::Constant, method->loc);
-        emit_byte(idx, method->loc);
+        emit_op(Op_code::Make_closure, method->loc);
+        emit_byte(static_cast<uint8_t>(idx), method->loc);
+
+        for (const auto &uv : upvalues)
+        {
+            emit_byte(uv.is_local ? 1 : 0, method->loc);
+            emit_byte(uv.index, method->loc);
+        }
 
         uint8_t name_idx = identifier_constant(global_name, method->loc);
         emit_op(Op_code::Define_global, method->loc);
@@ -374,6 +399,11 @@ void Compiler::visit_variable_expr(const ast::Variable_expr &expr)
     {
         emit_op(Op_code::Get_local, expr.loc);
         emit_byte(static_cast<uint8_t>(arg), expr.loc);
+    }
+    else if (int upval = resolve_upvalue(current(), expr.name); upval != -1)
+    {
+        emit_op(Op_code::Get_upvalue, expr.loc);
+        emit_byte(static_cast<uint8_t>(upval), expr.loc);
     }
     else
     {
@@ -391,6 +421,11 @@ void Compiler::visit_assignment_expr(const ast::Assignment_expr &expr)
     {
         emit_op(Op_code::Set_local, expr.loc);
         emit_byte(static_cast<uint8_t>(arg), expr.loc);
+    }
+    else if (int upval = resolve_upvalue(current(), expr.name); upval != -1)
+    {
+        emit_op(Op_code::Set_upvalue, expr.loc);
+        emit_byte(static_cast<uint8_t>(upval), expr.loc);
     }
     else
     {
@@ -678,4 +713,41 @@ void Compiler::emit_loop(size_t loop_start, phos::ast::Source_location loc)
     emit_byte(jump & 0xff, loc);
 }
 
+int Compiler::resolve_local_in_state(Compiler_state *state, const std::string &name)
+{
+    for (int i = static_cast<int>(state->locals.size()) - 1; i >= 0; i--)
+        if (state->locals[i].name == name)
+            return i;
+    return -1;
+}
+
+int Compiler::add_upvalue(Compiler_state *state, uint8_t index, bool is_local)
+{
+    for (size_t i = 0; i < state->upvalues.size(); i++)
+        if (state->upvalues[i].index == index && state->upvalues[i].is_local == is_local)
+            return static_cast<int>(i);
+    state->upvalues.push_back({index, is_local});
+    state->closure->upvalue_count = state->upvalues.size();
+    return static_cast<int>(state->upvalues.size() - 1);
+}
+
+int Compiler::resolve_upvalue(Compiler_state *state, const std::string &name)
+{
+    if (state == &states.front())
+        return -1;  // The global script scope has no upvalues
+
+    Compiler_state *parent = state - 1;
+
+    // 1. Is it a local variable in the immediate parent?
+    int local = resolve_local_in_state(parent, name);
+    if (local != -1)
+        return add_upvalue(state, static_cast<uint8_t>(local), true);
+
+    // 2. Is it an upvalue in the parent? (Recursive searching upwards!)
+    int upvalue = resolve_upvalue(parent, name);
+    if (upvalue != -1)
+        return add_upvalue(state, static_cast<uint8_t>(upvalue), false);
+
+    return -1;
+}
 }  // namespace phos::vm

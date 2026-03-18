@@ -46,9 +46,16 @@ using Value = std::variant<long,
 // Raw C++ Function Pointer for the Zero-Overhead FFI
 using Native_fn = Value (*)(vm::Virtual_machine *vm, uint8_t arg_count);
 
-// ============================================================================
 // Object Definitions
-// ============================================================================
+
+struct Upvalue_value
+{
+    size_t stack_index;            // Where the variable currently lives on the stack
+    bool is_closed = false;        // Has the parent function returned?
+    Value closed_value = nullptr;  // The safe heap storage for when it closes
+
+    Upvalue_value(size_t index) : stack_index(index) {}
+};
 
 struct Closure_value
 {
@@ -61,6 +68,9 @@ struct Closure_value
 
     // If it's a Native C++ function:
     Native_fn native_func = nullptr;
+
+    size_t upvalue_count = 0;
+    std::vector<mem::rc_ptr<Upvalue_value>> upvalues;
 
     // Constructor for Bytecode Functions
     Closure_value(std::string n, size_t a, types::Function_type sig, mem::rc_ptr<vm::Chunk> c)
@@ -109,6 +119,7 @@ struct Green_thread_value
     std::vector<vm::Call_frame> frames;
     std::vector<Value> stack;
     bool is_completed = false;
+    std::vector<mem::rc_ptr<Upvalue_value>> open_upvalues;
 };
 
 // ============================================================================

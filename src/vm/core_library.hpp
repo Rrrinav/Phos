@@ -9,6 +9,24 @@
 namespace phos::vm::core
 {
 
+// --- Identity / Reference Equality ---
+inline bool core_is_same(Value a, Value b)
+{
+    if (a.index() != b.index()) return false;
+
+    if (is_model(a))   return get_model(a).get() == get_model(b).get();
+    if (is_array(a))   return get_array(a).get() == get_array(b).get();
+    if (is_closure(a)) return get_closure(a).get() == get_closure(b).get();
+
+    if (is_int(a))    return get_int(a) == get_int(b);
+    if (is_float(a))  return get_float(a) == get_float(b);
+    if (is_bool(a))   return get_bool(a) == get_bool(b);
+    if (is_string(a)) return get_string(a) == get_string(b);
+    if (is_nil(a))    return true;
+
+    return false;
+}
+
 inline double clock_now()
 {
     using namespace std::chrono;
@@ -47,6 +65,7 @@ inline double math_abs(double x) { return std::abs(x); }
 
 inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
 {
+    vm.bind_native<core_is_same>("is_same", {"T", "T"}, "bool", tc);
     // Clock
     vm.bind_native<clock_now>("clock", {}, "f64", tc);
 
@@ -57,7 +76,6 @@ inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
 
     // Array.push() takes an array of T, and a value of T. Returns T.
     vm.bind_native<array_push>("Array::push", {"T[]", "T"}, "T", tc);
-
     // Array.pop() takes an array of T, and returns an optional T?
     vm.bind_native<array_pop>("Array::pop", {"T[]"}, "T?", tc);
 

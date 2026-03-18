@@ -93,6 +93,36 @@ Result<void> Virtual_machine::call_value(Value callee, int arg_count, Call_frame
     return std::unexpected(err::msg("Can only call functions and closures.", "vm", 0, 0));
 }
 
+mem::rc_ptr<Upvalue_value> Virtual_machine::capture_upvalue(size_t stack_index)
+{
+    // 1. If we are already capturing this local variable, return the existing Upvalue!
+    for (auto &upvalue : current_thread->open_upvalues)
+        if (upvalue->stack_index == stack_index)
+            return upvalue;
+    // 2. Otherwise, create a new one and track it.
+    auto created = mem::make_rc<Upvalue_value>(stack_index);
+    current_thread->open_upvalues.push_back(created);
+    return created;
+}
+
+void Virtual_machine::close_upvalues(size_t last_stack_index)
+{
+    for (auto it = current_thread->open_upvalues.begin(); it != current_thread->open_upvalues.end();)
+    {
+        if ((*it)->stack_index >= last_stack_index)
+        {
+            // Scoop the value off the stack and onto the heap!
+            (*it)->closed_value = current_thread->stack[(*it)->stack_index];
+            (*it)->is_closed = true;
+            it = current_thread->open_upvalues.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
+
 Result<void> Virtual_machine::run()
 {
     Call_frame *frame = &current_thread->frames.back();
@@ -172,11 +202,60 @@ Result<void> Virtual_machine::run()
                 //ip = frame->ip;
                 break;
             }
+            case Op_code::Get_upvalue:
+            {
+                uint8_t slot = *ip++;
+                auto upval = frame->closure->upvalues[slot];
+                if (upval->is_closed)
+                    push(upval->closed_value);
+                else
+                    push(current_thread->stack[upval->stack_index]);
+                break;
+            }
+
+            case Op_code::Set_upvalue:
+            {
+                uint8_t slot = *ip++;
+                auto upval = frame->closure->upvalues[slot];
+                if (upval->is_closed)
+                    upval->closed_value = peek(0);
+                else
+                    current_thread->stack[upval->stack_index] = peek(0);
+                break;
+            }
+
+            case Op_code::Make_closure:
+            {
+                uint8_t constant_idx = *ip++;
+                auto func_closure = get_closure(frame->closure->chunk->constants[constant_idx]);
+
+                // Deep copy so each instance gets its own closure scope!
+                auto runtime_closure = mem::make_rc<Closure_value>(*func_closure);
+                runtime_closure->upvalues.clear();
+
+                for (size_t i = 0; i < func_closure->upvalue_count; ++i)
+                {
+                    uint8_t is_local = *ip++;
+                    uint8_t index = *ip++;
+                    if (is_local)
+                    {
+                        runtime_closure->upvalues.push_back(capture_upvalue(frame->stack_offset + index));
+                    }
+                    else
+                    {
+                        // Pass down the upvalue from the parent closure
+                        runtime_closure->upvalues.push_back(frame->closure->upvalues[index]);
+                    }
+                }
+                push(Value(runtime_closure));
+                break;
+            }
 
             case Op_code::Return:
             {
                 Value result = pop();
 
+                close_upvalues(frame->stack_offset);
                 size_t old_stack_offset = frame->stack_offset;
                 current_thread->frames.pop_back();
 

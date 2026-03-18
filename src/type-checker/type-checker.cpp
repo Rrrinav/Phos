@@ -1119,8 +1119,36 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
                     return expr.type = parse_type_string(sig.ret_type);
                 }
             }
-            type_error(expr.loc, "Arguments do not match any native signature for '" + var_callee->name + "'.");
+
+            // --- HIGH QUALITY ERROR REPORTING ---
+            std::string expected_signatures;
+            for (size_t i = 0; i < signatures.size(); ++i)
+            {
+                const auto &sig = signatures[i];
+                expected_signatures += "(";
+
+                // Start at 0 because standalone functions don't have a hidden 'this' parameter
+                for (size_t j = 0; j < sig.params.size(); ++j)
+                {
+                    expected_signatures += sig.params[j];
+                    if (j < sig.params.size() - 1)
+                        expected_signatures += ", ";
+                }
+                expected_signatures += ")";
+
+                if (i < signatures.size() - 1)
+                    expected_signatures += " OR ";
+            }
+
+            std::string error_str = std::format(
+            "Arguments do not match any native signature for function '{}'.\n    Expected: {}{}", var_callee->name, var_callee->name, expected_signatures);
+
+            if (expected_signatures.find('T') != std::string::npos)
+                error_str += "\n    (Note: 'T' represents the generic element type. For example, in an 'i64[]', T is 'i64'.)";
+
+            type_error(expr.loc, error_str);
             return expr.type = types::Primitive_kind::Void;
+            // ------------------------------------
         }
     }
     // -----------------------------
