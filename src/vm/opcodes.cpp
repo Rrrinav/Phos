@@ -61,6 +61,7 @@ std::string op_code_to_string(Op_code code)
         case Op_code::Yield:          return "Yield";
         case Op_code::Await:          return "Await";
         case Op_code::Print:          return "Print";
+        case Op_code::Print_err:      return "Print_err";
         case Op_code::Halt:           return "Halt";
         default:                      return "unknown";
     }

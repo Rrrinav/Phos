@@ -1,6 +1,13 @@
 #include "./virtual_machine.hpp"
+
 #include "../utility/binary_ops.hpp"
+#include "../memory/ref_counted.hpp"
+#include "../value/value.hpp"
 #include <format>
+#include <iostream>
+
+#include "./chunk.hpp"
+#include "./opcodes.hpp"
 
 namespace phos::vm
 {
@@ -38,13 +45,23 @@ Result<void> Virtual_machine::interpret(mem::rc_ptr<Closure_value> script_closur
     return run();
 }
 
-Result<void> Virtual_machine::call_closure(mem::rc_ptr<Closure_value> closure,
-                                           int arg_count,
-                                           Call_frame *&current_frame,
-                                           uint8_t *&current_ip)
+Result<void> Virtual_machine::call_closure(mem::rc_ptr<Closure_value> closure, int arg_count, Call_frame *&current_frame, uint8_t *&current_ip)
 {
     if (arg_count != closure->arity)
         return std::unexpected(err::msg(std::format("Expected {} arguments but got {}.", closure->arity, arg_count), "vm", 0, 0));
+
+    // --- THE NATIVE C++ INTERCEPT ---
+    if (closure->native_func)
+    {
+        Value result = closure->native_func(this, arg_count);
+
+        // Clean up the stack natively (Drop the args AND the function itself)
+        current_thread->stack.resize(current_thread->stack.size() - arg_count - 1);
+        push(result);
+
+        return {};  // Return instantly without spinning up a VM frame!
+    }
+    // ==========================================
 
     if (current_thread->frames.size() >= 256)
         return std::unexpected(err::msg("Stack overflow.", "vm", 0, 0));
@@ -69,8 +86,10 @@ Result<void> Virtual_machine::call_closure(mem::rc_ptr<Closure_value> closure,
 
 Result<void> Virtual_machine::call_value(Value callee, int arg_count, Call_frame *&current_frame, uint8_t *&current_ip)
 {
+    // Native functions are now unified inside 'Closure_value'
     if (is_closure(callee))
         return call_closure(get_closure(callee), arg_count, current_frame, current_ip);
+
     return std::unexpected(err::msg("Can only call functions and closures.", "vm", 0, 0));
 }
 
@@ -82,6 +101,9 @@ Result<void> Virtual_machine::run()
     for (;;)
     {
         uint8_t instruction = *ip++;
+#ifdef DEBUG_VM
+        std::println(std::cerr, "op: {} stack_size: {}", op_code_to_string(static_cast<Op_code>(instruction)), current_thread->stack.size());
+#endif
 
         switch (static_cast<Op_code>(instruction))
         {
@@ -147,7 +169,7 @@ Result<void> Virtual_machine::run()
                 // IMPORTANT: The frame pointer might have been invalidated by vector reallocation!
                 // Refresh our local pointers!
                 frame = &current_thread->frames.back();
-                ip = frame->ip;
+                //ip = frame->ip;
                 break;
             }
 
@@ -330,6 +352,51 @@ Result<void> Virtual_machine::run()
                     return std::unexpected(err::msg("Operand must be a number for '-'", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
                 break;
             }
+            case Op_code::Create_array:
+            {
+                uint8_t count = *ip++;
+                std::vector<Value> elements(count);
+
+                // Pop elements backwards because the compiler pushed them left-to-right
+                for (int i = count - 1; i >= 0; --i) elements[i] = pop();
+
+                // Create a lightweight dummy type to satisfy the Array_value constructor
+                auto dummy_type = types::Type(mem::make_rc<types::Array_type>(types::Primitive_kind::Any));
+                push(Value(mem::make_rc<Array_value>(dummy_type, std::move(elements))));
+                break;
+            }
+
+            case Op_code::Get_index:
+            {
+                Value index_val = pop();
+                Value array_val = pop();
+
+                auto arr = get_array(array_val);
+                int64_t idx = get_int(index_val);
+
+                if (idx < 0 || idx >= static_cast<int64_t>(arr->elements.size()))
+                    return std::unexpected(err::msg("Array index out of bounds."));
+
+                push(arr->elements[idx]);
+                break;
+            }
+
+            case Op_code::Set_index:
+            {
+                Value index_val = pop();
+                Value array_val = pop();
+                Value val = peek(0);
+
+                auto arr = get_array(array_val);
+                int64_t idx = get_int(index_val);
+
+                if (idx < 0 || idx >= static_cast<int64_t>(arr->elements.size()))
+                    return std::unexpected(err::msg("Array assignment index out of bounds."));
+
+                arr->elements[idx] = val;
+                // Leave the assigned value on the top of the stack
+                break;
+            }
 
             case Op_code::Pop:
             {
@@ -355,6 +422,11 @@ Result<void> Virtual_machine::run()
             case Op_code::Print:
             {
                 *config_.out_stream << value_to_string(pop()) << "\n";
+                break;
+            }
+            case Op_code::Print_err:
+            {
+                *config_.err_stream << value_to_string(pop()) << "\n";
                 break;
             }
             case Op_code::Halt:

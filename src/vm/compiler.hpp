@@ -71,7 +71,9 @@ public:
     void visit_field_assignment_expr(const ast::Field_assignment_expr &expr);
     void visit_method_call_expr(const ast::Method_call_expr &expr);
     void visit_static_path_expr(const ast::Static_path_expr &expr);
-
+    void visit_array_literal_expr(const ast::Array_literal_expr &expr);
+    void visit_array_access_expr(const ast::Array_access_expr &expr);
+    void visit_array_assignment_expr(const ast::Array_assignment_expr &expr);
     // --- Bytecode Emitters ---
     void emit_byte(uint8_t byte, phos::ast::Source_location loc);
     void emit_op(Op_code op, phos::ast::Source_location loc);

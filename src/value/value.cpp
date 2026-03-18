@@ -1,152 +1,118 @@
 #include "value.hpp"
-
-#include <sstream>
-#include "type.hpp"
+#include <format>
 
 namespace phos
 {
 
-bool operator==(const Value &lhs, const Value &rhs)
+// --- Type Checkers ---
+bool is_nil(const Value &val) { return std::holds_alternative<std::nullptr_t>(val) || std::holds_alternative<std::monostate>(val); }
+bool is_bool(const Value &val) { return std::holds_alternative<bool>(val); }
+bool is_int(const Value &val) { return std::holds_alternative<long>(val); }
+bool is_float(const Value &val) { return std::holds_alternative<double>(val); }
+bool is_string(const Value &val) { return std::holds_alternative<std::string>(val); }
+bool is_array(const Value &val) { return std::holds_alternative<mem::rc_ptr<Array_value>>(val); }
+bool is_model(const Value &val) { return std::holds_alternative<mem::rc_ptr<Model_value>>(val); }
+bool is_closure(const Value &val) { return std::holds_alternative<mem::rc_ptr<Closure_value>>(val); }
+
+// --- Getters ---
+bool get_bool(const Value &val) { return std::get<bool>(val); }
+long get_int(const Value &val) { return std::get<long>(val); }
+double get_float(const Value &val) { return std::get<double>(val); }
+std::string get_string(const Value &val) { return std::get<std::string>(val); }
+mem::rc_ptr<Array_value> get_array(const Value &val) { return std::get<mem::rc_ptr<Array_value>>(val); }
+mem::rc_ptr<Model_value> get_model(const Value &val) { return std::get<mem::rc_ptr<Model_value>>(val); }
+mem::rc_ptr<Closure_value> get_closure(const Value &val) { return std::get<mem::rc_ptr<Closure_value>>(val); }
+
+// --- Utility ---
+std::string value_to_string(const Value &val)
 {
-    if (lhs.index() != rhs.index())
+    if (is_nil(val))
+        return "nil";
+    if (is_bool(val))
+        return get_bool(val) ? "true" : "false";
+    if (is_int(val))
+        return std::to_string(get_int(val));
+    if (is_float(val))
+        return std::to_string(get_float(val));
+    if (is_string(val))
+        return get_string(val);
+
+    if (is_closure(val))
+    {
+        auto closure = get_closure(val);
+        // Differeniate string output so you know if it's Native or Bytecode!
+        if (closure->native_func)
+            return std::format("<native fn {}>", closure->name);
+        return std::format("<fn {}>", closure->name);
+    }
+
+    if (is_array(val))
+    {
+        auto arr = get_array(val);
+        std::string res = "[ ";
+        for (size_t i = 0; i < arr->elements.size(); ++i)
+        {
+            res += value_to_string(arr->elements[i]);
+            if (i != arr->elements.size() - 1)
+                res += ", ";
+        }
+        res += " ]";
+        return res;
+    }
+
+    if (is_model(val))
+    {
+        auto model = get_model(val);
+        return std::format("<model {}>", model->signature.name);
+    }
+
+    if (std::holds_alternative<mem::rc_ptr<Union_value>>(val))
+    {
+        auto u = std::get<mem::rc_ptr<Union_value>>(val);
+        return std::format("<{}::{}({})>", u->union_name, u->variant_name, value_to_string(u->payload));
+    }
+
+    if (std::holds_alternative<mem::rc_ptr<Green_thread_value>>(val))
+        return "<green thread>";
+
+    return "<unknown>";
+}
+
+// --- Equality Operators ---
+bool operator==(const Value &a, const Value &b)
+{
+    // If they aren't even the same variant type, they are definitely not equal
+    if (a.index() != b.index())
         return false;
 
-    return std::visit(
-    [&](auto &&l_val) -> bool
-    {
-        auto &&r_val = std::get<std::decay_t<decltype(l_val)>>(rhs);
-        using T = std::decay_t<decltype(l_val)>;
+    if (is_nil(a))
+        return true;
+    if (is_bool(a))
+        return get_bool(a) == get_bool(b);
+    if (is_int(a))
+        return get_int(a) == get_int(b);
+    if (is_float(a))
+        return get_float(a) == get_float(b);
+    if (is_string(a))
+        return get_string(a) == get_string(b);
 
-        if constexpr (std::is_same_v<T, std::nullptr_t> || std::is_same_v<T, std::monostate>)
-        {
-            return true;
-        }
-        else if constexpr (std::is_same_v<T, mem::rc_ptr<Model_value>> || std::is_same_v<T, mem::rc_ptr<Closure_value>> ||
-                           std::is_same_v<T, mem::rc_ptr<Array_value>> || std::is_same_v<T, mem::rc_ptr<Native_function_value>> ||
-                           std::is_same_v<T, mem::rc_ptr<Green_thread_value>>)
-        {
-            // Pointer identity check for heap objects is much faster for VM execution
-            if (!l_val || !r_val)
-                return l_val == r_val;
-            return l_val == r_val;
-        }
-        else
-        {
-            return l_val == r_val;
-        }
-    },
-    lhs);
+    // For Reference Counted objects, we do fast pointer equality
+    // (If you want deep-equality later for Arrays, you would loop through elements here)
+    if (is_closure(a))
+        return get_closure(a) == get_closure(b);
+    if (is_array(a))
+        return get_array(a) == get_array(b);
+    if (is_model(a))
+        return get_model(a) == get_model(b);
+
+    if (std::holds_alternative<mem::rc_ptr<Union_value>>(a))
+        return std::get<mem::rc_ptr<Union_value>>(a) == std::get<mem::rc_ptr<Union_value>>(b);
+    if (std::holds_alternative<mem::rc_ptr<Green_thread_value>>(a))
+        return std::get<mem::rc_ptr<Green_thread_value>>(a) == std::get<mem::rc_ptr<Green_thread_value>>(b);
+
+    return false;
 }
 
-std::string value_to_string_impl(const Value &value, int indent_level)
-{
-    if (is_int(value))
-        return std::to_string(get_int(value));
-    if (is_float(value))
-        return std::to_string(get_float(value));
-    if (is_bool(value))
-        return get_bool(value) ? "true" : "false";
-    if (is_string(value))
-        return "\"" + get_string(value) + "\"";
-    if (is_nil(value))
-        return "nil";
-    if (is_void(value))
-        return "void";
-
-    if (is_array(value))
-    {
-        auto arr = get_array(value);
-        if (arr->elements.empty())
-            return "[]";
-        std::stringstream ss;
-        ss << "[";
-        bool first = true;
-        for (const auto &element : arr->elements)
-        {
-            if (!first)
-                ss << ", ";
-            ss << value_to_string_impl(element, indent_level);
-            first = false;
-        }
-        return ss.str() + "]";
-    }
-
-    if (is_model(value))
-    {
-        auto model = get_model(value);
-        if (model->fields.empty())
-            return model->signature.name + " {}";
-
-        std::stringstream ss;
-        ss << model->signature.name << " { ";
-        for (size_t i = 0; i < model->fields.size(); ++i)
-        {
-            if (i > 0)
-                ss << ", ";
-
-            // Bounds-check: If the VM provided a rich signature, print the name.
-            if (i < model->signature.fields.size())
-                ss << model->signature.fields[i].first << ": ";
-
-            ss << value_to_string_impl(model->fields[i], indent_level);
-        }
-        return ss.str() + " }";
-    }
-
-    if (is_closure(value))
-        return "fn " + get_closure(value)->name + "()";
-
-    if (is_union(value))
-        return "union<" + get_union(value)->tag + ">";
-
-    if (is_thread(value))
-    {
-        auto t = get_thread(value);
-        return t->is_completed ? "<thread: dead>" : "<thread: suspended>";
-    }
-
-    if (is_native_function(value))
-        return "native_fn " + get_native_function(value)->name + "()";
-
-    return "unknown";
-}
-
-std::string value_to_string(const Value &value) { return value_to_string_impl(value, 0); }
-
-std::string get_value_type_string(const Value &value)
-{
-    return std::visit(
-    [](const auto &v) -> std::string
-    {
-        using T = std::decay_t<decltype(v)>;
-        if constexpr (std::is_same_v<T, int64_t>)
-            return "i64";
-        else if constexpr (std::is_same_v<T, double>)
-            return "f64";
-        else if constexpr (std::is_same_v<T, bool>)
-            return "bool";
-        else if constexpr (std::is_same_v<T, std::string>)
-            return "string";
-        else if constexpr (std::is_same_v<T, mem::rc_ptr<Model_value>>)
-            return types::type_to_string(types::Type(phos::mem::make_rc<types::Model_type>(v->signature)));
-        else if constexpr (std::is_same_v<T, mem::rc_ptr<Closure_value>>)
-            return types::type_to_string(types::Type(mem::make_rc<types::Function_type>(v->signature)));
-        else if constexpr (std::is_same_v<T, mem::rc_ptr<Array_value>>)
-            return types::type_to_string(v->type);
-        else if constexpr (std::is_same_v<T, mem::rc_ptr<Native_function_value>>)
-            return "native_fn<" + v->name + ">";
-        else if constexpr (std::is_same_v<T, mem::rc_ptr<Union_value>>)
-            return v->tag;
-        else if constexpr (std::is_same_v<T, mem::rc_ptr<Green_thread_value>>)
-            return "thread";
-        else if constexpr (std::is_same_v<T, std::nullptr_t>)
-            return "nil";
-        else if constexpr (std::is_same_v<T, std::monostate>)
-            return "void";
-        else
-            return "unknown";
-    },
-    value);
-}
+bool operator!=(const Value &a, const Value &b) { return !(a == b); }
 
 }  // namespace phos

@@ -1,7 +1,10 @@
 #include "type-checker.hpp"
+
 #include <format>
 #include <unordered_set>
 #include <algorithm>
+#include <cctype>
+#include <sstream>
 
 namespace phos
 {
@@ -17,6 +20,44 @@ template <typename Vec>
 static bool contains_key(const Vec &vec, const std::string &key)
 {
     return find_by_key(vec, key) != vec.end();
+}
+
+// FFI STRING PARSER
+types::Type Type_checker::parse_type_string(std::string str) const
+{
+    str.erase(str.find_last_not_of(" \t\r\n") + 1);
+    str.erase(0, str.find_first_not_of(" \t\r\n"));
+
+    if (str == "i64")
+        return types::Primitive_kind::Int;
+    if (str == "f64")
+        return types::Primitive_kind::Float;
+    if (str == "bool")
+        return types::Primitive_kind::Bool;
+    if (str == "string")
+        return types::Primitive_kind::String;
+    if (str == "void")
+        return types::Primitive_kind::Void;
+    if (str == "any")
+        return types::Primitive_kind::Any;
+
+    if (str.ends_with("[]"))
+    {
+        auto base = parse_type_string(str.substr(0, str.length() - 2));
+        return types::Type(mem::make_rc<types::Array_type>(base));
+    }
+    if (str.ends_with("?"))
+    {
+        auto base = parse_type_string(str.substr(0, str.length() - 1));
+        return types::Type(mem::make_rc<types::Optional_type>(base));
+    }
+
+    if (model_signatures.contains(str))
+        return types::Type(model_signatures.at(str));
+    if (m_union_signatures.contains(str))
+        return types::Type(m_union_signatures.at(str));
+
+    return types::Primitive_kind::Any;
 }
 
 // ===================================================================
@@ -537,6 +578,15 @@ Result<std::pair<types::Type, bool>> Type_checker::lookup(const std::string &nam
     if (var)
         return var;
 
+    // --- CHECK FFI SIDE-TABLE ---
+    if (native_signatures.contains(name))
+    {
+        auto dummy_func = mem::make_rc<types::Function_type>();
+        dummy_func->return_type = types::Primitive_kind::Any;
+        return std::make_pair(types::Type(dummy_func), true);
+    }
+    // ----------------------------
+
     if (functions.contains(name))
     {
         auto func_type = mem::make_rc<types::Function_type>();
@@ -1037,6 +1087,44 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
         }
     }
 
+    // --- FFI SIGNATURE MATCHER ---
+    if (auto *var_callee = std::get_if<ast::Variable_expr>(&expr.callee->node))
+    {
+        if (native_signatures.contains(var_callee->name))
+        {
+            const auto &signatures = native_signatures.at(var_callee->name);
+
+            for (const auto &sig : signatures)
+            {
+                if (sig.params.size() != expr.arguments.size())
+                    continue;
+
+                bool matches = true;
+                std::unordered_map<std::string, types::Type> generics;
+
+                for (size_t i = 0; i < expr.arguments.size(); ++i)
+                {
+                    auto arg_res = check_expr(*expr.arguments[i]);
+                    if (!arg_res || !match_ffi_type(sig.params[i], *arg_res, generics))
+                    {
+                        matches = false;
+                        break;
+                    }
+                }
+
+                if (matches)
+                {
+                    if (sig.ret_type.length() == 1 && std::isupper(sig.ret_type[0]) && generics.contains(sig.ret_type))
+                        return expr.type = generics[sig.ret_type];
+                    return expr.type = parse_type_string(sig.ret_type);
+                }
+            }
+            type_error(expr.loc, "Arguments do not match any native signature for '" + var_callee->name + "'.");
+            return expr.type = types::Primitive_kind::Void;
+        }
+    }
+    // -----------------------------
+
     auto callee_type_res = check_expr(*expr.callee);
     if (!callee_type_res)
         return std::unexpected(callee_type_res.error());
@@ -1300,6 +1388,78 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
             type_error(expr.loc, "Union types only support the '.has()' method.");
             return expr.type = types::Primitive_kind::Void;
         }
+    }
+
+    // --- FFI METHOD MATCHER ---
+    std::string ffi_name;
+    if (is_array(obj_type))
+        ffi_name = "Array::" + expr.method_name;
+    if (is_string(obj_type))
+        ffi_name = "String::" + expr.method_name;
+
+    if (!ffi_name.empty() && native_signatures.contains(ffi_name))
+    {
+        const auto &signatures = native_signatures.at(ffi_name);
+
+        for (const auto &sig : signatures)
+        {
+            // Note: FFI methods assume 'this' is the FIRST parameter in the signature array!
+            if (sig.params.size() != expr.arguments.size() + 1)
+                continue;
+
+            bool matches = true;
+            std::unordered_map<std::string, types::Type> generics;
+
+            // 1. Check 'this' object
+            if (!match_ffi_type(sig.params[0], obj_type, generics))
+                continue;
+
+            // 2. Check the remaining arguments
+            for (size_t i = 0; i < expr.arguments.size(); ++i)
+            {
+                auto arg_res = check_expr(*expr.arguments[i]);
+                if (!arg_res || !match_ffi_type(sig.params[i + 1], *arg_res, generics))
+                {
+                    matches = false;
+                    break;
+                }
+            }
+
+            if (matches)
+            {
+                if (sig.ret_type.length() == 1 && std::isupper(sig.ret_type[0]) && generics.contains(sig.ret_type))
+                    return expr.type = generics[sig.ret_type];
+                return expr.type = parse_type_string(sig.ret_type);
+            }
+        }
+        std::string expected_signatures;
+        for (size_t i = 0; i < signatures.size(); ++i)
+        {
+            const auto &sig = signatures[i];
+            expected_signatures += "(";
+
+            // Start at j = 1 to hide the implicit 'this' object from the user!
+            for (size_t j = 1; j < sig.params.size(); ++j)
+            {
+                expected_signatures += sig.params[j];
+                if (j < sig.params.size() - 1)
+                    expected_signatures += ", ";
+            }
+            expected_signatures += ")";
+
+            if (i < signatures.size() - 1)
+                expected_signatures += " OR ";
+        }
+
+        std::string error_str = std::format(
+        "Arguments do not match any native signature for method '{}'.\n    Expected: {}", expr.method_name, expected_signatures);
+
+        // Only show the generic hint if the signature actually used a generic 'T'
+        if (expected_signatures.find('T') != std::string::npos)
+            error_str += "\n    (Note: 'T' represents the generic element type. For example, in an 'i64[]', T is 'i64'.)";
+
+        type_error(expr.loc, error_str);
+        return expr.type = types::Primitive_kind::Void;
     }
 
     if (expr.method_name == "map")
@@ -1646,6 +1806,72 @@ Result<types::Type> Type_checker::check_expr_node(ast::Fstring_expr &expr, std::
         if (interp)
             std::ignore = check_expr(*interp);
     return expr.type = types::Primitive_kind::String;
+}
+
+bool Type_checker::match_ffi_type(std::string expected_str,
+                                  types::Type actual_type,
+                                  std::unordered_map<std::string, types::Type> &generics) const
+{
+    // 1. Handle Unions ("string | i64")
+    if (expected_str.find('|') != std::string::npos)
+    {
+        std::stringstream ss(expected_str);
+        std::string item;
+        while (std::getline(ss, item, '|'))
+        {
+            item.erase(0, item.find_first_not_of(" \t"));
+            item.erase(item.find_last_not_of(" \t") + 1);
+
+            auto temp_generics = generics;  // Copy state so failed branches don't pollute
+            if (match_ffi_type(item, actual_type, temp_generics))
+            {
+                generics = temp_generics;  // Commit the generics if successful
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // 2. Handle Arrays ("T[]" or "string[]")
+    if (expected_str.ends_with("[]"))
+    {
+        if (!is_array(actual_type))
+            return false;
+        std::string base_str = expected_str.substr(0, expected_str.length() - 2);
+        return match_ffi_type(base_str, types::get_array_type(actual_type)->element_type, generics);
+    }
+
+    // 3. Handle Optionals ("T?")
+    if (expected_str.ends_with("?"))
+    {
+        if (is_nil(actual_type))
+            return true;
+        std::string base_str = expected_str.substr(0, expected_str.length() - 1);
+        types::Type inner_actual = actual_type;
+        if (is_optional(actual_type))
+            inner_actual = types::get_optional_type(actual_type)->base_type;
+        return match_ffi_type(base_str, inner_actual, generics);
+    }
+
+    // 4. Handle Generics ("T", "U", "V")
+    if (expected_str.length() == 1 && std::isupper(expected_str[0]))
+    {
+        if (generics.contains(expected_str))
+        {
+            // If T is already bound, enforce the constraint!
+            return is_compatible(generics[expected_str], actual_type);
+        }
+        else
+        {
+            // First time seeing T? Bind it to whatever actual_type is!
+            generics[expected_str] = actual_type;
+            return true;
+        }
+    }
+
+    // 5. Handle Concrete Types ("i64", "string", "User")
+    types::Type concrete_expected = parse_type_string(expected_str);
+    return is_compatible(concrete_expected, actual_type);
 }
 
 }  //namespace phos

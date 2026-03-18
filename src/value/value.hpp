@@ -1,152 +1,144 @@
 #pragma once
 
-#include <cstddef>
-#include <unordered_map>
+#include <string>
+#include <vector>
 #include <variant>
 #include <cstdint>
-#include <string>
-#include <functional>
-#include <vector>
-#include <optional>
+#include <cstddef>
+#include <utility>
 
-#include "type.hpp"
-#include "../error/result.hpp"
 #include "../memory/ref_counted.hpp"
+#include "type.hpp"
 
-// Forward declare the VM Chunk so functions can own their bytecode
+// --- Forward Declarations ---
 namespace phos::vm
 {
-struct Chunk;
-}
+    struct Chunk;
+    class Virtual_machine;
+    struct Call_frame;
+}  // namespace phos::vm
 
 namespace phos
 {
 
-struct Call_frame;  // Forward declare for Green_thread
+// Forward declare all our reference-counted objects
+struct Model_value;
+struct Closure_value;
+struct Array_value;
+struct Union_value;
+struct Green_thread_value;
 
-using Value = std::variant<
-    int64_t,
-    double,
-    bool,
-    std::string,
-    phos::mem::rc_ptr<struct Model_value>,
-    phos::mem::rc_ptr<struct Closure_value>,
-    phos::mem::rc_ptr<struct Array_value>,
-    phos::mem::rc_ptr<struct Native_function_value>,
-    phos::mem::rc_ptr<struct Union_value>,
-    phos::mem::rc_ptr<struct Green_thread_value>,
-    std::nullptr_t,
-    std::monostate>;
+// ============================================================================
+// The Core Value Variant (Notice Native_function_value is GONE!)
+// ============================================================================
+using Value = std::variant<long,
+                           double,
+                           bool,
+                           std::string,
+                           mem::rc_ptr<Model_value>,
+                           mem::rc_ptr<Closure_value>,
+                           mem::rc_ptr<Array_value>,
+                           mem::rc_ptr<Union_value>,
+                           mem::rc_ptr<Green_thread_value>,
+                           std::nullptr_t,
+                           std::monostate>;
 
-bool operator==(const Value &lhs, const Value &rhs);
+// Raw C++ Function Pointer for the Zero-Overhead FFI
+using Native_fn = Value (*)(vm::Virtual_machine *vm, uint8_t arg_count);
 
-// At runtime, all Phos functions are closures (a pure function is just a closure with 0 captures)
+// ============================================================================
+// Object Definitions
+// ============================================================================
+
 struct Closure_value
 {
     std::string name;
-    int arity = 0;
+    size_t arity;
     types::Function_type signature;
 
-    // The bytecode chunk owned by this specific function
-    mem::rc_ptr<vm::Chunk> chunk;
+    // If it's a Phos script function:
+    mem::rc_ptr<vm::Chunk> chunk = nullptr;
 
-    // Captured values from the outer lexical scopes
-    std::unordered_map<std::string, Value> captured_variables;
+    // If it's a Native C++ function:
+    Native_fn native_func = nullptr;
 
-    Closure_value(std::string n, int a, types::Function_type sig, mem::rc_ptr<vm::Chunk> ch)
-        : name(std::move(n)), arity(a), signature(std::move(sig)), chunk(std::move(ch))
+    // Constructor for Bytecode Functions
+    Closure_value(std::string n, size_t a, types::Function_type sig, mem::rc_ptr<vm::Chunk> c)
+        : name(std::move(n)), arity(a), signature(std::move(sig)), chunk(std::move(c)), native_func(nullptr)
     {
     }
-};
 
-// --- GREEN THREAD ARCHITECTURE ---
-struct Call_frame
-{
-    mem::rc_ptr<Closure_value> closure;
-    uint8_t *ip = nullptr;
-    size_t stack_offset = 0;  // The base index of this frame's local variables on the thread stack
-};
-
-struct Green_thread_value
-{
-    std::vector<Value> stack;
-    std::vector<Call_frame> frames;
-    bool is_completed = false;
-    std::optional<Value> yield_value;
-};
-// ---------------------------------
-
-struct Model_value
-{
-    types::Model_type signature;
-    std::vector<Value> fields;
-
-    Model_value(types::Model_type sig, std::vector<Value> mems) : signature(std::move(sig)), fields(std::move(mems)) {}
+    // Constructor for Native C++ Functions
+    Closure_value(std::string n, size_t a, types::Function_type sig, Native_fn nf)
+        : name(std::move(n)), arity(a), signature(std::move(sig)), chunk(nullptr), native_func(nf)
+    {
+    }
 };
 
 struct Array_value
 {
     types::Type type;
     std::vector<Value> elements;
+
+    Array_value(types::Type t, std::vector<Value> elems) : type(std::move(t)), elements(std::move(elems)) {}
+};
+
+struct Model_value
+{
+    types::Model_type signature;
+    std::vector<Value> fields;
+
+    Model_value(types::Model_type sig, std::vector<Value> f) : signature(std::move(sig)), fields(std::move(f)) {}
 };
 
 struct Union_value
 {
-    mem::rc_ptr<types::Union_type> signature;
-    std::string tag;
-    std::optional<Value> value;
+    std::string union_name;
+    std::string variant_name;
+    Value payload;
 
-    Union_value(mem::rc_ptr<types::Union_type> sig, std::string t, std::optional<Value> val)
-        : signature(std::move(sig)), tag(std::move(t)), value(std::move(val))
+    Union_value(std::string u_name, std::string v_name, Value p)
+        : union_name(std::move(u_name)), variant_name(std::move(v_name)), payload(std::move(p))
     {
     }
 };
 
-using Native_callable = std::function<Result<Value>(const std::vector<Value> &arguments)>;
-
-struct Native_function_value
+struct Green_thread_value
 {
-    std::string name;
-    int arity;
-    types::Function_type signature;
-    Native_callable code;
+    // C++17 allows vectors of incomplete types, so we can use vm::Call_frame here safely
+    std::vector<vm::Call_frame> frames;
+    std::vector<Value> stack;
+    bool is_completed = false;
 };
 
-// --- Fast Inline Helpers ---
-inline bool is_int(const Value &value) { return std::holds_alternative<int64_t>(value); }
-inline bool is_float(const Value &value) { return std::holds_alternative<double>(value); }
-inline bool is_bool(const Value &value) { return std::holds_alternative<bool>(value); }
-inline bool is_string(const Value &value) { return std::holds_alternative<std::string>(value); }
-inline bool is_model(const Value &value) { return std::holds_alternative<phos::mem::rc_ptr<Model_value>>(value); }
-inline bool is_closure(const Value &value) { return std::holds_alternative<phos::mem::rc_ptr<Closure_value>>(value); }
-inline bool is_array(const Value &value) { return std::holds_alternative<phos::mem::rc_ptr<Array_value>>(value); }
-inline bool is_union(const Value &value) { return std::holds_alternative<phos::mem::rc_ptr<Union_value>>(value); }
-inline bool is_thread(const Value &value) { return std::holds_alternative<phos::mem::rc_ptr<Green_thread_value>>(value); }
-inline bool is_nil(const Value &value) { return std::holds_alternative<std::nullptr_t>(value); }
-inline bool is_void(const Value &value) { return std::holds_alternative<std::monostate>(value); }
-inline bool is_native_function(const Value &value) { return std::holds_alternative<phos::mem::rc_ptr<Native_function_value>>(value); }
+// ============================================================================
+// Type Checkers & Getters
+// ============================================================================
 
-inline bool is_callable(const Value &value) { return is_closure(value) || is_native_function(value); }
+bool is_nil(const Value &val);
+bool is_bool(const Value &val);
+bool is_int(const Value &val);
+bool is_float(const Value &val);
+bool is_string(const Value &val);
+bool is_array(const Value &val);
+bool is_model(const Value &val);
+bool is_closure(const Value &val);
 
-inline int64_t get_int(const Value &value) { return std::get<int64_t>(value); }
-inline double get_float(const Value &value) { return std::get<double>(value); }
-inline bool get_bool(const Value &value) { return std::get<bool>(value); }
-inline std::string get_string(const Value &value) { return std::get<std::string>(value); }
+bool get_bool(const Value &val);
+long get_int(const Value &val);
+double get_float(const Value &val);
+std::string get_string(const Value &val);
+mem::rc_ptr<Array_value> get_array(const Value &val);
+mem::rc_ptr<Model_value> get_model(const Value &val);
+mem::rc_ptr<Closure_value> get_closure(const Value &val);
 
-inline phos::mem::rc_ptr<Model_value> get_model(const Value &value) { return std::get<phos::mem::rc_ptr<Model_value>>(value); }
-inline phos::mem::rc_ptr<Closure_value> get_closure(const Value &value) { return std::get<phos::mem::rc_ptr<Closure_value>>(value); }
-inline phos::mem::rc_ptr<Array_value> get_array(const Value &value) { return std::get<phos::mem::rc_ptr<Array_value>>(value); }
-inline phos::mem::rc_ptr<Union_value> get_union(const Value &value) { return std::get<phos::mem::rc_ptr<Union_value>>(value); }
-inline phos::mem::rc_ptr<Green_thread_value> get_thread(const Value &value)
-{
-    return std::get<phos::mem::rc_ptr<Green_thread_value>>(value);
-}
-inline phos::mem::rc_ptr<Native_function_value> get_native_function(const Value &value)
-{
-    return std::get<phos::mem::rc_ptr<Native_function_value>>(value);
-}
+// ============================================================================
+// Utility
+// ============================================================================
 
-std::string value_to_string(const Value &value);
-std::string get_value_type_string(const Value &value);
+std::string value_to_string(const Value &val);
+
+bool operator==(const Value &a, const Value &b);
+bool operator!=(const Value &a, const Value &b);
 
 }  // namespace phos

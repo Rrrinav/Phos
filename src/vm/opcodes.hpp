@@ -43,7 +43,7 @@ enum class Op_code : uint8_t {
     Spawn, Yield, Await,
 
     // --- System ---
-    Print, Halt
+    Print, Print_err, Halt
 };
 
 std::string op_code_to_string(Op_code code);

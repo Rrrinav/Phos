@@ -106,9 +106,11 @@ void Parser::synchronize()
 // --- top-level ---------------------------------------------------------------
 
 // program -> declaration* EOF
-Result<std::vector<ast::Stmt*>> Parser::parse()
+Result<std::vector<ast::Stmt *>> Parser::parse()
 {
-    std::vector<ast::Stmt*> statements;
+    std::vector<ast::Stmt *> statements;
+    bool had_error = false;  // Add an error flag!
+
     while (!is_at_end())
     {
         skip_newlines();
@@ -120,6 +122,8 @@ Result<std::vector<ast::Stmt*>> Parser::parse()
         {
             if (!decl_result.error().message.empty())
                 std::println(stderr, "{}", decl_result.error().format());
+
+            had_error = true;
             synchronize();
             continue;
         }
@@ -127,6 +131,9 @@ Result<std::vector<ast::Stmt*>> Parser::parse()
         if (decl_result.value())
             statements.push_back(*decl_result.value());
     }
+    if (had_error)
+        return std::unexpected(err::msg("Compilation halted due to syntax errors.", "parser", 0, 0));
+
     return statements;
 }
 

@@ -17,9 +17,7 @@ namespace phos
 
 class Type_checker;
 
-// ===================================================================
 // TYPE RESOLVER
-// ===================================================================
 class TypeResolver
 {
 public:
@@ -70,9 +68,7 @@ private:
     void visit(ast::Fstring_expr &expr);
 };
 
-// ===================================================================
 // TYPE CHECKER
-// ===================================================================
 class Type_checker
 {
     friend class TypeResolver;
@@ -81,13 +77,28 @@ public:
     std::unordered_map<std::string, mem::rc_ptr<types::Model_type>> model_signatures;
     std::unordered_map<std::string, mem::rc_ptr<types::Union_type>> m_union_signatures;
 
+    // --- FFI SIGNATURE REGISTRY ---
+    struct Native_sig
+    {
+        std::vector<std::string> params;
+        std::string ret_type;
+    };
+    std::unordered_map<std::string, std::vector<Native_sig>> native_signatures;
+
+    void define_native(const std::string &name, const std::vector<std::string> &params, const std::string &ret)
+    {
+        native_signatures[name].push_back({params, ret});
+    }
+
     void type_error(const ast::Source_location &loc, const std::string &message) { errors.push_back({message, this->phase, loc.l, loc.c}); }
 
     std::vector<err::msg> check(std::vector<ast::Stmt *> &statements);
 
     Type_checker() = default;
 
-private:
+    types::Type parse_type_string(std::string str) const;
+    bool match_ffi_type(std::string expected_str, types::Type actual_type, std::unordered_map<std::string, types::Type> &generics) const;
+
     struct FunctionData
     {
         const ast::Function_stmt *declaration;

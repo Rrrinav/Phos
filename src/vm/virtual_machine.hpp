@@ -1,18 +1,26 @@
 #pragma once
 
-#include <vector>
 #include <string>
 #include <unordered_map>
 #include <iostream>
 #include <optional>
+#include <vector>
+#include <type_traits>
 
-#include "chunk.hpp"
 #include "../value/value.hpp"
 #include "../error/result.hpp"
 #include "../parser/ast.hpp"
+#include "../type-checker/type-checker.hpp"
 
 namespace phos::vm
 {
+
+struct Call_frame
+{
+    mem::rc_ptr<Closure_value> closure;
+    uint8_t *ip = nullptr;
+    size_t stack_offset = 0;
+};
 
 struct Vm_config
 {
@@ -27,7 +35,6 @@ public:
 
     Virtual_machine(Vm_config config = {}) : config_(config) {}
 
-    // THE UPGRADE: Interpret now takes the top-level compiled Script closure
     Result<void> interpret(mem::rc_ptr<Closure_value> script_closure);
 
     void set_global(const std::string &name, Value val) { globals[name] = std::move(val); }
@@ -38,10 +45,14 @@ public:
         return std::nullopt;
     }
 
-private:
+    Value pop();
+    Value peek(int distance) const;
+
+    template <auto Func>
+    void bind_native(const std::string &name, const std::vector<std::string> &params, const std::string &ret, phos::Type_checker &tc);
+
     Vm_config config_;
 
-    // THE UPGRADE: The currently executing thread and its Call Frames
     mem::rc_ptr<Green_thread_value> current_thread;
 
     std::unordered_map<std::string, Value> globals;
@@ -49,8 +60,6 @@ private:
     Result<void> run();
 
     void push(Value value);
-    Value pop();
-    Value peek(int distance) const;
 
     // Call Frame Managers
     Result<void> call_value(Value callee, int arg_count, Call_frame *&current_frame, uint8_t *&current_ip);
@@ -64,6 +73,97 @@ private:
     template <typename Op>
     Result<void> execute_unary_op(Op &&op, Call_frame *frame, uint8_t *ip);
 };
+
+// ============================================================================
+// ZERO-OVERHEAD FFI ENGINE
+// ============================================================================
+namespace ffi
+{
+// Stack Extraction Traits (For the VM Execution)
+template <typename T>
+struct extract;
+template <>
+struct extract<int64_t>
+{
+    static int64_t get(const Value &v) { return phos::get_int(v); }
+};
+template <>
+struct extract<double>
+{
+    static double get(const Value &v) { return phos::get_float(v); }
+};
+template <>
+struct extract<std::string>
+{
+    static std::string get(const Value &v) { return phos::get_string(v); }
+};
+template <>
+struct extract<bool>
+{
+    static bool get(const Value &v) { return phos::get_bool(v); }
+};
+template <>
+struct extract<mem::rc_ptr<Array_value>>
+{
+    static mem::rc_ptr<Array_value> get(const Value &v) { return phos::get_array(v); }
+};
+template <>
+struct extract<mem::rc_ptr<Model_value>>
+{
+    static mem::rc_ptr<Model_value> get(const Value &v) { return phos::get_model(v); }
+};
+template <>
+struct extract<Value>
+{
+    static Value get(const Value &v) { return v; }
+};
+
+// The Compile-Time Thunk Generator
+template <auto Func>
+struct Thunk;
+
+template <typename R, typename... Args, R (*Func)(Args...)>
+struct Thunk<Func>
+{
+    static constexpr uint8_t arity = sizeof...(Args);
+
+    static Value call(Virtual_machine *vm, uint8_t arg_count) { return call_impl(vm, std::make_index_sequence<arity>{}); }
+
+private:
+    template <size_t... Is>
+    static Value call_impl(Virtual_machine *vm, std::index_sequence<Is...>)
+    {
+        if constexpr (std::is_void_v<R>)
+        {
+            Func(extract<std::decay_t<Args>>::get(vm->peek(arity - 1 - Is))...);
+            return Value(nullptr);
+        }
+        else
+        {
+            return Value(Func(extract<std::decay_t<Args>>::get(vm->peek(arity - 1 - Is))...));
+        }
+    }
+};
+}  // namespace ffi
+
+template <auto Func>
+inline void Virtual_machine::bind_native(const std::string &name,
+                                         const std::vector<std::string> &params,
+                                         const std::string &ret,
+                                         phos::Type_checker &tc)
+{
+    // 1. Tell the Type Checker about the strict String Signatures!
+    tc.define_native(name, params, ret);
+
+    // 2. Tell the VM to run the C++ function!
+    // We only need to define the runtime closure once, even if there are overloads.
+    if (!get_global(name))
+    {
+        types::Function_type dummy_sig;  // The VM doesn't care about static types at runtime!
+        auto native_closure = mem::make_rc<Closure_value>(name, ffi::Thunk<Func>::arity, dummy_sig, ffi::Thunk<Func>::call);
+        set_global(name, Value(native_closure));
+    }
+}
 
 template <typename Op>
 Result<void> Virtual_machine::execute_binary_op(Op &&op, Call_frame *frame, uint8_t *ip)

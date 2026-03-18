@@ -114,6 +114,12 @@ void Compiler::compile_expr(ast::Expr *expr)
         visit_method_call_expr(*node);
     else if (auto *node = std::get_if<ast::Static_path_expr>(&expr->node))
         visit_static_path_expr(*node);
+    else if (auto *node = std::get_if<ast::Array_literal_expr>(&expr->node))
+        visit_array_literal_expr(*node);
+    else if (auto *node = std::get_if<ast::Array_access_expr>(&expr->node))
+        visit_array_access_expr(*node);
+    else if (auto *node = std::get_if<ast::Array_assignment_expr>(&expr->node))
+        visit_array_assignment_expr(*node);
     else
         std::println(stderr, "Unimplemented expr node at index: {}", expr->node.index());
 }
@@ -221,8 +227,13 @@ void Compiler::visit_return_stmt(const ast::Return_stmt &stmt)
 
 void Compiler::visit_print_stmt(const ast::Print_stmt &stmt)
 {
-    compile_expr(stmt.expression);
-    emit_op(Op_code::Print, stmt.loc);
+    if (stmt.expression)
+        compile_expr(stmt.expression);
+
+    if (stmt.stream == ast::Print_stream::STDERR)
+        emit_op(Op_code::Print_err, stmt.loc);
+    else
+        emit_op(Op_code::Print, stmt.loc);
 }
 void Compiler::visit_expr_stmt(const ast::Expr_stmt &stmt)
 {
@@ -554,7 +565,6 @@ void Compiler::visit_field_assignment_expr(const ast::Field_assignment_expr &exp
 
 void Compiler::visit_method_call_expr(const ast::Method_call_expr &expr)
 {
-    // --- NEW: Closure Field Execution ---
     if (expr.is_closure_field)
     {
         compile_expr(expr.object);  // Pushes the Model
@@ -570,15 +580,20 @@ void Compiler::visit_method_call_expr(const ast::Method_call_expr &expr)
     }
 
     auto type_var = ast::get_type(expr.object->node);
-    auto model_type_ptr = std::get<mem::rc_ptr<types::Model_type>>(type_var);
+    std::string global_name;
 
-    std::string global_name = model_type_ptr->name + "::" + expr.method_name;
+    // If it's a Model, route to ModelName::method
+    if (auto *model_t = std::get_if<mem::rc_ptr<types::Model_type>>(&type_var))
+        global_name = (*model_t)->name + "::" + expr.method_name;
+    // If it's an Array, route to Array::method
+    else if (std::holds_alternative<mem::rc_ptr<types::Array_type>>(type_var))
+        global_name = "Array::" + expr.method_name;
 
     uint8_t name_idx = identifier_constant(global_name, expr.loc);
     emit_op(Op_code::Get_global, expr.loc);
     emit_byte(name_idx, expr.loc);
 
-    compile_expr(expr.object);  // The hidden 'this'
+    compile_expr(expr.object);  // Push the hidden 'this'
     for (auto *arg : expr.arguments) compile_expr(arg);
 
     emit_op(Op_code::Call, expr.loc);
@@ -594,6 +609,31 @@ void Compiler::visit_static_path_expr(const ast::Static_path_expr &expr)
         emit_op(Op_code::Get_global, expr.loc);
         emit_byte(name_idx, expr.loc);
     }
+}
+
+void Compiler::visit_array_literal_expr(const ast::Array_literal_expr &expr)
+{
+    // Push all elements to the stack from left to right
+    for (auto *elem : expr.elements) compile_expr(elem);
+
+    // Tell the VM to pop N elements and wrap them in an Array_value
+    emit_op(Op_code::Create_array, expr.loc);
+    emit_byte(static_cast<uint8_t>(expr.elements.size()), expr.loc);
+}
+
+void Compiler::visit_array_access_expr(const ast::Array_access_expr &expr)
+{
+    compile_expr(expr.array);  // Pushes the array
+    compile_expr(expr.index);  // Pushes the index
+    emit_op(Op_code::Get_index, expr.loc);
+}
+
+void Compiler::visit_array_assignment_expr(const ast::Array_assignment_expr &expr)
+{
+    compile_expr(expr.value);  // Pushes the value FIRST
+    compile_expr(expr.array);  // Pushes the array
+    compile_expr(expr.index);  // Pushes the index
+    emit_op(Op_code::Set_index, expr.loc);
 }
 
 // ============================================================================
