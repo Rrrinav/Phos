@@ -12,6 +12,7 @@ bool is_float(const Value &val) { return std::holds_alternative<double>(val); }
 bool is_string(const Value &val) { return std::holds_alternative<std::string>(val); }
 bool is_array(const Value &val) { return std::holds_alternative<mem::rc_ptr<Array_value>>(val); }
 bool is_model(const Value &val) { return std::holds_alternative<mem::rc_ptr<Model_value>>(val); }
+bool is_union(const Value &val) { return std::holds_alternative<mem::rc_ptr<Union_value>>(val); }
 bool is_closure(const Value &val) { return std::holds_alternative<mem::rc_ptr<Closure_value>>(val); }
 
 // --- Getters ---
@@ -22,7 +23,7 @@ std::string get_string(const Value &val) { return std::get<std::string>(val); }
 mem::rc_ptr<Array_value> get_array(const Value &val) { return std::get<mem::rc_ptr<Array_value>>(val); }
 mem::rc_ptr<Model_value> get_model(const Value &val) { return std::get<mem::rc_ptr<Model_value>>(val); }
 mem::rc_ptr<Closure_value> get_closure(const Value &val) { return std::get<mem::rc_ptr<Closure_value>>(val); }
-
+mem::rc_ptr<Union_value> get_union(const Value &val) { return std::get<mem::rc_ptr<Union_value>>(val); }
 // --- Utility ---
 std::string value_to_string(const Value &val)
 {

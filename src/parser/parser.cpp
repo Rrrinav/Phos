@@ -270,7 +270,7 @@ Result<ast::Stmt*> Parser::parse_bind_statement()
     return nullptr;
 }
 
-// union_decl -> "union" IDENT "{" ("let" IDENT ":" type ";")* "}"
+// union_decl -> "union" IDENT "{" (IDENT ":" type ";")* "}"
 Result<ast::Stmt*> Parser::union_declaration()
 {
     auto name = __Try(consume(lex::TokenType::Identifier, "Expected union name"));
@@ -284,7 +284,6 @@ Result<ast::Stmt*> Parser::union_declaration()
         skip_newlines();
         if (check(lex::TokenType::RightBrace)) break;
 
-        __TryIgnore(consume(lex::TokenType::Let, "Expect 'let' before variant name"));
         auto variant_name = __Try(consume(lex::TokenType::Identifier, "Expect variant name"));
         __TryIgnore(consume(lex::TokenType::Colon, "Expect ':' after variant name for type"));
 
@@ -589,7 +588,7 @@ Result<ast::Stmt*> Parser::for_in_statement()
 
 // match_stmt -> "match" expr "{" match_arm* "}"
 // match_arm  -> (IDENT ("(" IDENT ")")? | "_") ":" statement ","?
-Result<ast::Stmt*> Parser::match_statement()
+Result<ast::Stmt *> Parser::match_statement()
 {
     ast::Source_location loc{peek().line, peek().column};
     auto subject = __Try(expression());
@@ -600,7 +599,8 @@ Result<ast::Stmt*> Parser::match_statement()
     while (!check(lex::TokenType::RightBrace) && !is_at_end())
     {
         skip_newlines();
-        if (check(lex::TokenType::RightBrace)) break;
+        if (check(lex::TokenType::RightBrace))
+            break;
 
         ast::Match_arm arm;
 
@@ -610,18 +610,26 @@ Result<ast::Stmt*> Parser::match_statement()
         }
         else
         {
-            arm.variant_name = __Try(consume(lex::TokenType::Identifier,
-                "Expect variant name or '_' in match arm")).lexeme;
+            // 1. Union Name
+            arm.union_name = __Try(consume(lex::TokenType::Identifier, "Expect Union name in match arm")).lexeme;
 
+            // 2. ColonColon
+            __TryIgnore(consume(lex::TokenType::ColonColon, "Expect '::' after Union name"));
+
+            // 3. Variant Name
+            arm.variant_name = __Try(consume(lex::TokenType::Identifier, "Expect variant name")).lexeme;
+
+            // 4. Payload variable
             if (match({lex::TokenType::LeftParen}))
             {
-                arm.bind_name = __Try(consume(lex::TokenType::Identifier,
-                    "Expect binding name")).lexeme;
+                arm.bind_name = __Try(consume(lex::TokenType::Identifier, "Expect binding name")).lexeme;
                 __TryIgnore(consume(lex::TokenType::RightParen, "Expect ')' after binding name"));
             }
         }
 
-        __TryIgnore(consume(lex::TokenType::Colon, "Expect ':' after match pattern"));
+        // 5. Fat Arrow
+        __TryIgnore(consume(lex::TokenType::FatArrow, "Expect '=>' after match pattern"));
+
         arm.body = __Try(statement());
         arms.push_back(std::move(arm));
 
@@ -631,11 +639,12 @@ Result<ast::Stmt*> Parser::match_statement()
 
     __TryIgnore(consume(lex::TokenType::RightBrace, "Expect '}' after match arms"));
 
-    return mem::Arena::alloc(this->arena_, ast::Stmt{
-        ast::Match_stmt{
+    return mem::Arena::alloc(
+        this->arena_,
+        ast::Stmt{ast::Match_stmt{
             .subject = subject,
-            .arms    = std::move(arms),
-            .loc     = loc,
+            .arms = std::move(arms),
+            .loc = loc,
         }
     });
 }
@@ -1244,7 +1253,6 @@ Result<ast::Expr*> Parser::primary()
     }
 
     // identifier, scope resolution, model literal
-
     if (match({lex::TokenType::Identifier}))
     {
         lex::Token id = previous();
@@ -1265,7 +1273,10 @@ Result<ast::Expr*> Parser::primary()
             return mem::Arena::alloc(arena_, ast::Expr{*static_path});
         }
 
-        if (check(lex::TokenType::LeftBrace))
+        // Only parse as a literal if the identifier is actually a registered type!
+        bool is_known_type = m_known_model_names.count(id.lexeme) || m_known_union_names.count(id.lexeme);
+
+        if (check(lex::TokenType::LeftBrace) && is_known_type)
             return parse_model_literal(id.lexeme);
 
         return mem::Arena::alloc(this->arena_, ast::Expr{

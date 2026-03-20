@@ -105,7 +105,7 @@ struct Union_value
 {
     std::string union_name;
     std::string variant_name;
-    Value payload;
+    Value payload = nullptr;
 
     Union_value(std::string u_name, std::string v_name, Value p)
         : union_name(std::move(u_name)), variant_name(std::move(v_name)), payload(std::move(p))
@@ -134,6 +134,7 @@ bool is_string(const Value &val);
 bool is_array(const Value &val);
 bool is_model(const Value &val);
 bool is_closure(const Value &val);
+bool is_union(const Value &val);
 
 bool get_bool(const Value &val);
 long get_int(const Value &val);
@@ -142,6 +143,7 @@ std::string get_string(const Value &val);
 mem::rc_ptr<Array_value> get_array(const Value &val);
 mem::rc_ptr<Model_value> get_model(const Value &val);
 mem::rc_ptr<Closure_value> get_closure(const Value &val);
+mem::rc_ptr<Union_value> get_union(const Value &val);
 
 // ============================================================================
 // Utility

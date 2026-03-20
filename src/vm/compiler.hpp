@@ -64,6 +64,8 @@ public:
     void visit_function_stmt(const ast::Function_stmt &stmt);
     void visit_return_stmt(const ast::Return_stmt &stmt);
     void visit_model_stmt(const ast::Model_stmt &stmt);
+    void visit_union_stmt(const ast::Union_stmt &stmt);
+    void visit_match_stmt(const ast::Match_stmt &stmt);
 
     // --- Expression Visitors ---
     void visit_literal_expr(const ast::Literal_expr &expr);

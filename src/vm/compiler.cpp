@@ -80,6 +80,10 @@ void Compiler::compile_stmt(ast::Stmt *stmt)
         visit_return_stmt(*node);
     else if (auto *node = std::get_if<ast::Model_stmt>(&stmt->node))
         visit_model_stmt(*node);
+    else if (auto *node = std::get_if<ast::Match_stmt>(&stmt->node))
+        visit_match_stmt(*node);
+    else if (auto *node = std::get_if<ast::Union_stmt>(&stmt->node))
+        visit_union_stmt(*node);
     else
         std::println(stderr, "Unimplemented stmt node at index: {}", stmt->node.index());
 }
@@ -216,6 +220,21 @@ void Compiler::visit_closure_expr(const ast::Closure_expr &expr)
 
 void Compiler::visit_call_expr(const ast::Call_expr &expr)
 {
+    if (auto *static_path = std::get_if<ast::Static_path_expr>(&expr.callee->node))
+    {
+        auto type_var = ast::get_type(static_path->base->node);
+        if (std::holds_alternative<mem::rc_ptr<types::Union_type>>(type_var))
+        {
+            auto union_name = std::get<mem::rc_ptr<types::Union_type>>(type_var)->name;
+
+            compile_expr(expr.arguments[0]);  // Push payload
+
+            emit_op(Op_code::Construct_union, expr.loc);
+            emit_byte(identifier_constant(union_name, expr.loc), expr.loc);
+            emit_byte(identifier_constant(static_path->member.lexeme, expr.loc), expr.loc);
+            return;
+        }
+    }
     // First, push the function object
     compile_expr(expr.callee);
 
@@ -392,6 +411,70 @@ void Compiler::visit_model_stmt(const ast::Model_stmt &stmt)
     }
 }
 
+void Compiler::visit_union_stmt(const ast::Union_stmt &stmt)
+{
+    // Unions are purely static type definitions.
+    // The Type Checker has already validated everything.
+    // We emit absolutely ZERO bytecode for the declaration itself!
+    return;
+}
+
+void Compiler::visit_match_stmt(const ast::Match_stmt &stmt)
+{
+    compile_expr(stmt.subject);
+
+    // We must register the subject in the compiler's local array so the
+    // stack offsets for 's' don't get misaligned!
+    current()->locals.push_back(Local{"<match_subject>", current()->scope_depth});
+
+    std::vector<size_t> end_jumps;
+
+    for (const auto &arm : stmt.arms)
+    {
+        if (arm.is_wildcard)
+        {
+            // ... (wildcard logic)
+        }
+
+        // Emit Match_variant (peeks the subject, pushes payload, pushes bool)
+        emit_op(Op_code::Match_variant, stmt.loc);
+        emit_byte(identifier_constant(arm.variant_name, stmt.loc), stmt.loc);
+
+        // If false, jump to the next arm
+        size_t next_arm_jump = emit_jump(Op_code::Jump_if_false, stmt.loc);
+        emit_op(Op_code::Pop, stmt.loc);  // Pop the 'true' bool
+
+        begin_scope();
+        if (!arm.bind_name.empty())
+        {
+            // The payload 's' correctly gets the NEXT available slot!
+            current()->locals.push_back(Local{arm.bind_name, current()->scope_depth});
+        }
+        else
+        {
+            emit_op(Op_code::Pop, stmt.loc);  // Pop the payload if we don't bind it
+        }
+
+        if (arm.body)
+            compile_stmt(arm.body);
+
+        end_scope(stmt.loc);  // This cleanly pops 's' from the physical stack
+
+        // Jump to the very end of the match statement
+        end_jumps.push_back(emit_jump(Op_code::Jump, stmt.loc));
+
+        // Setup for the next arm
+        patch_jump(next_arm_jump, stmt.loc);
+        emit_op(Op_code::Pop, stmt.loc);  // Pop the 'false' bool
+        emit_op(Op_code::Pop, stmt.loc);  // Pop the 'nil' payload
+    }
+
+    emit_op(Op_code::Pop, stmt.loc);
+    current()->locals.pop_back();  // Remove <match_subject>
+
+    for (size_t j : end_jumps) patch_jump(j, stmt.loc);
+}
+
 void Compiler::visit_variable_expr(const ast::Variable_expr &expr)
 {
     int arg = resolve_local(expr.name);
@@ -535,6 +618,25 @@ void Compiler::visit_unary_expr(const ast::Unary_expr &expr)
 void Compiler::visit_model_literal_expr(const ast::Model_literal_expr &expr)
 {
     auto type_var = expr.type;
+
+    if (std::holds_alternative<mem::rc_ptr<types::Union_type>>(type_var))
+    {
+        auto union_type_ptr = std::get<mem::rc_ptr<types::Union_type>>(type_var);
+
+        // A union literal only ever has 1 field, as enforced by the Type Checker
+        std::string variant_name = expr.fields[0].first;
+        ast::Expr *payload = expr.fields[0].second;
+
+        // 1. Push the payload onto the stack
+        compile_expr(payload);
+
+        // 2. Wrap it in the Union memory object!
+        emit_op(Op_code::Construct_union, expr.loc);
+        emit_byte(identifier_constant(union_type_ptr->name, expr.loc), expr.loc);
+        emit_byte(identifier_constant(variant_name, expr.loc), expr.loc);
+        return;
+    }
+
     auto model_type_ptr = std::get<mem::rc_ptr<types::Model_type>>(type_var);
 
     // Compile fields in the EXACT memory order dictated by the signature
@@ -623,6 +725,9 @@ void Compiler::visit_method_call_expr(const ast::Method_call_expr &expr)
     // If it's an Array, route to Array::method
     else if (std::holds_alternative<mem::rc_ptr<types::Array_type>>(type_var))
         global_name = "Array::" + expr.method_name;
+    // If it's an string, route to string::method
+    else if (auto *prim = std::get_if<types::Primitive_kind>(&type_var); prim && *prim == types::Primitive_kind::String)
+        global_name = "string::" + expr.method_name;
 
     uint8_t name_idx = identifier_constant(global_name, expr.loc);
     emit_op(Op_code::Get_global, expr.loc);
@@ -637,8 +742,21 @@ void Compiler::visit_method_call_expr(const ast::Method_call_expr &expr)
 
 void Compiler::visit_static_path_expr(const ast::Static_path_expr &expr)
 {
+    auto type_var = ast::get_type(expr.base->node);
+    if (std::holds_alternative<mem::rc_ptr<types::Union_type>>(type_var))
+    {
+        // It's a Union Variant with NO payload!
+        auto union_name = std::get<mem::rc_ptr<types::Union_type>>(type_var)->name;
+
+        emit_op(Op_code::Nil, expr.loc);
+        emit_op(Op_code::Construct_union, expr.loc);
+        emit_byte(identifier_constant(union_name, expr.loc), expr.loc);
+        emit_byte(identifier_constant(expr.member.lexeme, expr.loc), expr.loc);
+        return;
+    }
     // e.g., User::new -> Compiles down to Get_global "User::new"
-    if (auto* base_var = std::get_if<ast::Variable_expr>(&expr.base->node)) {
+    if (auto *base_var = std::get_if<ast::Variable_expr>(&expr.base->node))
+    {
         std::string global_name = base_var->name + "::" + expr.member.lexeme;
         uint8_t name_idx = identifier_constant(global_name, expr.loc);
         emit_op(Op_code::Get_global, expr.loc);

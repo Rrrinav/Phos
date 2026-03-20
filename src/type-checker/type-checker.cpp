@@ -822,45 +822,78 @@ void Type_checker::check_stmt_node(ast::For_in_stmt &stmt)
 
 void Type_checker::check_stmt_node(ast::Match_stmt &stmt)
 {
-    auto subject_res = check_expr(*stmt.subject);
-    if (!subject_res)
+    auto subject_type_res = check_expr(*stmt.subject);
+    if (!subject_type_res)
         return;
 
-    auto subject_type = subject_res.value();
-    bool is_union_type = is_union(subject_type);
-    mem::rc_ptr<types::Union_type> u_type = nullptr;
-    if (is_union_type)
-        u_type = types::get_union_type(subject_type);
+    auto subject_type = subject_type_res.value();
+    auto union_t = std::get_if<mem::rc_ptr<types::Union_type>>(&subject_type);
+
+    if (!union_t)
+    {
+        type_error(stmt.loc, "Match subject must be a Union type.");
+        return;
+    }
+
+    // Exhaustiveness Tracking ---
+    std::unordered_set<std::string> matched_variants;
+    bool has_wildcard = false;
 
     for (auto &arm : stmt.arms)
     {
-        begin_scope();
-        if (!arm.is_wildcard)
+        begin_scope();  // Open a scope for the bound variable!
+
+        if (arm.is_wildcard)
         {
-            if (!is_union_type)
+            has_wildcard = true;
+        }
+        else if (arm.union_name != (*union_t)->name)
+        {
+            type_error(stmt.loc, "Match arm union '" + arm.union_name + "' does not match subject union '" + (*union_t)->name + "'.");
+        }
+        else if (!contains_key((*union_t)->variants, arm.variant_name))
+        {
+            type_error(stmt.loc, "Unknown variant '" + arm.variant_name + "' in match arm.");
+        }
+        else
+        {
+            // Mark this variant as successfully handled
+            matched_variants.insert(arm.variant_name);
+
+            if (!arm.bind_name.empty())
             {
-                type_error(stmt.loc, "Can only match on union types for now.");
-            }
-            else if (!contains_key(u_type->variants, arm.variant_name))
-            {
-                type_error(stmt.loc, "Variant '" + arm.variant_name + "' not found in union '" + u_type->name + "'.");
-            }
-            else
-            {
-                auto variant_type = find_by_key(u_type->variants, arm.variant_name)->second;
-                if (!arm.bind_name.empty())
-                {
-                    if (variant_type == types::Type(types::Primitive_kind::Void))
-                        type_error(stmt.loc, "Variant '" + arm.variant_name + "' does not contain a value to bind.");
-                    else
-                        declare(arm.bind_name, variant_type, true, stmt.loc);
-                }
+                // INJECT THE PAYLOAD TYPE INTO THE SCOPE!
+                auto payload_type = find_by_key((*union_t)->variants, arm.variant_name)->second;
+                declare(arm.bind_name, payload_type, true, stmt.loc);
             }
         }
+
         if (arm.body)
             check_stmt(*arm.body);
-        end_scope();
+
+        end_scope();  // Destroy the bound variable so it doesn't leak to the next arm
     }
+
+    // The Exhaustiveness Check! ---
+    if (!has_wildcard && matched_variants.size() < (*union_t)->variants.size())
+    {
+        std::string missing_variants;
+        for (const auto &variant : (*union_t)->variants)
+        {
+            if (!matched_variants.contains(variant.first))
+            {
+                if (!missing_variants.empty())
+                    missing_variants += ", ";
+                missing_variants += variant.first;
+            }
+        }
+
+        type_error(
+        stmt.loc,
+        "Match statement is not exhaustive. Missing variants: [" + missing_variants + "]. Add a wildcard '_' or match all variants.");
+    }
+
+    return;
 }
 
 Result<types::Type> Type_checker::check_expr_node(ast::Assignment_expr &expr, std::optional<types::Type> context_type)
@@ -1398,16 +1431,10 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
                                    "Union '" + union_type->name + "' has no variant named '" + static_path->member.lexeme + "'");
                 }
                 else
-                {
-                    type_error(ast::get_loc(arg_expr->node),
-                               "Argument to .has() must be a static-like variant access (e.g. MyUnion::Variant).");
-                }
+                    type_error(ast::get_loc(arg_expr->node), "Argument to .has() must be a static-like variant access.");
             }
             else
-            {
-                type_error(ast::get_loc(arg_expr->node),
-                           "Argument to .has() must be a static-like variant access (e.g. MyUnion::Variant).");
-            }
+                type_error(ast::get_loc(arg_expr->node), "Argument to .has() must be a static-like variant access.");
 
             return expr.type = types::Primitive_kind::Bool;
         }
@@ -1423,7 +1450,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
     if (is_array(obj_type))
         ffi_name = "Array::" + expr.method_name;
     if (is_string(obj_type))
-        ffi_name = "String::" + expr.method_name;
+        ffi_name = "string::" + expr.method_name;
 
     if (!ffi_name.empty() && native_signatures.contains(ffi_name))
     {
@@ -1460,6 +1487,8 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
                 return expr.type = parse_type_string(sig.ret_type);
             }
         }
+
+        // --- HIGH QUALITY ERROR FORMATTING ---
         std::string expected_signatures;
         for (size_t i = 0; i < signatures.size(); ++i)
         {
@@ -1482,13 +1511,13 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
         std::string error_str = std::format(
         "Arguments do not match any native signature for method '{}'.\n    Expected: {}", expr.method_name, expected_signatures);
 
-        // Only show the generic hint if the signature actually used a generic 'T'
         if (expected_signatures.find('T') != std::string::npos)
             error_str += "\n    (Note: 'T' represents the generic element type. For example, in an 'i64[]', T is 'i64'.)";
 
         type_error(expr.loc, error_str);
         return expr.type = types::Primitive_kind::Void;
     }
+    // --------------------------
 
     if (expr.method_name == "map")
     {
@@ -1536,7 +1565,6 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
     {
         if (contains_key((*mt)->methods, expr.method_name))
         {
-            // --- EXISTING STANDARD METHOD LOGIC ---
             const auto &method_signature = find_by_key((*mt)->methods, expr.method_name)->second;
             if (expr.arguments.size() != method_signature.parameter_types.size())
             {
@@ -1559,21 +1587,17 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
         }
         else
         {
-            // --- NEW: CLOSURE FIELD FALLBACK LOGIC ---
             for (size_t i = 0; i < (*mt)->fields.size(); ++i)
             {
                 if ((*mt)->fields[i].first == expr.method_name)
                 {
                     auto field_type = (*mt)->fields[i].second;
 
-                    // Check if the field is actually a Function
                     if (auto *func_type = std::get_if<mem::rc_ptr<types::Function_type>>(&field_type))
                     {
-                        // Tag the AST so the Compiler knows to emit Get_field instead of Get_global
                         expr.is_closure_field = true;
                         expr.field_index = static_cast<uint8_t>(i);
 
-                        // Validate arguments just like a normal method call
                         if (expr.arguments.size() != (*func_type)->parameter_types.size())
                         {
                             type_error(expr.loc,
@@ -1748,43 +1772,78 @@ Result<types::Type> Type_checker::check_expr_node(ast::Array_assignment_expr &ex
 
 Result<types::Type> Type_checker::check_expr_node(ast::Model_literal_expr &expr, std::optional<types::Type> context_type)
 {
-    if (!model_signatures.count(expr.model_name))
-    {
-        type_error(expr.loc, "Unknown model type '" + expr.model_name + "'");
+    (void)context_type;  // Unused parameter
+    auto type_res = lookup(expr.model_name, expr.loc);
+    if (!type_res)
         return expr.type = types::Primitive_kind::Void;
-    }
 
-    auto model_type = model_signatures.at(expr.model_name);
+    auto resolved_type = type_res.value().first;
 
-    std::unordered_set<std::string> provided_fields;
-    for (const auto &field : expr.fields) provided_fields.insert(field.first);
-
-    for (const auto &expected_field : model_type->fields)
-        if (!provided_fields.count(expected_field.first))
-            type_error(expr.loc, "Missing required field '" + expected_field.first + "' in model literal for '" + expr.model_name + "'");
-
-    for (const auto &provided_field : expr.fields)
+    // --- 1. UNION LITERAL SYNTAX ---
+    if (auto *union_t = std::get_if<mem::rc_ptr<types::Union_type>>(&resolved_type))
     {
-        const auto &field_name = provided_field.first;
-        if (!contains_key(model_type->fields, field_name))
+        if (expr.fields.size() != 1)
         {
-            type_error(expr.loc, "Unknown field '" + field_name + "' in model '" + expr.model_name + "'");
-            continue;
+            type_error(expr.loc, "Union literals must be initialized with exactly one variant field.");
+            return expr.type = types::Primitive_kind::Void;
         }
 
-        auto expected_type = find_by_key(model_type->fields, field_name)->second;
-        auto actual_type_res = check_expr(*provided_field.second, expected_type);
+        std::string variant_name = expr.fields[0].first;
+        ast::Expr *payload_expr = expr.fields[0].second;
 
-        if (actual_type_res && !is_compatible(expected_type, actual_type_res.value()))
+        if (!contains_key((*union_t)->variants, variant_name))
         {
-            type_error(ast::get_loc(provided_field.second->node),
-                       "Field '" + field_name + "' type mismatch. Expected '" + types::type_to_string(expected_type) + "' but got '" +
-                       types::type_to_string(actual_type_res.value()) + "'");
+            type_error(expr.loc, "Union '" + (*union_t)->name + "' has no variant named '" + variant_name + "'.");
+            return expr.type = types::Primitive_kind::Void;
         }
+
+        auto expected_payload_type = find_by_key((*union_t)->variants, variant_name)->second;
+        auto actual_payload_type = check_expr(*payload_expr, expected_payload_type);
+
+        if (actual_payload_type && !is_compatible(expected_payload_type, *actual_payload_type))
+            type_error(ast::get_loc(payload_expr->node), "Type mismatch for union variant payload.");
+
+        return expr.type = resolved_type;
     }
 
-    expr.type = types::Type(model_type);
-    return expr.type;
+    // --- 2. MODEL LITERAL SYNTAX ---
+    if (auto *model_t = std::get_if<mem::rc_ptr<types::Model_type>>(&resolved_type))
+    {
+        auto model_type = *model_t;
+
+        std::unordered_set<std::string> provided_fields;
+        for (const auto &field : expr.fields) provided_fields.insert(field.first);
+
+        for (const auto &expected_field : model_type->fields)
+            if (!provided_fields.count(expected_field.first))
+                type_error(expr.loc, "Missing required field '" + expected_field.first + "' in model literal for '" + expr.model_name + "'");
+
+        for (const auto &provided_field : expr.fields)
+        {
+            const auto &field_name = provided_field.first;
+            if (!contains_key(model_type->fields, field_name))
+            {
+                type_error(expr.loc, "Unknown field '" + field_name + "' in model '" + expr.model_name + "'");
+                continue;
+            }
+
+            auto expected_type = find_by_key(model_type->fields, field_name)->second;
+            auto actual_type_res = check_expr(*provided_field.second, expected_type);
+
+            if (actual_type_res && !is_compatible(expected_type, actual_type_res.value()))
+            {
+                type_error(ast::get_loc(provided_field.second->node),
+                           "Field '" + field_name + "' type mismatch. Expected '" + types::type_to_string(expected_type) + "' but got '" +
+                           types::type_to_string(actual_type_res.value()) + "'");
+            }
+        }
+
+        return expr.type = resolved_type;  // Safe to return the base resolved_type!
+    }
+
+    // --- 3. ERROR FALLBACK ---
+    type_error(expr.loc, "'" + expr.model_name + "' is not a model or a union.");
+    return expr.type = types::Primitive_kind::Void;
 }
 
 Result<types::Type> Type_checker::check_expr_node(ast::Range_expr &expr, std::optional<types::Type> context_type)

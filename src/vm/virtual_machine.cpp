@@ -4,7 +4,6 @@
 #include "../memory/ref_counted.hpp"
 #include "../value/value.hpp"
 #include <format>
-#include <iostream>
 
 #include "./chunk.hpp"
 #include "./opcodes.hpp"
@@ -474,6 +473,51 @@ Result<void> Virtual_machine::run()
 
                 arr->elements[idx] = val;
                 // Leave the assigned value on the top of the stack
+                break;
+            }
+
+            case Op_code::Construct_union:
+            {
+                uint8_t union_name_idx = *ip++;
+                uint8_t variant_name_idx = *ip++;
+
+                std::string union_name = get_string(frame->closure->chunk->constants[union_name_idx]);
+                std::string variant_name = get_string(frame->closure->chunk->constants[variant_name_idx]);
+
+                Value payload = pop();
+
+                // Direct allocation! No dummy type needed.
+                push(Value(mem::make_rc<Union_value>(std::move(union_name), std::move(variant_name), std::move(payload))));
+                break;
+            }
+
+            case Op_code::Match_variant:
+            {
+                uint8_t variant_name_idx = *ip++;
+                std::string expected_variant = get_string(frame->closure->chunk->constants[variant_name_idx]);
+
+                // IMPORTANT: Do NOT pop the subject! The match statement needs it for the next arm!
+                Value subject = peek(0);
+
+                if (is_union(subject))
+                {
+                    auto u_val = get_union(subject);
+                    if (u_val->variant_name == expected_variant)
+                    {
+                        push(u_val->payload);  // 1. Push the payload so 's' gets assigned to it
+                        push(true);            // 2. Push true so Jump_if_false DOES NOT jump!
+                    }
+                    else
+                    {
+                        push(nullptr);  // 1. Push dummy payload
+                        push(false);    // 2. Push false so Jump_if_false JUMPS to the next arm
+                    }
+                }
+                else
+                {
+                    push(nullptr);
+                    push(false);
+                }
                 break;
             }
 

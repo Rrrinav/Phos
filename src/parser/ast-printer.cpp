@@ -831,7 +831,7 @@ void AstPrinter::print_stmt_node(const Match_stmt &node)
                                       if (node.arms[i].is_wildcard)
                                           print_str("_:");
                                       else
-                                          print_str(node.arms[i].variant_name +
+                                          print_str(node.arms[i].union_name +
                                                     (node.arms[i].bind_name.empty() ? "" : "(" + node.arms[i].bind_name + ")") + ":");
                                       with_child(false, [&] { print_stmt_ptr(node.arms[i].body); });
                                   });
@@ -1137,7 +1137,7 @@ std::string Source_printer::print_node(const Match_stmt &node)
             res += "_";
         else
         {
-            res += arm.variant_name;
+            res += arm.union_name;
             if (!arm.bind_name.empty())
                 res += "(" + arm.bind_name + ")";
         }

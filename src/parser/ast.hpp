@@ -343,8 +343,9 @@ struct For_in_stmt
 // One arm of a match statement
 struct Match_arm
 {
-    std::string  variant_name; // "" when is_wildcard
-    std::string  bind_name;    // "" when no binding or is_wildcard
+    std::string  union_name;   // e.g. "Result"
+    std::string  variant_name; // e.g. "Ok"
+    std::string  bind_name;    // e.g. "s" (Empty if no payload bound)
     bool         is_wildcard = false;
     struct Stmt* body        = nullptr;
 };
