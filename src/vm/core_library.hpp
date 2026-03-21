@@ -187,6 +187,33 @@ inline double math_sqrt(double x) { return std::sqrt(x); }
 inline double math_pow(double base, double exp) { return std::pow(base, exp); }
 inline double math_abs(double x) { return std::abs(x); }
 
+inline Value core_to_i64(std::string str)
+{
+    int64_t result = 0;
+    auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), result);
+
+    if (ec == std::errc())
+        return Value(result);
+
+    return Value(nullptr);  // Return Phos 'nil' if parsing fails!
+}
+
+inline Value core_to_f64(std::string str)
+{
+    double result = 0.0;
+    auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), result);
+
+    if (ec == std::errc())
+        return Value(result);
+
+    return Value(nullptr);
+}
+
+inline std::string core_to_str(Value val)
+{
+    return value_to_string(val);
+}
+
 inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
 {
     vm.bind_native<core_is_same>("is_same", {"T", "T"}, "bool", tc);

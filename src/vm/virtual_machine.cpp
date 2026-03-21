@@ -577,12 +577,12 @@ Result<void> Virtual_machine::run()
 
             case Op_code::Print:
             {
-                *config_.out_stream << value_to_string(pop()) << "\n";
+                *config_.out_stream << value_to_str_debug(pop()) << "\n";
                 break;
             }
             case Op_code::Print_err:
             {
-                *config_.err_stream << value_to_string(pop()) << "\n";
+                *config_.err_stream << value_to_str_debug(pop()) << "\n";
                 break;
             }
             case Op_code::Halt:

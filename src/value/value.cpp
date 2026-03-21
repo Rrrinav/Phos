@@ -31,52 +31,94 @@ std::string value_to_string(const Value &val)
         return "nil";
     if (is_bool(val))
         return get_bool(val) ? "true" : "false";
+
     if (is_int(val))
-        return std::to_string(get_int(val));
+    {
+        char buf[32];
+        auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), get_int(val));
+        return std::string(buf, ptr);
+    }
     if (is_float(val))
-        return std::to_string(get_float(val));
+    {
+        char buf[64];
+        auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), get_float(val));
+        return std::string(buf, ptr);
+    }
     if (is_string(val))
-        return get_string(val);
+        return get_string(val);  // No quotes internally
 
     if (is_closure(val))
     {
         auto closure = get_closure(val);
-        // Differeniate string output so you know if it's Native or Bytecode!
-        if (closure->native_func)
-            return std::format("<native fn {}>", closure->name);
-        return std::format("<fn {}>", closure->name);
+        return closure->native_func ? std::format("<native fn {}>", closure->name) : std::format("<fn {}>", closure->name);
     }
+    if (is_array(val))
+        return std::format("<array len {}>", get_array(val)->elements.size());
+    if (is_model(val))
+        return std::format("<model {}>", get_model(val)->signature.name);
+
+    if (std::holds_alternative<mem::rc_ptr<Union_value>>(val))
+    {
+        auto u = std::get<mem::rc_ptr<Union_value>>(val);
+        return std::format("<{}::{}>", u->union_name, u->variant_name);
+    }
+    if (std::holds_alternative<mem::rc_ptr<Green_thread_value>>(val))
+        return "<green thread>";
+
+    return "<unknown>";
+}
+
+std::string value_to_str_debug(const Value &val)
+{
+    if (is_nil(val))
+        return "nil";
+    if (is_bool(val))
+        return get_bool(val) ? "true" : "false";
+
+    if (is_int(val) || is_float(val))
+        return value_to_string(val);
+
+    if (is_string(val))
+        return std::format("\"{}\"", get_string(val));
+
+    if (is_closure(val))
+        return value_to_string(val);
 
     if (is_array(val))
     {
         auto arr = get_array(val);
-        std::string res = "[ ";
+        std::string res = "[";
         for (size_t i = 0; i < arr->elements.size(); ++i)
         {
-            res += value_to_string(arr->elements[i]);
+            res += value_to_str_debug(arr->elements[i]);
             if (i != arr->elements.size() - 1)
                 res += ", ";
         }
-        res += " ]";
+        res += "]";
         return res;
     }
 
     if (is_model(val))
     {
         auto model = get_model(val);
-        return std::format("<model {}>", model->signature.name);
+        std::string res = model->signature.name + " { ";
+        for (size_t i = 0; i < model->fields.size(); ++i)
+        {
+            res += value_to_str_debug(model->fields[i]);
+            if (i != model->fields.size() - 1)
+                res += ", ";
+        }
+        res += " }";
+        return res;
     }
 
     if (std::holds_alternative<mem::rc_ptr<Union_value>>(val))
     {
         auto u = std::get<mem::rc_ptr<Union_value>>(val);
-        return std::format("<{}::{}({})>", u->union_name, u->variant_name, value_to_string(u->payload));
+        return std::format("{}::{}({})", u->union_name, u->variant_name, value_to_str_debug(u->payload));
     }
 
-    if (std::holds_alternative<mem::rc_ptr<Green_thread_value>>(val))
-        return "<green thread>";
-
-    return "<unknown>";
+    return value_to_string(val);  // Fallback to internal
 }
 
 // --- Equality Operators ---

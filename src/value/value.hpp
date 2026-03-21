@@ -150,6 +150,7 @@ mem::rc_ptr<Union_value> get_union(const Value &val);
 // ============================================================================
 
 std::string value_to_string(const Value &val);
+std::string value_to_str_debug(const Value &val);
 
 bool operator==(const Value &a, const Value &b);
 bool operator!=(const Value &a, const Value &b);

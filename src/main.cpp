@@ -13,10 +13,14 @@
 #include "lexer/token.hpp"
 #include "memory/arena.hpp"
 
+// --- VM Integrations ---
+#include "vm/compiler.hpp"
+#include "vm/virtual_machine.hpp"
+#include "vm/assembler.hpp"
+#include "vm/core_library.hpp"
+
 #define CL_IMPLEMENTATION
 #include "cli-args.hpp"
-
-//#include "repl.hpp"
 
 int main(int argc, char *argv[])
 {
@@ -30,27 +34,26 @@ int main(int argc, char *argv[])
         //return 0;
     }
 
-
-    cl::Parser p("Phos", "Phos interpreted programming langauage");
+    cl::Parser p("Phos", "Phos interpreted programming language");
     phos::cli::add_arguemnts(p);
     auto parse_res = p.parse(argc, argv);
     if (!parse_res)
     {
-        std::println("{}", parse_res.error());
+        std::println(stderr, "{}", parse_res.error());
         return EXIT_FAILURE;
     }
 
-    std::string filename;
-    bool print_ast = parse_res->is_subcmd_chosen(phos::cli::id::ast_print);
-    bool print_use_unicode = parse_res->get<cl::Flag>(phos::cli::id::ast_print_unicode).value_or(false);
-    bool print_only_print = false;
-    filename = parse_res->get<cl::Text>(phos::cli::id::file).value_or("");
-
+    std::string filename = parse_res->get<cl::Text>(phos::cli::id::file).value_or("");
     if (filename.empty())
     {
         p.print_help();
         return 1;
     }
+
+    bool print_ast = parse_res->is_subcmd_chosen(phos::cli::id::ast_print);
+    bool print_use_unicode = parse_res->get<cl::Flag>(phos::cli::id::ast_print_unicode).value_or(false);
+    bool print_ir = parse_res->get<cl::Flag>(phos::cli::id::print_ir).value_or(false);
+    std::string ir_out_file = parse_res->get<cl::Text>(phos::cli::id::print_ir_op).value_or("ir.phosasm");
 
     std::ifstream file(filename);
     if (!file.is_open())
@@ -63,6 +66,22 @@ int main(int argc, char *argv[])
     buffer << file.rdbuf();
     std::string source = buffer.str();
     file.close();
+
+    // 1. Initialize the VM
+    phos::vm::Virtual_machine vm;
+
+    // 2. Direct Assembly Execution Path!
+    if (filename.ends_with(".phosasm"))
+    {
+        auto res_main = phos::vm::Assembler::assemble(source);
+        auto res = vm.interpret(res_main);
+        if (!res)
+        {
+            std::println(stderr, "Runtime error: {}", res.error().format());
+            return 1;
+        }
+        return 0;
+    }
 
     phos::mem::Arena arena;
     try
@@ -86,34 +105,57 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        if (print_ast)
-        {
-            std::println("============Before typechecking=============");
-            phos::ast::AstPrinter printer;
-            printer.use_unicode = print_use_unicode;
-            printer.print_statements(parse_result.value());
+        // 3. Register Core Library & Type Check
+        phos::Type_checker type_checker;
+        phos::vm::core::register_core_library(vm, type_checker);  // MUST BE BEFORE .check()!
 
-            if (print_only_print)
-                return 0;
-        }
-
-        auto checked = phos::Type_checker().check(*parse_result);
+        auto checked = type_checker.check(parse_result.value());
         if (checked.size() > 0)
         {
             for (auto e : checked) std::println(stderr, "{}:{}", filename, e.format());
+            return 1;  // Halt compilation if types are invalid
         }
 
         if (print_ast)
         {
-            std::println("============After typechecking=============");
             phos::ast::AstPrinter printer;
             printer.use_unicode = print_use_unicode;
             printer.print_statements(parse_result.value());
-
-            if (print_only_print)
-                return 0;
         }
-        auto statements = std::move(*parse_result);
+
+        // 4. Compile to Bytecode
+        phos::vm::Compiler compiler{};
+        auto chunk_result = compiler.compile(parse_result.value());
+        if (!chunk_result)
+        {
+            std::println(stderr, "Compile error: {}", chunk_result.error().format());
+            return 1;
+        }
+
+        // 5. Output IR if requested
+        if (print_ir)
+        {
+            auto ir = phos::vm::Assembler::serialize(chunk_result.value());
+            std::ofstream out_file(ir_out_file);
+            if (out_file.is_open())
+            {
+                out_file << ir;
+                out_file.close();
+                std::println("IR successfully written to {}", ir_out_file);
+            }
+            else
+            {
+                std::println(stderr, "Failed to write to {}. Printing to stdout:\n{}", ir_out_file, ir);
+            }
+        }
+
+        // 6. Execute the compiled script!
+        auto res = vm.interpret(chunk_result.value());
+        if (!res)
+        {
+            std::println(stderr, "Runtime error: {}", res.error().format());
+            return 1;
+        }
     }
     catch (const std::exception &e)
     {

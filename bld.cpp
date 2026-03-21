@@ -113,6 +113,7 @@ void build_interpreter(bool release = false, bool force = false)
 
     for (auto &f : cpp_files)
     {
+
         std::string out_p = bld::fs::get_stem(bld::str::replace(f, SRC, BIN), true) + ".o";
         objs.push_back(out_p);
 

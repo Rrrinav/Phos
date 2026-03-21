@@ -221,7 +221,8 @@ Result<ast::Stmt*> Parser::model_declaration()
         skip_newlines();
     }
 
-    __TryIgnore(consume(lex::TokenType::RightBrace, "Expect '}' after model body"));
+    __TryIgnore(consume(lex::TokenType::RightBrace, "Expect '};' after model body"));
+    __TryIgnore(consume(lex::TokenType::Semicolon, "Expect ';' after model body"));
     current_model_.clear();
 
     auto stmt = mem::Arena::alloc(this->arena_, ast::Stmt{
