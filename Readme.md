@@ -6,47 +6,51 @@
 
 ```rust
 model User {
-  let id: i64;
-  let name: string;
-  let is_active: bool;
-}
+    id: i64;
+    name: string;
+    is_active: bool;
+};
 
-fn find_first(users: (User?)[], predicate: (| User | -> bool) ?) -> User ? {
+fn find_first(users: User?[], predicate: (|User| -> bool)?) -> User? {
 
-  let const default_predicate: | User | -> bool = | u: User | -> bool { return u.is_active; };
+    let mut actual_p : |User| -> bool = |u: User| -> bool { return u.is_active; };
 
-  let p:= predicate.value_or(default_predicate);
-
-  for (let i:= 0; i < len(users); i = i + 1) {
-    let maybe_user:= users[i];
-    // Type is narrowed to 'User' inside this block.
-    if (maybe_user != nil) {
-      let user:= maybe_user as User;
-      if (p(user)) {
-        return user; // Return the first user that matches
-      }
+    if predicate != nil {
+        actual_p = predicate as (|User| -> bool);
     }
-  }
 
-  return nil; // Return nil if no user matches
+    let mut i := 0;
+    while i < len(users) {
+        let maybe_user := users[i];
+        if maybe_user != nil {
+            let user := maybe_user as User;
+            if actual_p(user) {
+                return user;
+            }
+        }
+        i = i + 1;
+    }
+
+    return nil;
 }
 
 fn foo() -> (|| -> void) {
-    let x:= "x from function.";
+    let x := "x from function.";
     return || -> void { print("Hello from function, this is: " + x); };
 }
 
-let const user_list: (User?)[] = [
-  User{ .id = 1, .name = "Alex", .is_active = false },
-  nil, // A nil value in the list
-  User{ .id = 2, .name = "Blake", .is_active = true },
-  User{ .id = 3, .name = "Casey", .is_active = true }
+let user_list : User?[] = [
+    User { id: 1, name: "Alex", is_active: false },
+    nil,
+    User { id: 2, name: "Blake", is_active: true },
+    User { id: 3, name: "Casey", is_active: true }
 ];
 
-let first_active_user:= find_first(user_list, nil);
+let first_active_user := find_first(user_list, nil);
 
-if (first_active_user.exists()) {
-  print("Found active user: " + first_active_user.value().name);
+if first_active_user != nil {
+    let actual_user := first_active_user as User;
+    print("Found active user: " + actual_user.name);
 }
 
 foo()();
