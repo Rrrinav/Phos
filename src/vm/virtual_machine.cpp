@@ -520,6 +520,39 @@ Result<void> Virtual_machine::run()
                 }
                 break;
             }
+            case Op_code::Cast:
+            {
+                uint8_t target_type_byte = *ip++;
+                auto target_kind = static_cast<types::Primitive_kind>(target_type_byte);
+                Value val = pop();
+
+                switch (target_kind)
+                {
+                    case types::Primitive_kind::Int:
+                        if (is_float(val))
+                            push(Value(static_cast<int64_t>(get_float(val))));
+                        else if (is_int(val))
+                            push(val);  // Already i64
+                        else
+                            return std::unexpected(err::msg("Invalid cast to i64", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
+                        break;
+
+                    case types::Primitive_kind::Float:
+                        if (is_int(val))
+                            push(Value(static_cast<double>(get_int(val))));
+                        else if (is_float(val))
+                            push(val);  // Already f64
+                        else
+                            return std::unexpected(err::msg("Invalid cast to f64", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
+                        break;
+
+                        // As you add i8, u32, etc., just add cases here!
+
+                    default:
+                        return std::unexpected(err::msg("Unsupported runtime cast", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
+                }
+                break;
+            }
 
             case Op_code::Pop:
             {

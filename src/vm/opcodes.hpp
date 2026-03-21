@@ -30,7 +30,7 @@ enum class Op_code : uint8_t {
 
     // --- Arrays & Models ---
     Create_array, Get_index, Set_index,
-    Get_field, Set_field, Unpack, Construct_model,
+    Get_field, Set_field, Unpack, Construct_model, Cast,
 
     // --- Unions ---
     Construct_union,

@@ -122,6 +122,8 @@ void Compiler::compile_expr(ast::Expr *expr)
         visit_array_access_expr(*node);
     else if (auto *node = std::get_if<ast::Array_assignment_expr>(&expr->node))
         visit_array_assignment_expr(*node);
+    else if (auto *node = std::get_if<ast::Cast_expr>(&expr->node))
+        visit_cast_expr(*node);
     else
         std::println(stderr, "Unimplemented expr node at index: {}", expr->node.index());
 }
@@ -779,6 +781,24 @@ void Compiler::visit_array_access_expr(const ast::Array_access_expr &expr)
     compile_expr(expr.array);  // Pushes the array
     compile_expr(expr.index);  // Pushes the index
     emit_op(Op_code::Get_index, expr.loc);
+}
+
+void Compiler::visit_cast_expr(const ast::Cast_expr &expr)
+{
+    compile_expr(expr.expression);
+
+    if (std::holds_alternative<types::Primitive_kind>(expr.target_type))
+    {
+        auto prim = std::get<types::Primitive_kind>(expr.target_type);
+
+        // We only need runtime casts for actual memory-changing conversions
+        // You can expand this if-statement as you add i32, u8, etc.
+        if (prim == types::Primitive_kind::Int || prim == types::Primitive_kind::Float)
+        {
+            emit_op(Op_code::Cast, expr.loc);
+            emit_byte(static_cast<uint8_t>(prim), expr.loc);  // The operand is the target type!
+        }
+    }
 }
 
 void Compiler::visit_array_assignment_expr(const ast::Array_assignment_expr &expr)

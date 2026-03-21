@@ -51,6 +51,7 @@ std::string op_code_to_string(Op_code code)
         case Op_code::Set_field:      return "Set_field";
         case Op_code::Unpack:         return "Unpack";
         case Op_code::Construct_model:return "Construct_model";
+        case Op_code::Cast:           return "Cast";
         case Op_code::Construct_union:return "Construct_union";
         case Op_code::Match_variant:  return "Match_variant";
         case Op_code::Call:           return "Call";

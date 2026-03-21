@@ -2,12 +2,14 @@
 
 #include <cstdint>
 #include <vector>
+#include <string>
+#include <iostream>
 #include "opcodes.hpp"
 #include "../value/value.hpp"
 #include "../parser/ast.hpp"
 
-namespace phos::vm {
-
+namespace phos::vm
+{
 
 struct Chunk
 {
@@ -16,10 +18,8 @@ struct Chunk
     std::vector<phos::ast::Source_location> locs{};
 
     Chunk() = default;
-
     Chunk(const Chunk &other) = default;
     Chunk(Chunk &&other) noexcept = default;
-
     Chunk &operator=(const Chunk &other) = default;
     Chunk &operator=(Chunk &&other) noexcept = default;
 
@@ -29,10 +29,7 @@ struct Chunk
         locs.push_back(loc);
     }
 
-    void write(Op_code op, phos::ast::Source_location loc)
-    {
-        write(static_cast<uint8_t>(op), loc);
-    }
+    void write(Op_code op, phos::ast::Source_location loc) { write(static_cast<uint8_t>(op), loc); }
 
     size_t add_constant(Value value)
     {
@@ -40,10 +37,13 @@ struct Chunk
         return constants.size() - 1;
     }
 
+    // Optional: Keep this if you want quick runtime terminal debugging
     void disassemble(std::ostream &out, const std::string &name);
     size_t disassemble_instruction(std::ostream &out, size_t offset);
 
 private:
+    std::string format_instruction(size_t offset, const std::string &mnemonic, const std::string &operands, const std::string &comment);
+
     size_t simple_instruction(std::ostream &out, const std::string &name, size_t offset);
     size_t constant_instruction(std::ostream &out, const std::string &name, size_t offset);
     size_t jump_instruction(std::ostream &out, const std::string &name, int sign, size_t offset);
