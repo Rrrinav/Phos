@@ -48,12 +48,15 @@ private:
     lex::Token advance();
     bool match(std::initializer_list<lex::TokenType> types);
     bool check(lex::TokenType type) const { return peek().type == type; }
+    bool check_next(lex::TokenType type) const;
     bool is_at_end() const { return peek().type == lex::TokenType::Eof; }
     Result<lex::Token> consume(lex::TokenType type, const std::string &message);
     err::msg create_error(const lex::Token &token, const std::string &message);
     void synchronize();
 
     Result<types::Type> parse_type();
+    Result<ast::Function_param> parse_function_parameter(bool allow_default_value);
+    Result<std::vector<ast::Call_argument>> parse_call_arguments();
 
     Result<std::optional<ast::Stmt *>> declaration();
     Result<ast::Stmt *> function_declaration();

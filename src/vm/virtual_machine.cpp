@@ -294,6 +294,14 @@ Result<void> Virtual_machine::run()
                     ip += offset;
                 break;
             }
+            case Op_code::Jump_if_nil:
+            {
+                uint16_t offset = (static_cast<uint16_t>(*ip) << 8) | *(ip + 1);
+                ip += 2;
+                if (is_nil(peek(0)))
+                    ip += offset;
+                break;
+            }
             case Op_code::Jump:
             {
                 uint16_t offset = (static_cast<uint16_t>(*ip) << 8) | *(ip + 1);

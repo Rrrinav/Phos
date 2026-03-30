@@ -50,6 +50,8 @@ public:
 
     template <auto Func>
     void bind_native(const std::string &name, const std::vector<std::string> &params, const std::string &ret, phos::Type_checker &tc);
+    template <auto Func>
+    void bind_native_sig(const std::string &name, const std::vector<phos::Type_checker::Native_param> &params, const std::string &ret, phos::Type_checker &tc);
 
     Vm_config config_;
 
@@ -168,6 +170,22 @@ inline void Virtual_machine::bind_native(const std::string &name,
     if (!get_global(name))
     {
         types::Function_type dummy_sig;  // The VM doesn't care about static types at runtime!
+        auto native_closure = mem::make_rc<Closure_value>(name, ffi::Thunk<Func>::arity, dummy_sig, ffi::Thunk<Func>::call);
+        set_global(name, Value(native_closure));
+    }
+}
+
+template <auto Func>
+inline void Virtual_machine::bind_native_sig(const std::string &name,
+                                             const std::vector<phos::Type_checker::Native_param> &params,
+                                             const std::string &ret,
+                                             phos::Type_checker &tc)
+{
+    tc.define_native(name, params, ret);
+
+    if (!get_global(name))
+    {
+        types::Function_type dummy_sig;
         auto native_closure = mem::make_rc<Closure_value>(name, ffi::Thunk<Func>::arity, dummy_sig, ffi::Thunk<Func>::call);
         set_global(name, Value(native_closure));
     }

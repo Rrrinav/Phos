@@ -6,6 +6,7 @@
 #include "chunk.hpp"
 #include "../error/result.hpp"
 #include "../value/value.hpp"
+#include "../type-checker/type-checker.hpp"
 
 namespace phos::vm
 {
@@ -34,11 +35,12 @@ struct Compiler_state
 class Compiler
 {
 public:
-    Compiler() = default;
+    explicit Compiler(const phos::Type_checker *checker = nullptr) : type_checker(checker) {}
 
     // The compiler now returns a fully constructed Script function!
     Result<mem::rc_ptr<Closure_value>> compile(const std::vector<ast::Stmt *> &statements);
     std::vector<Compiler_state> states;
+    const phos::Type_checker *type_checker = nullptr;
 
     // --- State Accessors ---
     Compiler_state *current() { return &states.back(); }

@@ -1,8 +1,10 @@
 #pragma once
 
+#include <cstdlib>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <print>
 #include <unordered_map>
 #include <utility>
 
@@ -322,26 +324,24 @@ inline Value iterator_item_at(const Iterator_value &iter, int64_t index)
     iter.source);
 }
 
-inline bool iter_has_next(mem::rc_ptr<Iterator_value> iter)
-{
-    if (!iter)
-        return false;
-    return iter->cursor < iterator_length(*iter) - 1;
-}
-
-inline bool iter_has_prev(mem::rc_ptr<Iterator_value> iter)
-{
-    if (!iter)
-        return false;
-    return iter->cursor > 0 || (iter->cursor == iterator_length(*iter) && iterator_length(*iter) > 0);
-}
-
 inline Value iter_next(mem::rc_ptr<Iterator_value> iter)
 {
     if (!iter)
         return Value(nullptr);
 
     const int64_t len = iterator_length(*iter);
+    if (iter->cursor < 0)
+    {
+        if (len > 0)
+        {
+            iter->cursor = 0;
+            return iterator_item_at(*iter, iter->cursor);
+        }
+
+        iter->cursor = len;
+        return Value(nullptr);
+    }
+
     if (iter->cursor < len - 1)
     {
         ++iter->cursor;
@@ -357,6 +357,13 @@ inline Value iter_prev(mem::rc_ptr<Iterator_value> iter)
     if (!iter)
         return Value(nullptr);
 
+    const int64_t len = iterator_length(*iter);
+    if (iter->cursor == len && len > 0)
+    {
+        --iter->cursor;
+        return iterator_item_at(*iter, iter->cursor);
+    }
+
     if (iter->cursor > 0)
     {
         --iter->cursor;
@@ -367,34 +374,106 @@ inline Value iter_prev(mem::rc_ptr<Iterator_value> iter)
     return Value(nullptr);
 }
 
-inline Value iter_advance(mem::rc_ptr<Iterator_value> iter, int64_t steps);
-inline Value iter_retreat(mem::rc_ptr<Iterator_value> iter, int64_t steps);
-
-inline Value iter_advance(mem::rc_ptr<Iterator_value> iter, int64_t steps)
+inline Value iter_get(mem::rc_ptr<Iterator_value> iter)
 {
     if (!iter)
         return Value(nullptr);
-    if (steps < 0)
-        return iter_retreat(iter, -steps);
 
-    Value result = iter->cursor >= 0 && iter->cursor < iterator_length(*iter)
-                 ? iterator_item_at(*iter, iter->cursor)
-                 : Value(nullptr);
+    if (iter->cursor >= 0 && iter->cursor < iterator_length(*iter))
+        return iterator_item_at(*iter, iter->cursor);
+    return Value(nullptr);
+}
+
+inline bool iter_has_next(mem::rc_ptr<Iterator_value> iter, int64_t steps)
+{
+    if (!iter)
+        return false;
+
+    const int64_t len = iterator_length(*iter);
+    int64_t cursor = iter->cursor;
+
+    if (steps < 0)
+        return false;
+    if (steps == 0)
+        return cursor >= 0 && cursor < len;
+
+    for (int64_t i = 0; i < steps; ++i)
+    {
+        if (cursor < 0)
+        {
+            if (len > 0)
+                cursor = 0;
+            else
+                return false;
+        }
+        else if (cursor < len - 1)
+            ++cursor;
+        else
+            return false;
+    }
+    return true;
+}
+
+inline bool iter_has_prev(mem::rc_ptr<Iterator_value> iter, int64_t steps)
+{
+    if (!iter)
+        return false;
+
+    const int64_t len = iterator_length(*iter);
+    int64_t cursor = iter->cursor;
+
+    if (steps < 0)
+        return false;
+    if (steps == 0)
+        return cursor >= 0 && cursor < len;
+
+    for (int64_t i = 0; i < steps; ++i)
+    {
+        if (cursor > 0)
+            --cursor;
+        else if (cursor == len && len > 0)
+            --cursor;
+        else
+            return false;
+    }
+    return true;
+}
+
+inline Value iter_next(mem::rc_ptr<Iterator_value> iter, int64_t steps)
+{
+    if (!iter)
+        return Value(nullptr);
+
+    if (steps < 0)
+        return Value(nullptr);
+    if (steps == 0)
+    {
+        if (iter->cursor >= 0 && iter->cursor < iterator_length(*iter))
+            return iterator_item_at(*iter, iter->cursor);
+        return Value(nullptr);
+    }
+
+    Value result = Value(nullptr);
     for (int64_t i = 0; i < steps; ++i)
         result = iter_next(iter);
     return result;
 }
 
-inline Value iter_retreat(mem::rc_ptr<Iterator_value> iter, int64_t steps)
+inline Value iter_prev(mem::rc_ptr<Iterator_value> iter, int64_t steps)
 {
     if (!iter)
         return Value(nullptr);
-    if (steps < 0)
-        return iter_advance(iter, -steps);
 
-    Value result = iter->cursor >= 0 && iter->cursor < iterator_length(*iter)
-                 ? iterator_item_at(*iter, iter->cursor)
-                 : Value(nullptr);
+    if (steps < 0)
+        return Value(nullptr);
+    if (steps == 0)
+    {
+        if (iter->cursor >= 0 && iter->cursor < iterator_length(*iter))
+            return iterator_item_at(*iter, iter->cursor);
+        return Value(nullptr);
+    }
+
+    Value result = Value(nullptr);
     for (int64_t i = 0; i < steps; ++i)
         result = iter_prev(iter);
     return result;
@@ -566,6 +645,30 @@ inline Value core_clone(Value value)
     return deep_clone_value(value, seen);
 }
 
+[[noreturn]] inline void optional_panic(const std::string &message)
+{
+    std::println(stderr, "Runtime error: {}", message);
+    std::exit(1);
+}
+
+inline Value optional_get(Value value, std::string message)
+{
+    if (is_nil(value))
+        optional_panic(message);
+    return value;
+}
+
+inline Value optional_or(Value value, Value fallback)
+{
+    if (is_nil(value))
+        return fallback;
+    return value;
+}
+
+inline bool optional_has_value(Value value) { return !is_nil(value); }
+inline bool optional_is_some(Value value) { return !is_nil(value); }
+inline bool optional_is_none(Value value) { return is_nil(value); }
+
 inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
 {
     vm.bind_native<core_is_same>("is_same", {"T", "T"}, "bool", tc);
@@ -580,41 +683,46 @@ inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
 
     // len() strictly accepts either ONE string OR ONE array
     // (We use two bind_native calls to register two valid signatures for the same function!)
-    vm.bind_native<core_len>("len", {"string"}, "i64", tc);
-    vm.bind_native<core_len>("len", {"any[]"}, "i64", tc);
+    vm.bind_native_sig<core_len>("len", {{"value", "string", std::nullopt}}, "i64", tc);
+    vm.bind_native_sig<core_len>("len", {{"value", "any[]", std::nullopt}}, "i64", tc);
 
     // Array.push() takes an array of T, and a value of T. Returns T.
-    vm.bind_native<array_push>("Array::push", {"T[]", "T"}, "T", tc);
+    vm.bind_native_sig<array_push>("Array::push", {{"", "T[]", std::nullopt}, {"value", "T", std::nullopt}}, "T", tc);
     // Array.pop() takes an array of T, and returns an optional T?
     vm.bind_native<array_pop>("Array::pop", {"T[]"}, "T?", tc);
-    vm.bind_native<array_join>("Array::join", {"T[]", "string"}, "string", tc);
+    vm.bind_native_sig<array_join>("Array::join", {{"", "T[]", std::nullopt}, {"separator", "string", std::nullopt}}, "string", tc);
 
-    vm.bind_native<iter_next>("Iter::next", {"any"}, "any", tc);
-    vm.bind_native<iter_prev>("Iter::prev", {"any"}, "any", tc);
-    vm.bind_native<iter_has_next>("Iter::has_next", {"any"}, "bool", tc);
-    vm.bind_native<iter_has_prev>("Iter::has_prev", {"any"}, "bool", tc);
-    vm.bind_native<iter_advance>("Iter::advance", {"any", "i64"}, "any", tc);
-    vm.bind_native<iter_retreat>("Iter::back", {"any", "i64"}, "any", tc);
-    vm.bind_native<iter_retreat>("Iter::retreat", {"any", "i64"}, "any", tc);
+    vm.bind_native_sig<static_cast<Value (*)(mem::rc_ptr<Iterator_value>, int64_t)>(&iter_next)>("Iter::next", {{"", "any", std::nullopt}, {"step", "i64", Value(int64_t(1))}}, "any", tc);
+    vm.bind_native_sig<static_cast<Value (*)(mem::rc_ptr<Iterator_value>, int64_t)>(&iter_prev)>("Iter::prev", {{"", "any", std::nullopt}, {"step", "i64", Value(int64_t(1))}}, "any", tc);
+    vm.bind_native_sig<iter_get>("Iter::get", {{"", "any", std::nullopt}}, "any", tc);
+    vm.bind_native_sig<iter_has_next>("Iter::has_next", {{"", "any", std::nullopt}, {"step", "i64", Value(int64_t(1))}}, "bool", tc);
+    vm.bind_native_sig<iter_has_prev>("Iter::has_prev", {{"", "any", std::nullopt}, {"step", "i64", Value(int64_t(1))}}, "bool", tc);
+
+    vm.bind_native_sig<optional_get>(
+    "Optional::get", {{"", "T?", std::nullopt}, {"message", "string", Value(std::string("Tried to extract a value from nil."))}}, "T", tc);
+    vm.bind_native_sig<optional_or>("Optional::or", {{"", "T?", std::nullopt}, {"default", "T", std::nullopt}}, "T", tc);
+    vm.bind_native_sig<optional_has_value>("Optional::has_value", {{"", "T?", std::nullopt}}, "bool", tc);
+    vm.bind_native_sig<optional_is_some>("Optional::is_some", {{"", "T?", std::nullopt}}, "bool", tc);
+    vm.bind_native_sig<optional_is_none>("Optional::is_none", {{"", "T?", std::nullopt}}, "bool", tc);
 
     // Math
     vm.bind_native<math_sqrt>("sqrt", {"f64"}, "f64", tc);
-    vm.bind_native<math_pow>("pow", {"f64", "f64"}, "f64", tc);
+    vm.bind_native_sig<math_pow>("pow", {{"base", "f64", std::nullopt}, {"exponent", "f64", std::nullopt}}, "f64", tc);
     vm.bind_native<math_abs>("abs", {"f64"}, "f64", tc);
     // Advanced String Bindings
-    vm.bind_native<string_starts_with>("string::starts_with", {"string", "string"}, "bool", tc);
-    vm.bind_native<string_ends_with>("string::ends_with", {"string", "string"}, "bool", tc);
-    vm.bind_native<string_index_of>("string::index_of", {"string", "string"}, "i64", tc);
-    vm.bind_native<string_repeat>("string::repeat", {"string", "i64"}, "string", tc);
-    vm.bind_native<string_split>("string::split", {"string", "string"}, "string[]", tc);
+    vm.bind_native_sig<string_starts_with>("string::starts_with", {{"", "string", std::nullopt}, {"prefix", "string", std::nullopt}}, "bool", tc);
+    vm.bind_native_sig<string_ends_with>("string::ends_with", {{"", "string", std::nullopt}, {"suffix", "string", std::nullopt}}, "bool", tc);
+    vm.bind_native_sig<string_index_of>("string::index_of", {{"", "string", std::nullopt}, {"search", "string", std::nullopt}}, "i64", tc);
+    vm.bind_native_sig<string_repeat>("string::repeat", {{"", "string", std::nullopt}, {"count", "i64", std::nullopt}}, "string", tc);
+    vm.bind_native_sig<string_split>("string::split", {{"", "string", std::nullopt}, {"separator", "string", std::nullopt}}, "string[]", tc);
     vm.bind_native<string_trim>("string::trim", {"string"}, "string", tc);
     vm.bind_native<string_trim_left>("string::trim_left", {"string"}, "string", tc);
     vm.bind_native<string_trim_right>("string::trim_right", {"string"}, "string", tc);
     // Notice the "?" in the return type! The compiler knows these can fail and return nil.
-    vm.bind_native<string_parse_int>("string::parse_i64", {"string"}, "i64?", tc);
-    vm.bind_native<string_parse_float>("string::parse_f64", {"string"}, "f64?", tc);
-    vm.bind_native<string_parse_int>("parse_i64", {"string"}, "i64?", tc);
-    vm.bind_native<string_parse_float>("parse_f64", {"string"}, "f64?", tc);
+    vm.bind_native_sig<string_parse_int>("string::parse_i64", {{"", "string", std::nullopt}}, "i64?", tc);
+    vm.bind_native_sig<string_parse_float>("string::parse_f64", {{"", "string", std::nullopt}}, "f64?", tc);
+    vm.bind_native_sig<string_parse_int>("parse_i64", {{"text", "string", std::nullopt}}, "i64?", tc);
+    vm.bind_native_sig<string_parse_float>("parse_f64", {{"text", "string", std::nullopt}}, "f64?", tc);
 }
 
 }  // namespace phos::vm::core

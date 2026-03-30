@@ -25,6 +25,24 @@ static bool contains_key(const Vec &vec, const std::string &key)
 static void collect_nil_checked_vars_for_then(const ast::Expr &expr, std::unordered_set<std::string> &out);
 static void collect_nil_checked_vars_for_else(const ast::Expr &expr, std::unordered_set<std::string> &out);
 
+static void collect_nil_check_from_optional_method(const ast::Method_call_expr &expr,
+                                                   bool target_truthy_branch,
+                                                   std::unordered_set<std::string> &out)
+{
+    if (!expr.arguments.empty())
+        return;
+
+    auto *var_expr = std::get_if<ast::Variable_expr>(&expr.object->node);
+    if (!var_expr || !types::is_optional(ast::get_type(expr.object->node)))
+        return;
+
+    bool narrows_when_truthy = (expr.method_name == "has_value" || expr.method_name == "is_some");
+    bool narrows_when_falsey = (expr.method_name == "is_none");
+
+    if ((target_truthy_branch && narrows_when_truthy) || (!target_truthy_branch && narrows_when_falsey))
+        out.insert(var_expr->name);
+}
+
 static void collect_nil_check_from_comparison(const ast::Binary_expr &expr,
                                               lex::TokenType target_op,
                                               std::unordered_set<std::string> &out)
@@ -60,6 +78,21 @@ static void collect_nil_checked_vars_for_then(const ast::Expr &expr, std::unorde
         return;
     }
 
+    if (auto *unary_expr = std::get_if<ast::Unary_expr>(&expr.node))
+    {
+        if (unary_expr->op == lex::TokenType::Bang)
+        {
+            collect_nil_checked_vars_for_else(*unary_expr->right, out);
+            return;
+        }
+    }
+
+    if (auto *method_expr = std::get_if<ast::Method_call_expr>(&expr.node))
+    {
+        collect_nil_check_from_optional_method(*method_expr, true, out);
+        return;
+    }
+
     if (auto *var_expr = std::get_if<ast::Variable_expr>(&expr.node))
     {
         if (types::is_optional(var_expr->type))
@@ -79,7 +112,394 @@ static void collect_nil_checked_vars_for_else(const ast::Expr &expr, std::unorde
         }
 
         collect_nil_check_from_comparison(*bin_expr, lex::TokenType::Equal, out);
+        return;
     }
+
+    if (auto *unary_expr = std::get_if<ast::Unary_expr>(&expr.node))
+    {
+        if (unary_expr->op == lex::TokenType::Bang)
+        {
+            collect_nil_checked_vars_for_then(*unary_expr->right, out);
+            return;
+        }
+    }
+
+    if (auto *method_expr = std::get_if<ast::Method_call_expr>(&expr.node))
+    {
+        collect_nil_check_from_optional_method(*method_expr, false, out);
+    }
+}
+
+static const types::Function_type *find_model_method_signature(const types::Type &type, const std::string &name)
+{
+    if (!types::is_model(type))
+        return nullptr;
+
+    auto model_type = types::get_model_type(type);
+    auto it = find_by_key(model_type->methods, name);
+    if (it == model_type->methods.end())
+        return nullptr;
+    return &it->second;
+}
+
+bool Type_checker::default_expr_uses_forbidden_names(const ast::Expr &expr, const std::unordered_set<std::string> &forbidden_names) const
+{
+    return std::visit(
+    [&](const auto &node) -> bool
+    {
+        using T = std::decay_t<decltype(node)>;
+
+        if constexpr (std::is_same_v<T, ast::Variable_expr>)
+        {
+            return forbidden_names.contains(node.name);
+        }
+        else if constexpr (std::is_same_v<T, ast::Binary_expr>)
+        {
+            return default_expr_uses_forbidden_names(*node.left, forbidden_names) ||
+                   default_expr_uses_forbidden_names(*node.right, forbidden_names);
+        }
+        else if constexpr (std::is_same_v<T, ast::Unary_expr>)
+        {
+            return default_expr_uses_forbidden_names(*node.right, forbidden_names);
+        }
+        else if constexpr (std::is_same_v<T, ast::Call_expr>)
+        {
+            if (default_expr_uses_forbidden_names(*node.callee, forbidden_names))
+                return true;
+            for (const auto &arg : node.arguments)
+                if (arg.value && default_expr_uses_forbidden_names(*arg.value, forbidden_names))
+                    return true;
+            return false;
+        }
+        else if constexpr (std::is_same_v<T, ast::Assignment_expr>)
+        {
+            return default_expr_uses_forbidden_names(*node.value, forbidden_names);
+        }
+        else if constexpr (std::is_same_v<T, ast::Field_assignment_expr>)
+        {
+            return default_expr_uses_forbidden_names(*node.object, forbidden_names) ||
+                   default_expr_uses_forbidden_names(*node.value, forbidden_names);
+        }
+        else if constexpr (std::is_same_v<T, ast::Array_assignment_expr>)
+        {
+            return default_expr_uses_forbidden_names(*node.array, forbidden_names) ||
+                   default_expr_uses_forbidden_names(*node.index, forbidden_names) ||
+                   default_expr_uses_forbidden_names(*node.value, forbidden_names);
+        }
+        else if constexpr (std::is_same_v<T, ast::Cast_expr>)
+        {
+            return default_expr_uses_forbidden_names(*node.expression, forbidden_names);
+        }
+        else if constexpr (std::is_same_v<T, ast::Field_access_expr>)
+        {
+            return default_expr_uses_forbidden_names(*node.object, forbidden_names);
+        }
+        else if constexpr (std::is_same_v<T, ast::Method_call_expr>)
+        {
+            if (default_expr_uses_forbidden_names(*node.object, forbidden_names))
+                return true;
+            for (const auto &arg : node.arguments)
+                if (arg.value && default_expr_uses_forbidden_names(*arg.value, forbidden_names))
+                    return true;
+            return false;
+        }
+        else if constexpr (std::is_same_v<T, ast::Model_literal_expr>)
+        {
+            for (const auto &field : node.fields)
+                if (field.second && default_expr_uses_forbidden_names(*field.second, forbidden_names))
+                    return true;
+            return false;
+        }
+        else if constexpr (std::is_same_v<T, ast::Closure_expr>)
+        {
+            return false;
+        }
+        else if constexpr (std::is_same_v<T, ast::Array_literal_expr>)
+        {
+            for (auto *element : node.elements)
+                if (element && default_expr_uses_forbidden_names(*element, forbidden_names))
+                    return true;
+            return false;
+        }
+        else if constexpr (std::is_same_v<T, ast::Array_access_expr>)
+        {
+            return default_expr_uses_forbidden_names(*node.array, forbidden_names) ||
+                   default_expr_uses_forbidden_names(*node.index, forbidden_names);
+        }
+        else if constexpr (std::is_same_v<T, ast::Static_path_expr>)
+        {
+            return default_expr_uses_forbidden_names(*node.base, forbidden_names);
+        }
+        else if constexpr (std::is_same_v<T, ast::Range_expr>)
+        {
+            bool bad = false;
+            if (node.start)
+                bad = default_expr_uses_forbidden_names(*node.start, forbidden_names);
+            if (!bad && node.end)
+                bad = default_expr_uses_forbidden_names(*node.end, forbidden_names);
+            return bad;
+        }
+        else if constexpr (std::is_same_v<T, ast::Spawn_expr>)
+        {
+            return default_expr_uses_forbidden_names(*node.call, forbidden_names);
+        }
+        else if constexpr (std::is_same_v<T, ast::Await_expr>)
+        {
+            return default_expr_uses_forbidden_names(*node.thread, forbidden_names);
+        }
+        else if constexpr (std::is_same_v<T, ast::Yield_expr>)
+        {
+            return node.value && default_expr_uses_forbidden_names(*node.value, forbidden_names);
+        }
+        else if constexpr (std::is_same_v<T, ast::Fstring_expr>)
+        {
+            for (auto *part : node.interpolations)
+                if (part && default_expr_uses_forbidden_names(*part, forbidden_names))
+                    return true;
+            return false;
+        }
+        else
+        {
+            return false;
+        }
+    }, expr.node);
+}
+
+void Type_checker::validate_function_defaults(const ast::Function_stmt &stmt)
+{
+    std::unordered_set<std::string> forbidden_names = {"this"};
+    for (const auto &param : stmt.parameters)
+        forbidden_names.insert(param.name);
+
+    for (const auto &param : stmt.parameters)
+    {
+        if (!param.default_value)
+            continue;
+
+        bool uses_forbidden = default_expr_uses_forbidden_names(*param.default_value, forbidden_names);
+        if (uses_forbidden)
+            type_error(param.loc,
+                       "Default argument for parameter '" + param.name +
+                       "' cannot reference 'this' or another parameter. Defaults are materialized at the call site.");
+
+        if (!uses_forbidden)
+        {
+            auto default_type = check_expr(*param.default_value, param.type);
+            if (default_type && !is_compatible(param.type, *default_type))
+                type_error(param.loc,
+                           "Default argument for parameter '" + param.name + "' must have type '" +
+                           types::type_to_string(param.type) + "', but got '" + types::type_to_string(*default_type) + "'.");
+        }
+    }
+}
+
+Type_checker::Bound_call_arguments Type_checker::bind_call_arguments(const std::vector<ast::Function_param> &parameters,
+                                                                     const std::vector<ast::Call_argument> &arguments,
+                                                                     const ast::Source_location &call_loc,
+                                                                     const std::string &call_kind,
+                                                                     const std::string &call_name)
+{
+    Bound_call_arguments result;
+    result.ordered_arguments.resize(parameters.size());
+
+    std::vector<bool> filled(parameters.size(), false);
+    bool seen_named = false;
+    size_t next_positional = 0;
+
+    auto advance_to_next_positional = [&]()
+    {
+        while (next_positional < parameters.size() && filled[next_positional])
+            ++next_positional;
+    };
+
+    for (const auto &arg : arguments)
+    {
+        size_t target_index = parameters.size();
+
+        if (!arg.name.empty())
+        {
+            seen_named = true;
+            auto it = std::find_if(parameters.begin(), parameters.end(), [&](const auto &param) { return param.name == arg.name; });
+            if (it == parameters.end())
+            {
+                type_error(arg.loc, std::format("{} '{}' has no parameter named '{}'.", call_kind, call_name, arg.name));
+                result.ok = false;
+                continue;
+            }
+
+            target_index = static_cast<size_t>(std::distance(parameters.begin(), it));
+            if (filled[target_index])
+            {
+                type_error(arg.loc, std::format("Parameter '{}' was provided more than once in {} '{}'.", arg.name, call_kind, call_name));
+                result.ok = false;
+                continue;
+            }
+        }
+        else
+        {
+            if (seen_named)
+            {
+                type_error(arg.loc, "Positional arguments cannot appear after named arguments.");
+                result.ok = false;
+                continue;
+            }
+
+            advance_to_next_positional();
+            if (next_positional >= parameters.size())
+            {
+                type_error(call_loc,
+                           std::format("Too many arguments for {} '{}'. Expected at most {}, but got {}.",
+                                       call_kind,
+                                       call_name,
+                                       parameters.size(),
+                                       arguments.size()));
+                result.ok = false;
+                continue;
+            }
+
+            target_index = next_positional++;
+        }
+
+        auto arg_type = check_expr(*arg.value, parameters[target_index].type);
+        if (arg_type && !is_compatible(parameters[target_index].type, *arg_type))
+        {
+            type_error(ast::get_loc(arg.value->node),
+                       std::format("Argument type mismatch for parameter '{}'. Expected '{}' but got '{}'.",
+                                   parameters[target_index].name,
+                                   types::type_to_string(parameters[target_index].type),
+                                   types::type_to_string(*arg_type)));
+            result.ok = false;
+        }
+
+        result.ordered_arguments[target_index] = ast::Call_argument{
+            .name = "",
+            .value = arg.value,
+            .loc = arg.loc,
+        };
+        filled[target_index] = true;
+    }
+
+    for (size_t i = 0; i < parameters.size(); ++i)
+    {
+        if (filled[i])
+            continue;
+
+        if (parameters[i].default_value)
+        {
+            result.ordered_arguments[i] = ast::Call_argument{
+                .name = "",
+                .value = parameters[i].default_value,
+                .loc = parameters[i].loc,
+            };
+            continue;
+        }
+
+        type_error(call_loc,
+                   std::format("Missing required argument '{}' for {} '{}'.",
+                               parameters[i].name,
+                               call_kind,
+                               call_name));
+        result.ok = false;
+    }
+
+    return result;
+}
+
+Type_checker::Bound_native_arguments Type_checker::try_bind_native_arguments(const std::vector<Native_param> &parameters,
+                                                                             const std::vector<ast::Call_argument> &arguments,
+                                                                             std::optional<types::Type> receiver_type)
+{
+    Bound_native_arguments result;
+    size_t parameter_offset = receiver_type ? 1 : 0;
+
+    if (receiver_type)
+    {
+        if (parameters.empty())
+            return result;
+
+        if (!match_ffi_type(parameters[0].type, *receiver_type, result.generics))
+            return result;
+    }
+
+    if (parameters.size() < parameter_offset)
+        return result;
+
+    result.ordered_arguments.resize(parameters.size() - parameter_offset);
+
+    std::vector<bool> filled(result.ordered_arguments.size(), false);
+    bool seen_named = false;
+    size_t next_positional = 0;
+
+    auto advance_to_next_positional = [&]()
+    {
+        while (next_positional < filled.size() && filled[next_positional])
+            ++next_positional;
+    };
+
+    for (const auto &arg : arguments)
+    {
+        size_t target_index = filled.size();
+
+        if (!arg.name.empty())
+        {
+            seen_named = true;
+            for (size_t i = 0; i < filled.size(); ++i)
+            {
+                if (parameters[i + parameter_offset].name == arg.name)
+                {
+                    target_index = i;
+                    break;
+                }
+            }
+
+            if (target_index == filled.size() || filled[target_index])
+                return result;
+        }
+        else
+        {
+            if (seen_named)
+                return result;
+
+            advance_to_next_positional();
+            if (next_positional >= filled.size())
+                return result;
+
+            target_index = next_positional++;
+        }
+
+        auto arg_res = check_expr(*arg.value);
+        if (!arg_res || !match_ffi_type(parameters[target_index + parameter_offset].type, *arg_res, result.generics))
+            return result;
+
+        result.ordered_arguments[target_index] = ast::Call_argument{
+            .name = "",
+            .value = arg.value,
+            .loc = arg.loc,
+        };
+        filled[target_index] = true;
+    }
+
+    for (size_t i = 0; i < filled.size(); ++i)
+    {
+        if (filled[i])
+            continue;
+
+        if (parameters[i + parameter_offset].default_value.has_value())
+        {
+            result.ordered_arguments[i] = ast::Call_argument{
+                .name = "",
+                .value = nullptr,
+                .loc = {},
+            };
+            filled[i] = true;
+            continue;
+        }
+
+        return result;
+    }
+
+    result.ok = true;
+    return result;
 }
 
 // FFI STRING PARSER
@@ -201,7 +621,12 @@ void TypeResolver::resolve_type(types::Type &type)
 void TypeResolver::visit(ast::Function_stmt &stmt)
 {
     resolve_type(stmt.return_type);
-    for (auto &param : stmt.parameters) resolve_type(param.type);
+    for (auto &param : stmt.parameters)
+    {
+        resolve_type(param.type);
+        if (param.default_value)
+            resolve_expr(*param.default_value);
+    }
     if (stmt.body)
         resolve_stmt(*stmt.body);
 }
@@ -316,9 +741,9 @@ void TypeResolver::visit(ast::Call_expr &expr)
 {
     if (expr.callee)
         resolve_expr(*expr.callee);
-    for (auto *arg : expr.arguments)
-        if (arg)
-            resolve_expr(*arg);
+    for (auto &arg : expr.arguments)
+        if (arg.value)
+            resolve_expr(*arg.value);
 }
 
 void TypeResolver::visit(ast::Cast_expr &expr)
@@ -331,7 +756,12 @@ void TypeResolver::visit(ast::Cast_expr &expr)
 void TypeResolver::visit(ast::Closure_expr &expr)
 {
     resolve_type(expr.return_type);
-    for (auto &param : expr.parameters) resolve_type(param.type);
+    for (auto &param : expr.parameters)
+    {
+        resolve_type(param.type);
+        if (param.default_value)
+            resolve_expr(*param.default_value);
+    }
     if (expr.body)
         resolve_stmt(*expr.body);
 }
@@ -354,9 +784,9 @@ void TypeResolver::visit(ast::Method_call_expr &expr)
 {
     if (expr.object)
         resolve_expr(*expr.object);
-    for (auto *arg : expr.arguments)
-        if (arg)
-            resolve_expr(*arg);
+    for (auto &arg : expr.arguments)
+        if (arg.value)
+            resolve_expr(*arg.value);
 }
 
 void TypeResolver::visit(ast::Unary_expr &expr)
@@ -649,9 +1079,36 @@ bool Type_checker::is_any(const types::Type &type) const
 bool Type_checker::is_nil(const types::Type &type) const { return types::is_nil(type); }
 bool Type_checker::is_optional(const types::Type &type) const { return types::is_optional(type); }
 
-types::Type Type_checker::to_iterator_type(const types::Type &type) const
+bool Type_checker::is_iterator_protocol_type(const types::Type &type) const
 {
     if (is_iterator(type))
+        return true;
+
+    auto next_method = find_model_method_signature(type, "next");
+    if (!next_method)
+        return false;
+    if (!next_method->parameter_types.empty())
+        return false;
+    return is_optional(next_method->return_type);
+}
+
+types::Type Type_checker::iterator_element_type(const types::Type &type) const
+{
+    if (is_iterator(type))
+        return types::get_iterator_type(type)->element_type;
+
+    if (auto next_method = find_model_method_signature(type, "next"))
+    {
+        if (is_optional(next_method->return_type))
+            return types::get_optional_type(next_method->return_type)->base_type;
+    }
+
+    return types::Primitive_kind::Void;
+}
+
+types::Type Type_checker::to_iterator_type(const types::Type &type) const
+{
+    if (is_iterator_protocol_type(type))
         return type;
     if (is_array(type))
         return types::Type(mem::make_rc<types::Iterator_type>(types::get_array_type(type)->element_type));
@@ -661,6 +1118,11 @@ types::Type Type_checker::to_iterator_type(const types::Type &type) const
         return types::Type(mem::make_rc<types::Iterator_type>(types::get_optional_type(type)->base_type));
     if (is_nil(type))
         return types::Type(mem::make_rc<types::Iterator_type>(types::Type(types::Primitive_kind::Any)));
+    if (auto iter_method = find_model_method_signature(type, "iter"))
+    {
+        if (iter_method->parameter_types.empty() && is_iterator_protocol_type(iter_method->return_type))
+            return iter_method->return_type;
+    }
     if (type == types::Type(types::Primitive_kind::Void))
         return types::Type(types::Primitive_kind::Void);
     return types::Type(mem::make_rc<types::Iterator_type>(type));
@@ -721,6 +1183,7 @@ void Type_checker::check_stmt_node(ast::Function_stmt &stmt)
 {
     auto saved_return = current_return_type;
     current_return_type = stmt.return_type;
+    validate_function_defaults(stmt);
     begin_scope();
     if (current_model_type && !stmt.is_static)
         declare("this", *current_model_type, true, stmt.loc);
@@ -877,12 +1340,12 @@ void Type_checker::check_stmt_node(ast::For_in_stmt &stmt)
         return;
 
     auto iter_type = to_iterator_type(iterable_res.value());
-    if (!is_iterator(iter_type))
+    if (!is_iterator_protocol_type(iter_type))
     {
         type_error(stmt.loc, "Value in 'for..in' loop is not iterable.");
         return;
     }
-    types::Type var_type = types::get_iterator_type(iter_type)->element_type;
+    types::Type var_type = iterator_element_type(iter_type);
 
     begin_scope();
     declare(stmt.var_name, var_type, true, stmt.loc);
@@ -1111,6 +1574,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr, std::o
 Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::optional<types::Type> context_type)
 {
     (void)context_type;
+    auto has_named_arguments = [&]() { return std::any_of(expr.arguments.begin(), expr.arguments.end(), [](const auto &arg) { return !arg.name.empty(); }); };
 
     if (auto *static_path = std::get_if<ast::Static_path_expr>(&expr.callee->node))
     {
@@ -1146,10 +1610,10 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
                     type_error(expr.loc, "Variant '" + variant_name + "' constructor takes exactly one argument.");
                 else
                 {
-                    auto value_type_res = check_expr(*expr.arguments[0], expected_value_type);
+                    auto value_type_res = check_expr(*expr.arguments[0].value, expected_value_type);
                     if (value_type_res && !is_compatible(expected_value_type, *value_type_res))
                     {
-                        type_error(ast::get_loc(expr.arguments[0]->node),
+                        type_error(ast::get_loc(expr.arguments[0].value->node),
                                    "Value for variant '" + variant_name + "' is incorrect. Expected '" +
                                    types::type_to_string(expected_value_type) + "' but got '" + types::type_to_string(*value_type_res) +
                                    "'");
@@ -1170,6 +1634,13 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
             }
 
             const auto &signature = find_by_key(model_type->static_methods, method_name)->second;
+            const auto &method_decl = model_data.at(model_type->name).static_methods.at(method_name).declaration;
+            auto bound = bind_call_arguments(method_decl->parameters, expr.arguments, expr.loc, "static method", method_name);
+            expr.arguments = std::move(bound.ordered_arguments);
+
+            if (!bound.ok)
+                return expr.type = signature.return_type;
+
             if (expr.arguments.size() != signature.parameter_types.size())
             {
                 type_error(expr.loc,
@@ -1182,9 +1653,9 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
             {
                 for (size_t i = 0; i < expr.arguments.size(); ++i)
                 {
-                    auto arg_type_res = check_expr(*expr.arguments[i], signature.parameter_types[i]);
+                    auto arg_type_res = check_expr(*expr.arguments[i].value, signature.parameter_types[i]);
                     if (arg_type_res && !is_compatible(signature.parameter_types[i], *arg_type_res))
-                        type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch for static method.");
+                        type_error(ast::get_loc(expr.arguments[i].value->node), "Argument type mismatch for static method.");
                 }
             }
             return expr.type = signature.return_type;
@@ -1195,18 +1666,20 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
     {
         if (var_callee->name == "iter")
         {
+            if (has_named_arguments())
+                type_error(expr.loc, "iter() does not support named arguments.");
             if (expr.arguments.size() != 1)
             {
                 type_error(expr.loc, "iter() expects exactly one argument.");
                 return expr.type = types::Primitive_kind::Void;
             }
 
-            auto arg_type_res = check_expr(*expr.arguments[0]);
+            auto arg_type_res = check_expr(*expr.arguments[0].value);
             if (!arg_type_res)
                 return expr.type = types::Primitive_kind::Void;
 
             auto iter_type = to_iterator_type(*arg_type_res);
-            if (!is_iterator(iter_type))
+            if (!is_iterator_protocol_type(iter_type))
             {
                 type_error(expr.loc, "Value passed to iter() is not iterable.");
                 return expr.type = types::Primitive_kind::Void;
@@ -1216,13 +1689,15 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
 
         if (var_callee->name == "clone")
         {
+            if (has_named_arguments())
+                type_error(expr.loc, "clone() does not support named arguments.");
             if (expr.arguments.size() != 1)
             {
                 type_error(expr.loc, "clone() expects exactly one argument.");
                 return expr.type = types::Primitive_kind::Void;
             }
 
-            auto arg_type_res = check_expr(*expr.arguments[0]);
+            auto arg_type_res = check_expr(*expr.arguments[0].value);
             if (!arg_type_res)
                 return expr.type = types::Primitive_kind::Void;
             return expr.type = *arg_type_res;
@@ -1236,28 +1711,17 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
         {
             const auto &signatures = native_signatures.at(var_callee->name);
 
-            for (const auto &sig : signatures)
+            for (size_t sig_index = 0; sig_index < signatures.size(); ++sig_index)
             {
-                if (sig.params.size() != expr.arguments.size())
-                    continue;
-
-                bool matches = true;
-                std::unordered_map<std::string, types::Type> generics;
-
-                for (size_t i = 0; i < expr.arguments.size(); ++i)
+                const auto &sig = signatures[sig_index];
+                auto bound = try_bind_native_arguments(sig.params, expr.arguments);
+                if (bound.ok)
                 {
-                    auto arg_res = check_expr(*expr.arguments[i]);
-                    if (!arg_res || !match_ffi_type(sig.params[i], *arg_res, generics))
-                    {
-                        matches = false;
-                        break;
-                    }
-                }
+                    expr.arguments = std::move(bound.ordered_arguments);
+                    expr.native_signature_index = static_cast<int>(sig_index);
 
-                if (matches)
-                {
-                    if (sig.ret_type.length() == 1 && std::isupper(sig.ret_type[0]) && generics.contains(sig.ret_type))
-                        return expr.type = generics[sig.ret_type];
+                    if (sig.ret_type.length() == 1 && std::isupper(sig.ret_type[0]) && bound.generics.contains(sig.ret_type))
+                        return expr.type = bound.generics[sig.ret_type];
                     return expr.type = parse_type_string(sig.ret_type);
                 }
             }
@@ -1272,7 +1736,11 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
                 // Start at 0 because standalone functions don't have a hidden 'this' parameter
                 for (size_t j = 0; j < sig.params.size(); ++j)
                 {
-                    expected_signatures += sig.params[j];
+                    if (!sig.params[j].name.empty())
+                        expected_signatures += sig.params[j].name + ": ";
+                    expected_signatures += sig.params[j].type;
+                    if (sig.params[j].default_value.has_value())
+                        expected_signatures += " = ...";
                     if (j < sig.params.size() - 1)
                         expected_signatures += ", ";
                 }
@@ -1301,15 +1769,35 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
 
     types::Type callee_type = callee_type_res.value();
     const types::Function_type *signature = nullptr;
+    const ast::Function_stmt *declaration = nullptr;
 
     if (types::is_function(callee_type))
         signature = types::get_function_type(callee_type).get();
+
+    if (auto *var_callee = std::get_if<ast::Variable_expr>(&expr.callee->node))
+    {
+        if (functions.contains(var_callee->name))
+            declaration = functions.at(var_callee->name).declaration;
+    }
 
     if (!signature)
     {
         type_error(ast::get_loc(expr.callee->node),
                    "This expression has type '" + types::type_to_string(callee_type) + "' and cannot be called.");
         return expr.type = types::Primitive_kind::Void;
+    }
+
+    if (declaration)
+    {
+        auto bound = bind_call_arguments(declaration->parameters, expr.arguments, expr.loc, "function", declaration->name);
+        expr.arguments = std::move(bound.ordered_arguments);
+        if (!bound.ok)
+            return expr.type = signature->return_type;
+    }
+    else if (has_named_arguments())
+    {
+        type_error(expr.loc, "Named arguments are only supported for direct calls to declared functions and static methods.");
+        return expr.type = signature->return_type;
     }
 
     if (expr.arguments.size() != signature->parameter_types.size())
@@ -1322,10 +1810,10 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
     {
         for (size_t i = 0; i < expr.arguments.size(); ++i)
         {
-            auto arg_type_res = check_expr(*expr.arguments[i], signature->parameter_types[i]);
+            auto arg_type_res = check_expr(*expr.arguments[i].value, signature->parameter_types[i]);
             if (arg_type_res && !is_compatible(signature->parameter_types[i], arg_type_res.value()))
             {
-                type_error(ast::get_loc(expr.arguments[i]->node),
+                type_error(ast::get_loc(expr.arguments[i].value->node),
                            std::format("Argument type mismatch. Expected '{}' but got '{}'.",
                                        types::type_to_string(signature->parameter_types[i]),
                                        types::type_to_string(arg_type_res.value())));
@@ -1510,6 +1998,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Literal_expr &expr, std::
 Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, std::optional<types::Type> context_type)
 {
     (void)context_type;
+    auto has_named_arguments = [&]() { return std::any_of(expr.arguments.begin(), expr.arguments.end(), [](const auto &arg) { return !arg.name.empty(); }); };
     auto obj_type_res = check_expr(*expr.object);
     if (!obj_type_res)
         return expr.type = types::Primitive_kind::Void;
@@ -1526,7 +2015,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
                 return expr.type = types::Primitive_kind::Bool;
             }
 
-            auto *arg_expr = expr.arguments[0];
+            auto *arg_expr = expr.arguments[0].value;
             if (auto *static_path = std::get_if<ast::Static_path_expr>(&arg_expr->node))
             {
                 if (auto *var_expr = std::get_if<ast::Variable_expr>(&static_path->base->node))
@@ -1559,33 +2048,47 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
         auto element_type = types::get_iterator_type(obj_type)->element_type;
         auto optional_element = types::Type(mem::make_rc<types::Optional_type>(element_type));
 
-        if (expr.method_name == "next" || expr.method_name == "prev")
+        if (expr.method_name == "get")
         {
             if (!expr.arguments.empty())
-                type_error(expr.loc, "'" + expr.method_name + "()' does not take any arguments.");
+                type_error(expr.loc, "'get()' does not take any arguments.");
+            return expr.type = optional_element;
+        }
+
+        if (expr.method_name == "next" || expr.method_name == "prev")
+        {
+            if (expr.arguments.size() > 1)
+            {
+                type_error(expr.loc, "'" + expr.method_name + "()' accepts at most one i64 step argument.");
+            }
+            else if (expr.arguments.size() == 1)
+            {
+                if (!expr.arguments[0].name.empty() && expr.arguments[0].name != "step")
+                    type_error(expr.arguments[0].loc, "Unknown named argument '" + expr.arguments[0].name + "' for " + expr.method_name + "().");
+
+                auto arg_type = check_expr(*expr.arguments[0].value, types::Type(types::Primitive_kind::Int));
+                if (arg_type && *arg_type != types::Type(types::Primitive_kind::Int))
+                    type_error(ast::get_loc(expr.arguments[0].value->node), "Iterator step must be an i64.");
+            }
             return expr.type = optional_element;
         }
 
         if (expr.method_name == "has_next" || expr.method_name == "has_prev")
         {
-            if (!expr.arguments.empty())
-                type_error(expr.loc, "'" + expr.method_name + "()' does not take any arguments.");
-            return expr.type = types::Primitive_kind::Bool;
-        }
+            if (expr.arguments.size() > 1)
+            {
+                type_error(expr.loc, "'" + expr.method_name + "()' accepts at most one i64 step argument.");
+            }
+            else if (expr.arguments.size() == 1)
+            {
+                if (!expr.arguments[0].name.empty() && expr.arguments[0].name != "step")
+                    type_error(expr.arguments[0].loc, "Unknown named argument '" + expr.arguments[0].name + "' for " + expr.method_name + "().");
 
-        if (expr.method_name == "advance" || expr.method_name == "back" || expr.method_name == "retreat")
-        {
-            if (expr.arguments.size() != 1)
-            {
-                type_error(expr.loc, "'" + expr.method_name + "()' expects exactly one i64 argument.");
-            }
-            else
-            {
-                auto arg_type = check_expr(*expr.arguments[0], types::Type(types::Primitive_kind::Int));
+                auto arg_type = check_expr(*expr.arguments[0].value, types::Type(types::Primitive_kind::Int));
                 if (arg_type && *arg_type != types::Type(types::Primitive_kind::Int))
-                    type_error(ast::get_loc(expr.arguments[0]->node), "Iterator movement distance must be an i64.");
+                    type_error(ast::get_loc(expr.arguments[0].value->node), "Iterator step must be an i64.");
             }
-            return expr.type = optional_element;
+            return expr.type = types::Primitive_kind::Bool;
         }
 
         type_error(expr.loc, "Iterator type has no method named '" + expr.method_name + "'.");
@@ -1598,39 +2101,49 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
         ffi_name = "Array::" + expr.method_name;
     if (is_string(obj_type))
         ffi_name = "string::" + expr.method_name;
+    if (is_optional(obj_type))
+        ffi_name = "Optional::" + expr.method_name;
+
+    if (is_optional(obj_type) && expr.method_name == "or_else")
+    {
+        if (expr.arguments.size() != 1)
+        {
+            type_error(expr.loc, "or_else() expects exactly one closure argument.");
+            return expr.type = types::Primitive_kind::Void;
+        }
+
+        auto closure_type_res = check_expr(*expr.arguments[0].value);
+        if (!closure_type_res || !is_function(*closure_type_res))
+        {
+            type_error(ast::get_loc(expr.arguments[0].value->node), "Argument to 'or_else' must be a closure.");
+            return expr.type = types::Primitive_kind::Void;
+        }
+
+        auto closure_type = types::get_function_type(*closure_type_res);
+        auto base_type = types::get_optional_type(obj_type)->base_type;
+        if (!closure_type->parameter_types.empty())
+            type_error(ast::get_loc(expr.arguments[0].value->node), "Closure passed to 'or_else' must take no arguments.");
+        if (!is_compatible(base_type, closure_type->return_type))
+            type_error(ast::get_loc(expr.arguments[0].value->node),
+                       "Closure return type for 'or_else' must be '" + types::type_to_string(base_type) + "'.");
+        return expr.type = base_type;
+    }
 
     if (!ffi_name.empty() && native_signatures.contains(ffi_name))
     {
         const auto &signatures = native_signatures.at(ffi_name);
 
-        for (const auto &sig : signatures)
+        for (size_t sig_index = 0; sig_index < signatures.size(); ++sig_index)
         {
-            // Note: FFI methods assume 'this' is the FIRST parameter in the signature array!
-            if (sig.params.size() != expr.arguments.size() + 1)
-                continue;
-
-            bool matches = true;
-            std::unordered_map<std::string, types::Type> generics;
-
-            // 1. Check 'this' object
-            if (!match_ffi_type(sig.params[0], obj_type, generics))
-                continue;
-
-            // 2. Check the remaining arguments
-            for (size_t i = 0; i < expr.arguments.size(); ++i)
+            const auto &sig = signatures[sig_index];
+            auto bound = try_bind_native_arguments(sig.params, expr.arguments, obj_type);
+            if (bound.ok)
             {
-                auto arg_res = check_expr(*expr.arguments[i]);
-                if (!arg_res || !match_ffi_type(sig.params[i + 1], *arg_res, generics))
-                {
-                    matches = false;
-                    break;
-                }
-            }
+                expr.arguments = std::move(bound.ordered_arguments);
+                expr.native_signature_index = static_cast<int>(sig_index);
 
-            if (matches)
-            {
-                if (sig.ret_type.length() == 1 && std::isupper(sig.ret_type[0]) && generics.contains(sig.ret_type))
-                    return expr.type = generics[sig.ret_type];
+                if (sig.ret_type.length() == 1 && std::isupper(sig.ret_type[0]) && bound.generics.contains(sig.ret_type))
+                    return expr.type = bound.generics[sig.ret_type];
                 return expr.type = parse_type_string(sig.ret_type);
             }
         }
@@ -1645,7 +2158,11 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
             // Start at j = 1 to hide the implicit 'this' object from the user!
             for (size_t j = 1; j < sig.params.size(); ++j)
             {
-                expected_signatures += sig.params[j];
+                if (!sig.params[j].name.empty())
+                    expected_signatures += sig.params[j].name + ": ";
+                expected_signatures += sig.params[j].type;
+                if (sig.params[j].default_value.has_value())
+                    expected_signatures += " = ...";
                 if (j < sig.params.size() - 1)
                     expected_signatures += ", ";
             }
@@ -1673,10 +2190,10 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
             type_error(expr.loc, "Map must have one and only one closure argument.");
             return expr.type = types::Primitive_kind::Void;
         }
-        auto closure_type_res = check_expr(*expr.arguments[0]);
+        auto closure_type_res = check_expr(*expr.arguments[0].value);
         if (!closure_type_res || !is_function(closure_type_res.value()))
         {
-            type_error(ast::get_loc(expr.arguments[0]->node), "Argument to 'map' must be a closure.");
+            type_error(ast::get_loc(expr.arguments[0].value->node), "Argument to 'map' must be a closure.");
             return expr.type = types::Primitive_kind::Void;
         }
 
@@ -1686,7 +2203,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
         {
             auto element_type = types::get_array_type(obj_type)->element_type;
             if (closure_type->parameter_types.size() != 1 || !is_compatible(closure_type->parameter_types[0], element_type))
-                type_error(ast::get_loc(expr.arguments[0]->node), "Closure parameter type is not compatible with array element type.");
+                type_error(ast::get_loc(expr.arguments[0].value->node), "Closure parameter type is not compatible with array element type.");
             return expr.type = types::Type(mem::make_rc<types::Array_type>(closure_type->return_type));
         }
 
@@ -1694,7 +2211,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
         {
             auto base_type = types::get_optional_type(obj_type)->base_type;
             if (closure_type->parameter_types.size() != 1 || !is_compatible(closure_type->parameter_types[0], base_type))
-                type_error(ast::get_loc(expr.arguments[0]->node), "Closure parameter type is not compatible with optional's base type.");
+                type_error(ast::get_loc(expr.arguments[0].value->node), "Closure parameter type is not compatible with optional's base type.");
             return expr.type = types::Type(mem::make_rc<types::Optional_type>(closure_type->return_type));
         }
 
@@ -1713,6 +2230,13 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
         if (contains_key((*mt)->methods, expr.method_name))
         {
             const auto &method_signature = find_by_key((*mt)->methods, expr.method_name)->second;
+            const auto &method_decl = model_data.at((*mt)->name).methods.at(expr.method_name).declaration;
+            auto bound = bind_call_arguments(method_decl->parameters, expr.arguments, expr.loc, "method", expr.method_name);
+            expr.arguments = std::move(bound.ordered_arguments);
+
+            if (!bound.ok)
+                return expr.type = method_signature.return_type;
+
             if (expr.arguments.size() != method_signature.parameter_types.size())
             {
                 type_error(expr.loc,
@@ -1725,9 +2249,9 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
             {
                 for (size_t i = 0; i < expr.arguments.size(); ++i)
                 {
-                    auto arg_res = check_expr(*expr.arguments[i], method_signature.parameter_types[i]);
+                    auto arg_res = check_expr(*expr.arguments[i].value, method_signature.parameter_types[i]);
                     if (arg_res && !is_compatible(method_signature.parameter_types[i], *arg_res))
-                        type_error(ast::get_loc(expr.arguments[i]->node), "Argument type mismatch for method '" + expr.method_name + "'.");
+                        type_error(ast::get_loc(expr.arguments[i].value->node), "Argument type mismatch for method '" + expr.method_name + "'.");
                 }
             }
             return expr.type = method_signature.return_type;
@@ -1757,9 +2281,9 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
                         {
                             for (size_t j = 0; j < expr.arguments.size(); ++j)
                             {
-                                auto arg_res = check_expr(*expr.arguments[j], (*func_type)->parameter_types[j]);
+                                auto arg_res = check_expr(*expr.arguments[j].value, (*func_type)->parameter_types[j]);
                                 if (arg_res && !is_compatible((*func_type)->parameter_types[j], *arg_res))
-                                    type_error(ast::get_loc(expr.arguments[j]->node),
+                                    type_error(ast::get_loc(expr.arguments[j].value->node),
                                                "Argument type mismatch for closure field '" + expr.method_name + "'.");
                             }
                         }

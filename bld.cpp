@@ -415,22 +415,6 @@ int main(int argc, char *argv[])
         bld::fs::remove_dir(BIN);
         bld::log(bld::Log_type::INFO, "Done.");
     }
-    else if (!std::string(cfg["test"]).empty())
-    {
-        auto [passed, failed] = run_tests();
-
-        bld::log(bld::Log_type::INFO, std::format("Results: {} passed, {} failed", passed.size(), failed.size()));
-
-        report_gen::generate_html_report(passed, failed);
-
-        for (auto &[file, diff] : failed)
-        {
-            bld::log(bld::Log_type::ERR, "FAIL: " + file);
-            std::cerr << diff << "\n";
-        }
-
-        return failed.empty() ? 0 : 1;
-    }
     else if (!std::string(cfg["objs"]).empty())
     {
         build_custom_interpreter(release, force);

@@ -61,13 +61,12 @@ If you want a detached snapshot, use `clone(...)` first.
 
 The iterator protocol currently supports:
 
-- `next()`
-- `prev()`
-- `advance(i64)`
-- `back(i64)`
-- `retreat(i64)`
-- `has_next()`
-- `has_prev()`
+- `next(step: i64 = 1)`
+- `prev(step: i64 = 1)`
+- `has_next(step: i64 = 1)`
+- `has_prev(step: i64 = 1)`
+
+Reverse traversal is explicit. Not every iterator is required to be bidirectional.
 
 Examples:
 

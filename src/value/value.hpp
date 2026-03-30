@@ -160,7 +160,7 @@ struct Iterator_value
 
     types::Type element_type;
     Source source;
-    int64_t cursor = -1; // -1 = before first, size = after last
+    int64_t cursor = 0; // 0 = first item when available, -1 / size = edge sentinels
 
     Iterator_value(types::Type elem_type, Source src)
         : element_type(std::move(elem_type)), source(std::move(src))

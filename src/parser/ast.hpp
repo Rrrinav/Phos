@@ -23,6 +23,15 @@ struct Function_param
     std::string  name;
     types::Type  type;
     bool         is_mut   = false;
+    struct Expr* default_value = nullptr;
+    Source_location loc;
+};
+
+struct Call_argument
+{
+    std::string   name;
+    struct Expr*  value = nullptr;
+    Source_location loc;
 };
 
 struct Literal_expr
@@ -58,10 +67,11 @@ struct Unary_expr
 
 struct Call_expr
 {
-    struct Expr*              callee;
-    std::vector<struct Expr*> arguments;
-    types::Type               type;
-    Source_location           loc;
+    struct Expr*               callee;
+    std::vector<Call_argument> arguments;
+    types::Type                type;
+    Source_location            loc;
+    int                        native_signature_index = -1;
 };
 
 // Simple variable assignment:  name = value
@@ -110,14 +120,15 @@ struct Field_access_expr
 
 struct Method_call_expr
 {
-    struct Expr*              object;
-    std::string               method_name;
-    std::vector<struct Expr*> arguments;
-    types::Type               type;
-    Source_location           loc;
+    struct Expr*               object;
+    std::string                method_name;
+    std::vector<Call_argument> arguments;
+    types::Type                type;
+    Source_location            loc;
 
     bool                      is_closure_field = false;
     uint8_t                   field_index = 0;
+    int                       native_signature_index = -1;
 };
 
 struct Model_literal_expr

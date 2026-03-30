@@ -11,6 +11,7 @@
 #include "../error/err.hpp"
 #include "../error/result.hpp"
 #include "../value/type.hpp"
+#include "../value/value.hpp"
 
 namespace phos
 {
@@ -78,14 +79,30 @@ public:
     std::unordered_map<std::string, mem::rc_ptr<types::Union_type>> m_union_signatures;
 
     // --- FFI SIGNATURE REGISTRY ---
+    struct Native_param
+    {
+        std::string          name;
+        std::string          type;
+        std::optional<Value> default_value;
+    };
+
     struct Native_sig
     {
-        std::vector<std::string> params;
+        std::vector<Native_param> params;
         std::string ret_type;
     };
     std::unordered_map<std::string, std::vector<Native_sig>> native_signatures;
 
     void define_native(const std::string &name, const std::vector<std::string> &params, const std::string &ret)
+    {
+        std::vector<Native_param> native_params;
+        native_params.reserve(params.size());
+        for (const auto &param : params)
+            native_params.push_back({.name = "", .type = param, .default_value = std::nullopt});
+        native_signatures[name].push_back({native_params, ret});
+    }
+
+    void define_native(const std::string &name, const std::vector<Native_param> &params, const std::string &ret)
     {
         native_signatures[name].push_back({params, ret});
     }
@@ -143,7 +160,33 @@ public:
     bool is_iterator(const types::Type &type) const;
     bool is_any(const types::Type &type) const;
     bool is_nil(const types::Type &type) const;
+    bool default_expr_uses_forbidden_names(const ast::Expr &expr, const std::unordered_set<std::string> &forbidden_names) const;
+    void validate_function_defaults(const ast::Function_stmt &stmt);
+
+    struct Bound_call_arguments
+    {
+        std::vector<ast::Call_argument> ordered_arguments;
+        bool ok = true;
+    };
+
+    struct Bound_native_arguments
+    {
+        std::vector<ast::Call_argument> ordered_arguments;
+        std::unordered_map<std::string, types::Type> generics;
+        bool ok = false;
+    };
+
+    Bound_call_arguments bind_call_arguments(const std::vector<ast::Function_param> &parameters,
+                                             const std::vector<ast::Call_argument> &arguments,
+                                             const ast::Source_location &call_loc,
+                                             const std::string &call_kind,
+                                             const std::string &call_name);
+    Bound_native_arguments try_bind_native_arguments(const std::vector<Native_param> &parameters,
+                                                     const std::vector<ast::Call_argument> &arguments,
+                                                     std::optional<types::Type> receiver_type = std::nullopt);
     bool is_optional(const types::Type &type) const;
+    bool is_iterator_protocol_type(const types::Type &type) const;
+    types::Type iterator_element_type(const types::Type &type) const;
     types::Type to_iterator_type(const types::Type &type) const;
 
     // --- Main Checking Logic ---

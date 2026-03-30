@@ -183,7 +183,22 @@ void AstPrinter::print_expr_node(const Call_expr &node)
                        indent();
                        print_str("Arguments");
                        for (size_t i = 0; i < node.arguments.size(); ++i)
-                           with_child(i + 1 < node.arguments.size(), [&] { print_expr_ptr(node.arguments[i]); });
+                       {
+                           with_child(i + 1 < node.arguments.size(),
+                                      [&]
+                                      {
+                                          if (!node.arguments[i].name.empty())
+                                          {
+                                              indent();
+                                              print_str("Named: " + node.arguments[i].name);
+                                              with_child(false, [&] { print_expr_ptr(node.arguments[i].value); });
+                                          }
+                                          else
+                                          {
+                                              print_expr_ptr(node.arguments[i].value);
+                                          }
+                                      });
+                       }
                    });
     }
 }
@@ -272,7 +287,22 @@ void AstPrinter::print_expr_node(const Method_call_expr &node)
                        indent();
                        print_str("Arguments");
                        for (size_t i = 0; i < node.arguments.size(); ++i)
-                           with_child(i + 1 < node.arguments.size(), [&] { print_expr_ptr(node.arguments[i]); });
+                       {
+                           with_child(i + 1 < node.arguments.size(),
+                                      [&]
+                                      {
+                                          if (!node.arguments[i].name.empty())
+                                          {
+                                              indent();
+                                              print_str("Named: " + node.arguments[i].name);
+                                              with_child(false, [&] { print_expr_ptr(node.arguments[i].value); });
+                                          }
+                                          else
+                                          {
+                                              print_expr_ptr(node.arguments[i].value);
+                                          }
+                                      });
+                       }
                    });
     }
 }
@@ -332,8 +362,11 @@ void AstPrinter::print_expr_node(const Closure_expr &node)
                                   [&]
                                   {
                                       indent();
-                                      print_str((node.parameters[i].is_mut ? "mut " : "") + node.parameters[i].name + " : " +
-                                                types::type_to_string(node.parameters[i].type));
+                                      std::string text = (node.parameters[i].is_mut ? "mut " : "") + node.parameters[i].name + " : " +
+                                                         types::type_to_string(node.parameters[i].type);
+                                      if (node.parameters[i].default_value)
+                                          text += " = " + Source_printer{}.print_expr_ptr(node.parameters[i].default_value);
+                                      print_str(text);
                                   });
                    }
                });
@@ -892,7 +925,9 @@ std::string Source_printer::print_node(const Call_expr &node)
     std::string res = print_expr_ptr(node.callee) + "(";
     for (size_t i = 0; i < node.arguments.size(); ++i)
     {
-        res += print_expr_ptr(node.arguments[i]);
+        if (!node.arguments[i].name.empty())
+            res += node.arguments[i].name + " = ";
+        res += print_expr_ptr(node.arguments[i].value);
         if (i + 1 < node.arguments.size())
             res += ", ";
     }
@@ -913,7 +948,9 @@ std::string Source_printer::print_node(const Method_call_expr &node)
     std::string res = print_expr_ptr(node.object) + "." + node.method_name + "(";
     for (size_t i = 0; i < node.arguments.size(); ++i)
     {
-        res += print_expr_ptr(node.arguments[i]);
+        if (!node.arguments[i].name.empty())
+            res += node.arguments[i].name + " = ";
+        res += print_expr_ptr(node.arguments[i].value);
         if (i + 1 < node.arguments.size())
             res += ", ";
     }
@@ -940,6 +977,8 @@ std::string Source_printer::print_node(const Closure_expr &node)
         if (node.parameters[i].is_mut)
             res += "mut ";
         res += node.parameters[i].name + ": " + types::type_to_string(node.parameters[i].type);
+        if (node.parameters[i].default_value)
+            res += " = " + print_expr_ptr(node.parameters[i].default_value);
         if (i + 1 < node.parameters.size())
             res += ", ";
     }
@@ -1021,6 +1060,8 @@ std::string Source_printer::print_node(const Function_stmt &node)
         if (node.parameters[i].is_mut)
             res += "mut ";
         res += node.parameters[i].name + ": " + types::type_to_string(node.parameters[i].type);
+        if (node.parameters[i].default_value)
+            res += " = " + print_expr_ptr(node.parameters[i].default_value);
         if (i + 1 < node.parameters.size())
             res += ", ";
     }

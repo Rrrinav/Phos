@@ -5,6 +5,46 @@
 namespace phos::vm
 {
 
+static const types::Function_type *find_model_method_signature(const types::Type &type, const std::string &name)
+{
+    if (!std::holds_alternative<mem::rc_ptr<types::Model_type>>(type))
+        return nullptr;
+
+    auto model_type = std::get<mem::rc_ptr<types::Model_type>>(type);
+    for (const auto &[method_name, signature] : model_type->methods)
+        if (method_name == name)
+            return &signature;
+    return nullptr;
+}
+
+static bool is_iterator_protocol_type(const types::Type &type)
+{
+    if (std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(type))
+        return true;
+
+    auto next_method = find_model_method_signature(type, "next");
+    return next_method && next_method->parameter_types.empty() && types::is_optional(next_method->return_type);
+}
+
+static bool has_iter_method(const types::Type &type)
+{
+    auto iter_method = find_model_method_signature(type, "iter");
+    return iter_method && iter_method->parameter_types.empty() && is_iterator_protocol_type(iter_method->return_type);
+}
+
+static const Type_checker::Native_sig *find_native_signature(const Compiler &compiler, const std::string &name, int signature_index)
+{
+    if (!compiler.type_checker || signature_index < 0)
+        return nullptr;
+
+    auto it = compiler.type_checker->native_signatures.find(name);
+    if (it == compiler.type_checker->native_signatures.end())
+        return nullptr;
+    if (static_cast<size_t>(signature_index) >= it->second.size())
+        return nullptr;
+    return &it->second[static_cast<size_t>(signature_index)];
+}
+
 Result<mem::rc_ptr<Closure_value>> Compiler::compile(const std::vector<ast::Stmt *> &statements)
 {
     states.clear();
@@ -226,6 +266,33 @@ void Compiler::visit_closure_expr(const ast::Closure_expr &expr)
 
 void Compiler::visit_call_expr(const ast::Call_expr &expr)
 {
+    if (auto *var_callee = std::get_if<ast::Variable_expr>(&expr.callee->node))
+    {
+        if (var_callee->name == "iter" && expr.arguments.size() == 1)
+        {
+            auto arg_type = ast::get_type(expr.arguments[0].value->node);
+
+            if (is_iterator_protocol_type(arg_type))
+            {
+                compile_expr(expr.arguments[0].value);
+                return;
+            }
+
+            if (has_iter_method(arg_type))
+            {
+                ast::Method_call_expr method_expr{
+                    .object = expr.arguments[0].value,
+                    .method_name = "iter",
+                    .arguments = {},
+                    .type = expr.type,
+                    .loc = expr.loc,
+                };
+                visit_method_call_expr(method_expr);
+                return;
+            }
+        }
+    }
+
     if (auto *static_path = std::get_if<ast::Static_path_expr>(&expr.callee->node))
     {
         auto type_var = ast::get_type(static_path->base->node);
@@ -233,7 +300,7 @@ void Compiler::visit_call_expr(const ast::Call_expr &expr)
         {
             auto union_name = std::get<mem::rc_ptr<types::Union_type>>(type_var)->name;
 
-            compile_expr(expr.arguments[0]);  // Push payload
+            compile_expr(expr.arguments[0].value);  // Push payload
 
             emit_op(Op_code::Construct_union, expr.loc);
             emit_byte(identifier_constant(union_name, expr.loc), expr.loc);
@@ -244,8 +311,26 @@ void Compiler::visit_call_expr(const ast::Call_expr &expr)
     // First, push the function object
     compile_expr(expr.callee);
 
+    if (auto *var_callee = std::get_if<ast::Variable_expr>(&expr.callee->node))
+    {
+        if (auto *native_sig = find_native_signature(*this, var_callee->name, expr.native_signature_index))
+        {
+            for (size_t i = 0; i < expr.arguments.size(); ++i)
+            {
+                if (expr.arguments[i].value)
+                    compile_expr(expr.arguments[i].value);
+                else
+                    emit_constant(*native_sig->params[i].default_value, expr.loc);
+            }
+
+            emit_op(Op_code::Call, expr.loc);
+            emit_byte(expr.arguments.size(), expr.loc);
+            return;
+        }
+    }
+
     // Then, push all the arguments in order
-    for (auto *arg : expr.arguments) compile_expr(arg);
+    for (const auto &arg : expr.arguments) compile_expr(arg.value);
 
     // Emit the magical Call opcode with the arity!
     emit_op(Op_code::Call, expr.loc);
@@ -368,43 +453,92 @@ void Compiler::visit_for_in_stmt(const ast::For_in_stmt &stmt)
 {
     begin_scope();
 
+    auto iterable_type = ast::get_type(stmt.iterable->node);
+
     // Normalize any rangeable value into an iterator once, then loop over it.
-    uint8_t iter_name_idx = identifier_constant("iter", stmt.loc);
-    emit_op(Op_code::Get_global, stmt.loc);
-    emit_byte(iter_name_idx, stmt.loc);
-    compile_expr(stmt.iterable);
-    emit_op(Op_code::Call, stmt.loc);
-    emit_byte(1, stmt.loc);
+    if (is_iterator_protocol_type(iterable_type))
+    {
+        compile_expr(stmt.iterable);
+    }
+    else if (has_iter_method(iterable_type))
+    {
+        ast::Method_call_expr iter_method{
+            .object = stmt.iterable,
+            .method_name = "iter",
+            .arguments = {},
+            .type = find_model_method_signature(iterable_type, "iter")->return_type,
+            .loc = stmt.loc,
+        };
+        visit_method_call_expr(iter_method);
+    }
+    else
+    {
+        uint8_t iter_name_idx = identifier_constant("iter", stmt.loc);
+        emit_op(Op_code::Get_global, stmt.loc);
+        emit_byte(iter_name_idx, stmt.loc);
+        compile_expr(stmt.iterable);
+        emit_op(Op_code::Call, stmt.loc);
+        emit_byte(1, stmt.loc);
+    }
 
     current()->locals.push_back(Local{"<iter>", current()->scope_depth});
     int iter_slot = static_cast<int>(current()->locals.size()) - 1;
 
     size_t loop_start = current_chunk()->code.size();
 
-    uint8_t has_next_name_idx = identifier_constant("Iter::has_next", stmt.loc);
-    emit_op(Op_code::Get_global, stmt.loc);
-    emit_byte(has_next_name_idx, stmt.loc);
-    emit_op(Op_code::Get_local, stmt.loc);
-    emit_byte(static_cast<uint8_t>(iter_slot), stmt.loc);
-    emit_op(Op_code::Call, stmt.loc);
-    emit_byte(1, stmt.loc);
+    auto iter_type = has_iter_method(iterable_type)
+                   ? find_model_method_signature(iterable_type, "iter")->return_type
+                   : (is_iterator_protocol_type(iterable_type) ? iterable_type : types::Type(mem::make_rc<types::Iterator_type>(types::Primitive_kind::Any)));
 
-    size_t exit_jump = emit_jump(Op_code::Jump_if_false, stmt.loc);
-    emit_op(Op_code::Pop, stmt.loc);
+    bool builtin_iter = std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(iter_type);
 
-    uint8_t next_name_idx = identifier_constant("Iter::next", stmt.loc);
-    emit_op(Op_code::Get_global, stmt.loc);
-    emit_byte(next_name_idx, stmt.loc);
-    emit_op(Op_code::Get_local, stmt.loc);
-    emit_byte(static_cast<uint8_t>(iter_slot), stmt.loc);
-    emit_op(Op_code::Call, stmt.loc);
-    emit_byte(1, stmt.loc);
+    if (builtin_iter)
+    {
+        uint8_t get_name_idx = identifier_constant("Iter::get", stmt.loc);
+        emit_op(Op_code::Get_global, stmt.loc);
+        emit_byte(get_name_idx, stmt.loc);
+        emit_op(Op_code::Get_local, stmt.loc);
+        emit_byte(static_cast<uint8_t>(iter_slot), stmt.loc);
+        emit_op(Op_code::Call, stmt.loc);
+        emit_byte(1, stmt.loc);
+    }
+    else
+    {
+        std::string next_global = std::get<mem::rc_ptr<types::Model_type>>(iter_type)->name + "::next";
+        uint8_t next_name_idx = identifier_constant(next_global, stmt.loc);
+        emit_op(Op_code::Get_global, stmt.loc);
+        emit_byte(next_name_idx, stmt.loc);
+        emit_op(Op_code::Get_local, stmt.loc);
+        emit_byte(static_cast<uint8_t>(iter_slot), stmt.loc);
+        emit_op(Op_code::Call, stmt.loc);
+        emit_byte(1, stmt.loc);
+    }
 
     begin_scope();
     current()->locals.push_back(Local{stmt.var_name, current()->scope_depth});
+    int loop_var_slot = static_cast<int>(current()->locals.size()) - 1;
+
+    emit_op(Op_code::Get_local, stmt.loc);
+    emit_byte(static_cast<uint8_t>(loop_var_slot), stmt.loc);
+    size_t exit_jump = emit_jump(Op_code::Jump_if_nil, stmt.loc);
+    emit_op(Op_code::Pop, stmt.loc);
+
     if (stmt.body)
         compile_stmt(stmt.body);
     end_scope(stmt.loc);
+
+    if (builtin_iter)
+    {
+        uint8_t next_name_idx = identifier_constant("Iter::next", stmt.loc);
+        emit_op(Op_code::Get_global, stmt.loc);
+        emit_byte(next_name_idx, stmt.loc);
+        emit_op(Op_code::Get_local, stmt.loc);
+        emit_byte(static_cast<uint8_t>(iter_slot), stmt.loc);
+        emit_constant(Value(int64_t(1)), stmt.loc);
+        emit_op(Op_code::Call, stmt.loc);
+        emit_byte(2, stmt.loc);
+        emit_op(Op_code::Pop, stmt.loc);
+    }
 
     emit_loop(loop_start, stmt.loc);
     patch_jump(exit_jump, stmt.loc);
@@ -764,7 +898,7 @@ void Compiler::visit_method_call_expr(const ast::Method_call_expr &expr)
         emit_op(Op_code::Get_field, expr.loc);
         emit_byte(expr.field_index, expr.loc);  // Replaces Model with the Closure on the stack!
 
-        for (auto *arg : expr.arguments) compile_expr(arg);  // Push args
+        for (const auto &arg : expr.arguments) compile_expr(arg.value);  // Push args
 
         emit_op(Op_code::Call, expr.loc);  // Execute!
         emit_byte(static_cast<uint8_t>(expr.arguments.size()), expr.loc);
@@ -774,12 +908,60 @@ void Compiler::visit_method_call_expr(const ast::Method_call_expr &expr)
     auto type_var = ast::get_type(expr.object->node);
     std::string global_name;
 
+    if (std::holds_alternative<mem::rc_ptr<types::Optional_type>>(type_var) && expr.method_name == "or_else")
+    {
+        compile_expr(expr.object);
+        size_t nil_jump = emit_jump(Op_code::Jump_if_nil, expr.loc);
+        size_t done_jump = emit_jump(Op_code::Jump, expr.loc);
+
+        patch_jump(nil_jump, expr.loc);
+        emit_op(Op_code::Pop, expr.loc);
+
+        compile_expr(expr.arguments[0].value);
+        emit_op(Op_code::Call, expr.loc);
+        emit_byte(0, expr.loc);
+
+        patch_jump(done_jump, expr.loc);
+        return;
+    }
+
+    if (std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(type_var) && expr.method_name == "get")
+    {
+        uint8_t name_idx = identifier_constant("Iter::get", expr.loc);
+        emit_op(Op_code::Get_global, expr.loc);
+        emit_byte(name_idx, expr.loc);
+        compile_expr(expr.object);
+        emit_op(Op_code::Call, expr.loc);
+        emit_byte(1, expr.loc);
+        return;
+    }
+
+    if (std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(type_var) &&
+        (expr.method_name == "next" || expr.method_name == "prev" || expr.method_name == "has_next" || expr.method_name == "has_prev"))
+    {
+        uint8_t name_idx = identifier_constant("Iter::" + expr.method_name, expr.loc);
+        emit_op(Op_code::Get_global, expr.loc);
+        emit_byte(name_idx, expr.loc);
+
+        compile_expr(expr.object);
+        if (expr.arguments.empty())
+            emit_constant(Value(int64_t(1)), expr.loc);
+        else
+            compile_expr(expr.arguments[0].value);
+
+        emit_op(Op_code::Call, expr.loc);
+        emit_byte(2, expr.loc);
+        return;
+    }
+
     // If it's a Model, route to ModelName::method
     if (auto *model_t = std::get_if<mem::rc_ptr<types::Model_type>>(&type_var))
         global_name = (*model_t)->name + "::" + expr.method_name;
     // If it's an Array, route to Array::method
     else if (std::holds_alternative<mem::rc_ptr<types::Array_type>>(type_var))
         global_name = "Array::" + expr.method_name;
+    else if (std::holds_alternative<mem::rc_ptr<types::Optional_type>>(type_var))
+        global_name = "Optional::" + expr.method_name;
     else if (std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(type_var))
         global_name = "Iter::" + expr.method_name;
     // If it's an string, route to string::method
@@ -791,7 +973,23 @@ void Compiler::visit_method_call_expr(const ast::Method_call_expr &expr)
     emit_byte(name_idx, expr.loc);
 
     compile_expr(expr.object);  // Push the hidden 'this'
-    for (auto *arg : expr.arguments) compile_expr(arg);
+
+    if (auto *native_sig = find_native_signature(*this, global_name, expr.native_signature_index))
+    {
+        for (size_t i = 0; i < expr.arguments.size(); ++i)
+        {
+            if (expr.arguments[i].value)
+                compile_expr(expr.arguments[i].value);
+            else
+                emit_constant(*native_sig->params[i + 1].default_value, expr.loc);
+        }
+
+        emit_op(Op_code::Call, expr.loc);
+        emit_byte(static_cast<uint8_t>(expr.arguments.size() + 1), expr.loc);  // +1 for 'this'
+        return;
+    }
+
+    for (const auto &arg : expr.arguments) compile_expr(arg.value);
 
     emit_op(Op_code::Call, expr.loc);
     emit_byte(static_cast<uint8_t>(expr.arguments.size() + 1), expr.loc);  // +1 for 'this'

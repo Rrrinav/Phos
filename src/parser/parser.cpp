@@ -62,6 +62,13 @@ bool Parser::match(std::initializer_list<lex::TokenType> types)
     return false;
 }
 
+bool Parser::check_next(lex::TokenType type) const
+{
+    if (current_ + 1 >= tokens_.size())
+        return false;
+    return tokens_[current_ + 1].type == type;
+}
+
 // consume -> advance if current token matches type, else return error
 Result<lex::Token> Parser::consume(lex::TokenType type, const std::string& message)
 {
@@ -139,6 +146,58 @@ Result<std::vector<ast::Stmt *>> Parser::parse()
 
 // --- declarations ------------------------------------------------------------
 
+Result<ast::Function_param> Parser::parse_function_parameter(bool allow_default_value)
+{
+    bool is_mut = match({lex::TokenType::Mut});
+    auto param_name = __Try(consume(lex::TokenType::Identifier, "Expect parameter name"));
+    __TryIgnore(consume(lex::TokenType::Colon, "Expect ':' after parameter name"));
+    auto param_type = __Try(parse_type());
+
+    ast::Expr *default_value = nullptr;
+    if (allow_default_value && match({lex::TokenType::Assign}))
+        default_value = __Try(expression());
+
+    return ast::Function_param{
+        .name = param_name.lexeme,
+        .type = param_type,
+        .is_mut = is_mut,
+        .default_value = default_value,
+        .loc = {param_name.line, param_name.column},
+    };
+}
+
+Result<std::vector<ast::Call_argument>> Parser::parse_call_arguments()
+{
+    std::vector<ast::Call_argument> arguments;
+    if (check(lex::TokenType::RightParen))
+        return arguments;
+
+    do {
+        if (check(lex::TokenType::Identifier) && check_next(lex::TokenType::Assign))
+        {
+            auto name = advance();
+            __TryIgnore(consume(lex::TokenType::Assign, "Expect '=' after argument name"));
+            auto *value = __Try(expression());
+            arguments.push_back(ast::Call_argument{
+                .name = name.lexeme,
+                .value = value,
+                .loc = {name.line, name.column},
+            });
+        }
+        else
+        {
+            auto *value = __Try(expression());
+            arguments.push_back(ast::Call_argument{
+                .name = "",
+                .value = value,
+                .loc = ast::get_loc(value->node),
+            });
+        }
+    } while (match({lex::TokenType::Comma}));
+
+    return arguments;
+}
+
 // declaration -> fn_decl | model_decl | union_decl | var_decl | statement
 Result<std::optional<ast::Stmt*>> Parser::declaration()
 {
@@ -170,11 +229,7 @@ Result<ast::Stmt*> Parser::function_declaration()
     if (!check(lex::TokenType::RightParen))
     {
         do {
-            bool is_mut = match({lex::TokenType::Mut});
-            auto param_name = __Try(consume(lex::TokenType::Identifier, "Expect parameter name"));
-            __TryIgnore(consume(lex::TokenType::Colon, "Expect ':' after parameter name"));
-            auto param_type = __Try(parse_type());
-            parameters.emplace_back(ast::Function_param{param_name.lexeme, param_type, is_mut});
+            parameters.push_back(__Try(parse_function_parameter(true)));
         } while (match({lex::TokenType::Comma}));
     }
 
@@ -334,11 +389,7 @@ Result<ast::Function_stmt> Parser::parse_model_method()
     if (!check(lex::TokenType::RightParen))
     {
         do {
-            bool is_mut = match({lex::TokenType::Mut});
-            auto param_name = __Try(consume(lex::TokenType::Identifier, "Expect parameter name"));
-            __TryIgnore(consume(lex::TokenType::Colon, "Expect ':' after parameter name"));
-            auto param_type = __Try(parse_type());
-            parameters.emplace_back(ast::Function_param{param_name.lexeme, param_type, is_mut});
+            parameters.push_back(__Try(parse_function_parameter(true)));
         } while (match({lex::TokenType::Comma}));
     }
 
@@ -1034,13 +1085,7 @@ Result<ast::Expr*> Parser::call()
     {
         if (match({lex::TokenType::LeftParen}))
         {
-            std::vector<ast::Expr*> arguments;
-            if (!check(lex::TokenType::RightParen))
-            {
-                do {
-                    arguments.push_back(__Try(expression()));
-                } while (match({lex::TokenType::Comma}));
-            }
+            auto arguments = __Try(parse_call_arguments());
             auto paren = __Try(consume(lex::TokenType::RightParen, "Expect ')' after arguments"));
 
             auto* call_node = mem::Arena::alloc(arena_, ast::Call_expr{
@@ -1070,13 +1115,7 @@ Result<ast::Expr*> Parser::call()
 
             if (match({lex::TokenType::LeftParen}))
             {
-                std::vector<ast::Expr*> arguments;
-                if (!check(lex::TokenType::RightParen))
-                {
-                    do {
-                        arguments.push_back(__Try(expression()));
-                    } while (match({lex::TokenType::Comma}));
-                }
+                auto arguments = __Try(parse_call_arguments());
                 __TryIgnore(consume(lex::TokenType::RightParen, "Expect ')' after arguments"));
 
                 auto* method_call_node = mem::Arena::alloc(arena_, ast::Method_call_expr{
@@ -1321,11 +1360,7 @@ Result<ast::Expr*> Parser::parse_closure_expression()
         if (!check(lex::TokenType::Pipe))
         {
             do {
-                bool is_mut = match({lex::TokenType::Mut});
-                auto param_name = __Try(consume(lex::TokenType::Identifier, "Expect parameter name"));
-                __TryIgnore(consume(lex::TokenType::Colon, "Expect ':' after parameter name"));
-                auto param_type = __Try(parse_type());
-                parameters.emplace_back(ast::Function_param{param_name.lexeme, param_type, is_mut});
+                parameters.push_back(__Try(parse_function_parameter(false)));
             } while (match({lex::TokenType::Comma}));
         }
         __TryIgnore(consume(lex::TokenType::Pipe, "Expect '|' after closure parameters"));

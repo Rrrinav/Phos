@@ -124,7 +124,7 @@ int main(int argc, char *argv[])
         }
 
         // 4. Compile to Bytecode
-        phos::vm::Compiler compiler{};
+        phos::vm::Compiler compiler{&type_checker};
         auto chunk_result = compiler.compile(parse_result.value());
         if (!chunk_result)
         {
