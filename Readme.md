@@ -2,6 +2,8 @@
 
 > An interpreted statically typed scripting language with proper type checking
 
+I aim at adding a lot of features for learning purposes, they may not be perfect though.
+
 ## Example
 
 ```rust
@@ -68,12 +70,11 @@ g++ ./bld.cpp -o ./bld
 
 ## TODO
 
+- [ ] Iterators/ranges
+- [ ] Concurrency (green threads)
 - [ ] Proper I/O (reading input, file streams)
 - [ ] Have proper command line args for it
 - [ ] Imports
-- [ ] C/C++ FFI
+- [ ] FFI (In langugae FFI)
 
 ## TODO 2
-
-- [ ] Fix calculation of same things twice ( like functions and models in both interpreter and type checker).
-- [ ] PERF: Do overall optimizations and remove niavities.
