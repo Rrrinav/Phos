@@ -27,21 +27,25 @@ struct Closure_value;
 struct Array_value;
 struct Union_value;
 struct Green_thread_value;
+struct Iterator_value;
 
 // ============================================================================
 // The Core Value Variant (Notice Native_function_value is GONE!)
 // ============================================================================
-using Value = std::variant<long,
-                           double,
-                           bool,
-                           std::string,
-                           mem::rc_ptr<Model_value>,
-                           mem::rc_ptr<Closure_value>,
-                           mem::rc_ptr<Array_value>,
-                           mem::rc_ptr<Union_value>,
-                           mem::rc_ptr<Green_thread_value>,
-                           std::nullptr_t,
-                           std::monostate>;
+using Value = std::variant<
+    long,
+    double,
+    bool,
+    std::string,
+    mem::rc_ptr<Model_value>,
+    mem::rc_ptr<Closure_value>,
+    mem::rc_ptr<Array_value>,
+    mem::rc_ptr<Union_value>,
+    mem::rc_ptr<Iterator_value>,
+    mem::rc_ptr<Green_thread_value>,
+    std::nullptr_t,
+    std::monostate
+>;
 
 // Raw C++ Function Pointer for the Zero-Overhead FFI
 using Native_fn = Value (*)(vm::Virtual_machine *vm, uint8_t arg_count);
@@ -122,6 +126,48 @@ struct Green_thread_value
     std::vector<mem::rc_ptr<Upvalue_value>> open_upvalues;
 };
 
+struct Iterator_value
+{
+    struct Empty_state
+    {
+        auto operator<=>(const Empty_state &) const = default;
+    };
+
+    struct Singleton_state
+    {
+        Value value;
+    };
+
+    struct Interval_state
+    {
+        int64_t start = 0;
+        int64_t end = 0;
+        bool inclusive = false;
+    };
+
+    struct Array_state
+    {
+        mem::rc_ptr<Array_value> array;
+    };
+
+    struct String_state
+    {
+        std::string source;
+        std::vector<size_t> boundaries;
+    };
+
+    using Source = std::variant<Empty_state, Singleton_state, Interval_state, Array_state, String_state>;
+
+    types::Type element_type;
+    Source source;
+    int64_t cursor = -1; // -1 = before first, size = after last
+
+    Iterator_value(types::Type elem_type, Source src)
+        : element_type(std::move(elem_type)), source(std::move(src))
+    {
+    }
+};
+
 // ============================================================================
 // Type Checkers & Getters
 // ============================================================================
@@ -135,6 +181,7 @@ bool is_array(const Value &val);
 bool is_model(const Value &val);
 bool is_closure(const Value &val);
 bool is_union(const Value &val);
+bool is_iterator(const Value &val);
 
 bool get_bool(const Value &val);
 long get_int(const Value &val);
@@ -144,6 +191,7 @@ mem::rc_ptr<Array_value> get_array(const Value &val);
 mem::rc_ptr<Model_value> get_model(const Value &val);
 mem::rc_ptr<Closure_value> get_closure(const Value &val);
 mem::rc_ptr<Union_value> get_union(const Value &val);
+mem::rc_ptr<Iterator_value> get_iterator(const Value &val);
 
 // ============================================================================
 // Utility

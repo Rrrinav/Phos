@@ -99,6 +99,10 @@ std::string type_to_string(const Type &type)
         }
         return res + " }";
     }
+    else if (is_iterator(type))
+    {
+        return "iter<" + type_to_string(get_iterator_type(type)->element_type) + ">";
+    }
     return "unknown";
 }
 

@@ -14,6 +14,7 @@ bool is_array(const Value &val) { return std::holds_alternative<mem::rc_ptr<Arra
 bool is_model(const Value &val) { return std::holds_alternative<mem::rc_ptr<Model_value>>(val); }
 bool is_union(const Value &val) { return std::holds_alternative<mem::rc_ptr<Union_value>>(val); }
 bool is_closure(const Value &val) { return std::holds_alternative<mem::rc_ptr<Closure_value>>(val); }
+bool is_iterator(const Value &val) { return std::holds_alternative<mem::rc_ptr<Iterator_value>>(val); }
 
 // --- Getters ---
 bool get_bool(const Value &val) { return std::get<bool>(val); }
@@ -24,6 +25,7 @@ mem::rc_ptr<Array_value> get_array(const Value &val) { return std::get<mem::rc_p
 mem::rc_ptr<Model_value> get_model(const Value &val) { return std::get<mem::rc_ptr<Model_value>>(val); }
 mem::rc_ptr<Closure_value> get_closure(const Value &val) { return std::get<mem::rc_ptr<Closure_value>>(val); }
 mem::rc_ptr<Union_value> get_union(const Value &val) { return std::get<mem::rc_ptr<Union_value>>(val); }
+mem::rc_ptr<Iterator_value> get_iterator(const Value &val) { return std::get<mem::rc_ptr<Iterator_value>>(val); }
 // --- Utility ---
 std::string value_to_string(const Value &val)
 {
@@ -56,6 +58,8 @@ std::string value_to_string(const Value &val)
         return std::format("<array len {}>", get_array(val)->elements.size());
     if (is_model(val))
         return std::format("<model {}>", get_model(val)->signature.name);
+    if (is_iterator(val))
+        return std::format("<iter {}>", types::type_to_string(get_iterator(val)->element_type));
 
     if (std::holds_alternative<mem::rc_ptr<Union_value>>(val))
     {
@@ -150,6 +154,8 @@ bool operator==(const Value &a, const Value &b)
 
     if (std::holds_alternative<mem::rc_ptr<Union_value>>(a))
         return std::get<mem::rc_ptr<Union_value>>(a) == std::get<mem::rc_ptr<Union_value>>(b);
+    if (std::holds_alternative<mem::rc_ptr<Iterator_value>>(a))
+        return std::get<mem::rc_ptr<Iterator_value>>(a) == std::get<mem::rc_ptr<Iterator_value>>(b);
     if (std::holds_alternative<mem::rc_ptr<Green_thread_value>>(a))
         return std::get<mem::rc_ptr<Green_thread_value>>(a) == std::get<mem::rc_ptr<Green_thread_value>>(b);
 

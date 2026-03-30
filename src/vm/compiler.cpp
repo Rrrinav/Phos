@@ -74,6 +74,8 @@ void Compiler::compile_stmt(ast::Stmt *stmt)
         visit_while_stmt(*node);
     else if (auto *node = std::get_if<ast::For_stmt>(&stmt->node))
         visit_for_stmt(*node);
+    else if (auto *node = std::get_if<ast::For_in_stmt>(&stmt->node))
+        visit_for_in_stmt(*node);
     else if (auto *node = std::get_if<ast::Function_stmt>(&stmt->node))
         visit_function_stmt(*node);
     else if (auto *node = std::get_if<ast::Return_stmt>(&stmt->node))
@@ -124,6 +126,8 @@ void Compiler::compile_expr(ast::Expr *expr)
         visit_array_assignment_expr(*node);
     else if (auto *node = std::get_if<ast::Cast_expr>(&expr->node))
         visit_cast_expr(*node);
+    else if (auto *node = std::get_if<ast::Range_expr>(&expr->node))
+        visit_range_expr(*node);
     else
         std::println(stderr, "Unimplemented expr node at index: {}", expr->node.index());
 }
@@ -357,6 +361,55 @@ void Compiler::visit_for_stmt(const ast::For_stmt &stmt)
         patch_jump(exit_jump, stmt.loc);
         emit_op(Op_code::Pop, stmt.loc);
     }
+    end_scope(stmt.loc);
+}
+
+void Compiler::visit_for_in_stmt(const ast::For_in_stmt &stmt)
+{
+    begin_scope();
+
+    // Normalize any rangeable value into an iterator once, then loop over it.
+    uint8_t iter_name_idx = identifier_constant("iter", stmt.loc);
+    emit_op(Op_code::Get_global, stmt.loc);
+    emit_byte(iter_name_idx, stmt.loc);
+    compile_expr(stmt.iterable);
+    emit_op(Op_code::Call, stmt.loc);
+    emit_byte(1, stmt.loc);
+
+    current()->locals.push_back(Local{"<iter>", current()->scope_depth});
+    int iter_slot = static_cast<int>(current()->locals.size()) - 1;
+
+    size_t loop_start = current_chunk()->code.size();
+
+    uint8_t has_next_name_idx = identifier_constant("Iter::has_next", stmt.loc);
+    emit_op(Op_code::Get_global, stmt.loc);
+    emit_byte(has_next_name_idx, stmt.loc);
+    emit_op(Op_code::Get_local, stmt.loc);
+    emit_byte(static_cast<uint8_t>(iter_slot), stmt.loc);
+    emit_op(Op_code::Call, stmt.loc);
+    emit_byte(1, stmt.loc);
+
+    size_t exit_jump = emit_jump(Op_code::Jump_if_false, stmt.loc);
+    emit_op(Op_code::Pop, stmt.loc);
+
+    uint8_t next_name_idx = identifier_constant("Iter::next", stmt.loc);
+    emit_op(Op_code::Get_global, stmt.loc);
+    emit_byte(next_name_idx, stmt.loc);
+    emit_op(Op_code::Get_local, stmt.loc);
+    emit_byte(static_cast<uint8_t>(iter_slot), stmt.loc);
+    emit_op(Op_code::Call, stmt.loc);
+    emit_byte(1, stmt.loc);
+
+    begin_scope();
+    current()->locals.push_back(Local{stmt.var_name, current()->scope_depth});
+    if (stmt.body)
+        compile_stmt(stmt.body);
+    end_scope(stmt.loc);
+
+    emit_loop(loop_start, stmt.loc);
+    patch_jump(exit_jump, stmt.loc);
+    emit_op(Op_code::Pop, stmt.loc);
+
     end_scope(stmt.loc);
 }
 
@@ -727,6 +780,8 @@ void Compiler::visit_method_call_expr(const ast::Method_call_expr &expr)
     // If it's an Array, route to Array::method
     else if (std::holds_alternative<mem::rc_ptr<types::Array_type>>(type_var))
         global_name = "Array::" + expr.method_name;
+    else if (std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(type_var))
+        global_name = "Iter::" + expr.method_name;
     // If it's an string, route to string::method
     else if (auto *prim = std::get_if<types::Primitive_kind>(&type_var); prim && *prim == types::Primitive_kind::String)
         global_name = "string::" + expr.method_name;
@@ -807,6 +862,18 @@ void Compiler::visit_array_assignment_expr(const ast::Array_assignment_expr &exp
     compile_expr(expr.array);  // Pushes the array
     compile_expr(expr.index);  // Pushes the index
     emit_op(Op_code::Set_index, expr.loc);
+}
+
+void Compiler::visit_range_expr(const ast::Range_expr &expr)
+{
+    const std::string helper_name = expr.inclusive ? "__range_inclusive" : "__range_exclusive";
+    uint8_t helper_idx = identifier_constant(helper_name, expr.loc);
+    emit_op(Op_code::Get_global, expr.loc);
+    emit_byte(helper_idx, expr.loc);
+    compile_expr(expr.start);
+    compile_expr(expr.end);
+    emit_op(Op_code::Call, expr.loc);
+    emit_byte(2, expr.loc);
 }
 
 // ============================================================================

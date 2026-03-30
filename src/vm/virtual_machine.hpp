@@ -116,6 +116,11 @@ struct extract<mem::rc_ptr<Model_value>>
     static mem::rc_ptr<Model_value> get(const Value &v) { return phos::get_model(v); }
 };
 template <>
+struct extract<mem::rc_ptr<Iterator_value>>
+{
+    static mem::rc_ptr<Iterator_value> get(const Value &v) { return phos::get_iterator(v); }
+};
+template <>
 struct extract<Value>
 {
     static Value get(const Value &v) { return v; }

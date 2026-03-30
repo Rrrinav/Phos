@@ -18,6 +18,7 @@ struct Model_type;
 struct Array_type;
 struct Optional_type;
 struct Union_type;
+struct Iterator_type;
 
 // Dramatically simplified: A single Function_type covers all callables.
 using Type = std::variant<
@@ -26,7 +27,8 @@ using Type = std::variant<
     phos::mem::rc_ptr<Model_type>,
     phos::mem::rc_ptr<Array_type>,
     phos::mem::rc_ptr<Optional_type>,
-    phos::mem::rc_ptr<Union_type>
+    phos::mem::rc_ptr<Union_type>,
+    phos::mem::rc_ptr<Iterator_type>
 >;
 
 bool operator==(const Type& lhs, const Type& rhs);
@@ -76,6 +78,12 @@ struct Union_type
     bool operator==(const Union_type &other) const { return name == other.name && variants == other.variants; }
 };
 
+struct Iterator_type
+{
+    Type element_type;
+    auto operator<=>(const Iterator_type &) const = default;
+};
+
 // --- Fast Inline Helpers ---
 inline Primitive_kind get_primitive_kind(const Type &type) { return std::get<Primitive_kind>(type); }
 
@@ -85,12 +93,14 @@ inline bool is_model(const Type &type)     { return std::holds_alternative<phos:
 inline bool is_array(const Type &type)     { return std::holds_alternative<phos::mem::rc_ptr<Array_type>>(type); }
 inline bool is_optional(const Type &type)  { return std::holds_alternative<phos::mem::rc_ptr<Optional_type>>(type); }
 inline bool is_union(const Type &type)     { return std::holds_alternative<phos::mem::rc_ptr<Union_type>>(type); }
+inline bool is_iterator(const Type &type)  { return std::holds_alternative<phos::mem::rc_ptr<Iterator_type>>(type); }
 
 inline phos::mem::rc_ptr<Function_type> get_function_type(const Type &type) { return std::get<phos::mem::rc_ptr<Function_type>>(type); }
 inline phos::mem::rc_ptr<Model_type> get_model_type(const Type &type)       { return std::get<phos::mem::rc_ptr<Model_type>>(type); }
 inline phos::mem::rc_ptr<Array_type> get_array_type(const Type &type)       { return std::get<phos::mem::rc_ptr<Array_type>>(type); }
 inline phos::mem::rc_ptr<Optional_type> get_optional_type(const Type &type) { return std::get<phos::mem::rc_ptr<Optional_type>>(type); }
 inline phos::mem::rc_ptr<Union_type> get_union_type(const Type &type)       { return std::get<phos::mem::rc_ptr<Union_type>>(type); }
+inline phos::mem::rc_ptr<Iterator_type> get_iterator_type(const Type &type) { return std::get<phos::mem::rc_ptr<Iterator_type>>(type); }
 
 inline bool is_any(const Type &type) { return is_primitive(type) && get_primitive_kind(type) == Primitive_kind::Any; }
 inline bool is_nil(const Type &type) { return is_primitive(type) && get_primitive_kind(type) == Primitive_kind::Nil; }

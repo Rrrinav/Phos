@@ -22,6 +22,66 @@ static bool contains_key(const Vec &vec, const std::string &key)
     return find_by_key(vec, key) != vec.end();
 }
 
+static void collect_nil_checked_vars_for_then(const ast::Expr &expr, std::unordered_set<std::string> &out);
+static void collect_nil_checked_vars_for_else(const ast::Expr &expr, std::unordered_set<std::string> &out);
+
+static void collect_nil_check_from_comparison(const ast::Binary_expr &expr,
+                                              lex::TokenType target_op,
+                                              std::unordered_set<std::string> &out)
+{
+    const ast::Variable_expr *var_expr = nullptr;
+    if (auto *left_var = std::get_if<ast::Variable_expr>(&expr.left->node))
+    {
+        if (types::is_nil(ast::get_type(expr.right->node)))
+            var_expr = left_var;
+    }
+    else if (auto *right_var = std::get_if<ast::Variable_expr>(&expr.right->node))
+    {
+        if (types::is_nil(ast::get_type(expr.left->node)))
+            var_expr = right_var;
+    }
+
+    if (var_expr && expr.op == target_op)
+        out.insert(var_expr->name);
+}
+
+static void collect_nil_checked_vars_for_then(const ast::Expr &expr, std::unordered_set<std::string> &out)
+{
+    if (auto *bin_expr = std::get_if<ast::Binary_expr>(&expr.node))
+    {
+        if (bin_expr->op == lex::TokenType::LogicalAnd)
+        {
+            collect_nil_checked_vars_for_then(*bin_expr->left, out);
+            collect_nil_checked_vars_for_then(*bin_expr->right, out);
+            return;
+        }
+
+        collect_nil_check_from_comparison(*bin_expr, lex::TokenType::NotEqual, out);
+        return;
+    }
+
+    if (auto *var_expr = std::get_if<ast::Variable_expr>(&expr.node))
+    {
+        if (types::is_optional(var_expr->type))
+            out.insert(var_expr->name);
+    }
+}
+
+static void collect_nil_checked_vars_for_else(const ast::Expr &expr, std::unordered_set<std::string> &out)
+{
+    if (auto *bin_expr = std::get_if<ast::Binary_expr>(&expr.node))
+    {
+        if (bin_expr->op == lex::TokenType::LogicalOr)
+        {
+            collect_nil_checked_vars_for_else(*bin_expr->left, out);
+            collect_nil_checked_vars_for_else(*bin_expr->right, out);
+            return;
+        }
+
+        collect_nil_check_from_comparison(*bin_expr, lex::TokenType::Equal, out);
+    }
+}
+
 // FFI STRING PARSER
 types::Type Type_checker::parse_type_string(std::string str) const
 {
@@ -40,6 +100,14 @@ types::Type Type_checker::parse_type_string(std::string str) const
         return types::Primitive_kind::Void;
     if (str == "any")
         return types::Primitive_kind::Any;
+    if (str == "nil")
+        return types::Primitive_kind::Nil;
+
+    if (str.starts_with("iter<") && str.ends_with(">"))
+    {
+        auto base = parse_type_string(str.substr(5, str.length() - 6));
+        return types::Type(mem::make_rc<types::Iterator_type>(base));
+    }
 
     if (str.ends_with("[]"))
     {
@@ -122,6 +190,11 @@ void TypeResolver::resolve_type(types::Type &type)
     {
         if (*optional_type_ptr)
             resolve_type((*optional_type_ptr)->base_type);
+    }
+    else if (auto *iter_type_ptr = std::get_if<mem::rc_ptr<types::Iterator_type>>(&type))
+    {
+        if (*iter_type_ptr)
+            resolve_type((*iter_type_ptr)->element_type);
     }
 }
 
@@ -507,6 +580,17 @@ bool Type_checker::is_compatible(const types::Type &expected, const types::Type 
             return is_compatible((*a_array)->element_type, (*b_array)->element_type);
     }
 
+    if (auto *expected_iter = std::get_if<mem::rc_ptr<types::Iterator_type>>(&expected))
+    {
+        if (is_any((*expected_iter)->element_type) && is_iterator(actual))
+            return true;
+    }
+    if (const auto *a_iter = std::get_if<mem::rc_ptr<types::Iterator_type>>(&expected))
+    {
+        if (const auto *b_iter = std::get_if<mem::rc_ptr<types::Iterator_type>>(&actual))
+            return is_compatible((*a_iter)->element_type, (*b_iter)->element_type);
+    }
+
     // Function_type handles its own <=> equality gracefully
     return expected == actual;
 }
@@ -554,6 +638,7 @@ bool Type_checker::is_array(const types::Type &type) const { return std::holds_a
 bool Type_checker::is_function(const types::Type &type) const { return std::holds_alternative<mem::rc_ptr<types::Function_type>>(type); }
 bool Type_checker::is_model(const types::Type &type) const { return std::holds_alternative<mem::rc_ptr<types::Model_type>>(type); }
 bool Type_checker::is_union(const types::Type &type) const { return std::holds_alternative<mem::rc_ptr<types::Union_type>>(type); }
+bool Type_checker::is_iterator(const types::Type &type) const { return std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(type); }
 bool Type_checker::is_any(const types::Type &type) const
 {
     if (const auto *prim = std::get_if<types::Primitive_kind>(&type))
@@ -563,6 +648,23 @@ bool Type_checker::is_any(const types::Type &type) const
 
 bool Type_checker::is_nil(const types::Type &type) const { return types::is_nil(type); }
 bool Type_checker::is_optional(const types::Type &type) const { return types::is_optional(type); }
+
+types::Type Type_checker::to_iterator_type(const types::Type &type) const
+{
+    if (is_iterator(type))
+        return type;
+    if (is_array(type))
+        return types::Type(mem::make_rc<types::Iterator_type>(types::get_array_type(type)->element_type));
+    if (is_string(type))
+        return types::Type(mem::make_rc<types::Iterator_type>(types::Type(types::Primitive_kind::String)));
+    if (is_optional(type))
+        return types::Type(mem::make_rc<types::Iterator_type>(types::get_optional_type(type)->base_type));
+    if (is_nil(type))
+        return types::Type(mem::make_rc<types::Iterator_type>(types::Type(types::Primitive_kind::Any)));
+    if (type == types::Type(types::Primitive_kind::Void))
+        return types::Type(types::Primitive_kind::Void);
+    return types::Type(mem::make_rc<types::Iterator_type>(type));
+}
 
 Result<std::pair<types::Type, bool>> Type_checker::lookup_variable(const std::string &name, const ast::Source_location &loc)
 {
@@ -691,52 +793,21 @@ void Type_checker::check_stmt_node(ast::If_stmt &stmt)
     if (!is_boolean(condition_type) && !is_optional(condition_type))
         type_error(ast::get_loc(stmt.condition->node), "If condition must be a boolean or an optional type.");
 
-    std::string narrowed_var_name;
-    bool narrow_in_then = false;
-    bool narrow_in_else = false;
-
-    if (auto *bin_expr = std::get_if<ast::Binary_expr>(&stmt.condition->node))
-    {
-        ast::Variable_expr *var_expr = nullptr;
-        if (auto *left_var = std::get_if<ast::Variable_expr>(&bin_expr->left->node))
-        {
-            if (is_nil(ast::get_type(bin_expr->right->node)))
-                var_expr = left_var;
-        }
-        else if (auto *right_var = std::get_if<ast::Variable_expr>(&bin_expr->right->node))
-        {
-            if (is_nil(ast::get_type(bin_expr->left->node)))
-                var_expr = right_var;
-        }
-
-        if (var_expr)
-        {
-            narrowed_var_name = var_expr->name;
-            if (bin_expr->op == lex::TokenType::NotEqual)
-                narrow_in_then = true;
-            else if (bin_expr->op == lex::TokenType::Equal)
-                narrow_in_else = true;
-        }
-    }
-    else if (auto *var_expr = std::get_if<ast::Variable_expr>(&stmt.condition->node))
-    {
-        if (is_optional(var_expr->type))
-        {
-            narrowed_var_name = var_expr->name;
-            narrow_in_then = true;
-        }
-    }
+    std::unordered_set<std::string> narrowed_in_then;
+    std::unordered_set<std::string> narrowed_in_else;
+    collect_nil_checked_vars_for_then(*stmt.condition, narrowed_in_then);
+    collect_nil_checked_vars_for_else(*stmt.condition, narrowed_in_else);
 
     begin_scope();
-    if (narrow_in_then && !narrowed_var_name.empty())
-        m_nil_checked_vars_stack.back().insert(narrowed_var_name);
+    for (const auto &name : narrowed_in_then)
+        m_nil_checked_vars_stack.back().insert(name);
     if (stmt.then_branch)
         check_stmt(*stmt.then_branch);
     end_scope();
 
     begin_scope();
-    if (narrow_in_else && !narrowed_var_name.empty())
-        m_nil_checked_vars_stack.back().insert(narrowed_var_name);
+    for (const auto &name : narrowed_in_else)
+        m_nil_checked_vars_stack.back().insert(name);
     if (stmt.else_branch)
         check_stmt(*stmt.else_branch);
     end_scope();
@@ -805,13 +876,13 @@ void Type_checker::check_stmt_node(ast::For_in_stmt &stmt)
     if (!iterable_res)
         return;
 
-    types::Type var_type = types::Primitive_kind::Void;
-    if (is_array(iterable_res.value()))
-        var_type = types::get_array_type(iterable_res.value())->element_type;
-    else if (std::holds_alternative<ast::Range_expr>(stmt.iterable->node))
-        var_type = types::Primitive_kind::Int;
-    else
-        type_error(stmt.loc, "Iterable in 'for..in' loop must be an array or a range.");
+    auto iter_type = to_iterator_type(iterable_res.value());
+    if (!is_iterator(iter_type))
+    {
+        type_error(stmt.loc, "Value in 'for..in' loop is not iterable.");
+        return;
+    }
+    types::Type var_type = types::get_iterator_type(iter_type)->element_type;
 
     begin_scope();
     declare(stmt.var_name, var_type, true, stmt.loc);
@@ -1117,6 +1188,44 @@ Result<types::Type> Type_checker::check_expr_node(ast::Call_expr &expr, std::opt
                 }
             }
             return expr.type = signature.return_type;
+        }
+    }
+
+    if (auto *var_callee = std::get_if<ast::Variable_expr>(&expr.callee->node))
+    {
+        if (var_callee->name == "iter")
+        {
+            if (expr.arguments.size() != 1)
+            {
+                type_error(expr.loc, "iter() expects exactly one argument.");
+                return expr.type = types::Primitive_kind::Void;
+            }
+
+            auto arg_type_res = check_expr(*expr.arguments[0]);
+            if (!arg_type_res)
+                return expr.type = types::Primitive_kind::Void;
+
+            auto iter_type = to_iterator_type(*arg_type_res);
+            if (!is_iterator(iter_type))
+            {
+                type_error(expr.loc, "Value passed to iter() is not iterable.");
+                return expr.type = types::Primitive_kind::Void;
+            }
+            return expr.type = iter_type;
+        }
+
+        if (var_callee->name == "clone")
+        {
+            if (expr.arguments.size() != 1)
+            {
+                type_error(expr.loc, "clone() expects exactly one argument.");
+                return expr.type = types::Primitive_kind::Void;
+            }
+
+            auto arg_type_res = check_expr(*expr.arguments[0]);
+            if (!arg_type_res)
+                return expr.type = types::Primitive_kind::Void;
+            return expr.type = *arg_type_res;
         }
     }
 
@@ -1443,6 +1552,44 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
             type_error(expr.loc, "Union types only support the '.has()' method.");
             return expr.type = types::Primitive_kind::Void;
         }
+    }
+
+    if (is_iterator(obj_type))
+    {
+        auto element_type = types::get_iterator_type(obj_type)->element_type;
+        auto optional_element = types::Type(mem::make_rc<types::Optional_type>(element_type));
+
+        if (expr.method_name == "next" || expr.method_name == "prev")
+        {
+            if (!expr.arguments.empty())
+                type_error(expr.loc, "'" + expr.method_name + "()' does not take any arguments.");
+            return expr.type = optional_element;
+        }
+
+        if (expr.method_name == "has_next" || expr.method_name == "has_prev")
+        {
+            if (!expr.arguments.empty())
+                type_error(expr.loc, "'" + expr.method_name + "()' does not take any arguments.");
+            return expr.type = types::Primitive_kind::Bool;
+        }
+
+        if (expr.method_name == "advance" || expr.method_name == "back" || expr.method_name == "retreat")
+        {
+            if (expr.arguments.size() != 1)
+            {
+                type_error(expr.loc, "'" + expr.method_name + "()' expects exactly one i64 argument.");
+            }
+            else
+            {
+                auto arg_type = check_expr(*expr.arguments[0], types::Type(types::Primitive_kind::Int));
+                if (arg_type && *arg_type != types::Type(types::Primitive_kind::Int))
+                    type_error(ast::get_loc(expr.arguments[0]->node), "Iterator movement distance must be an i64.");
+            }
+            return expr.type = optional_element;
+        }
+
+        type_error(expr.loc, "Iterator type has no method named '" + expr.method_name + "'.");
+        return expr.type = types::Primitive_kind::Void;
     }
 
     // --- FFI METHOD MATCHER ---
@@ -1856,7 +2003,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Range_expr &expr, std::op
     if (end_res && end_res.value() != types::Type(types::Primitive_kind::Int))
         type_error(expr.loc, "Range end must be an integer.");
 
-    return expr.type = types::Primitive_kind::Any;
+    return expr.type = types::Type(mem::make_rc<types::Iterator_type>(types::Type(types::Primitive_kind::Int)));
 }
 
 Result<types::Type> Type_checker::check_expr_node(ast::Spawn_expr &expr, std::optional<types::Type> context_type)

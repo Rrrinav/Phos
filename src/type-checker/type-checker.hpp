@@ -140,9 +140,11 @@ public:
     bool is_function(const types::Type &type) const;
     bool is_model(const types::Type &type) const;
     bool is_union(const types::Type &type) const;
+    bool is_iterator(const types::Type &type) const;
     bool is_any(const types::Type &type) const;
     bool is_nil(const types::Type &type) const;
     bool is_optional(const types::Type &type) const;
+    types::Type to_iterator_type(const types::Type &type) const;
 
     // --- Main Checking Logic ---
     void collect_signatures(const std::vector<ast::Stmt *> &statements);

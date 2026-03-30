@@ -61,6 +61,7 @@ public:
     void visit_if_stmt(const ast::If_stmt &stmt);
     void visit_while_stmt(const ast::While_stmt &stmt);
     void visit_for_stmt(const ast::For_stmt &stmt);
+    void visit_for_in_stmt(const ast::For_in_stmt &stmt);
     void visit_function_stmt(const ast::Function_stmt &stmt);
     void visit_return_stmt(const ast::Return_stmt &stmt);
     void visit_model_stmt(const ast::Model_stmt &stmt);
@@ -84,6 +85,7 @@ public:
     void visit_array_access_expr(const ast::Array_access_expr &expr);
     void visit_array_assignment_expr(const ast::Array_assignment_expr &expr);
     void visit_cast_expr(const ast::Cast_expr &expr);
+    void visit_range_expr(const ast::Range_expr &expr);
 
     // --- Bytecode Emitters ---
     void emit_byte(uint8_t byte, phos::ast::Source_location loc);

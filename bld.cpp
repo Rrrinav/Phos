@@ -15,7 +15,6 @@
 #define BLD_USE_CONFIG
 #define BLD_NO_COLORS
 #include "b_ldr.hpp"
-#include "rep-gen/report_gen.hpp"
 
 auto &cfg = bld::Config::get();
 
