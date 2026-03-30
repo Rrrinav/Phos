@@ -80,7 +80,7 @@ static void collect_nil_checked_vars_for_then(const ast::Expr &expr, std::unorde
 
     if (auto *unary_expr = std::get_if<ast::Unary_expr>(&expr.node))
     {
-        if (unary_expr->op == lex::TokenType::Bang)
+        if (unary_expr->op == lex::TokenType::LogicalNot)
         {
             collect_nil_checked_vars_for_else(*unary_expr->right, out);
             return;
@@ -117,7 +117,7 @@ static void collect_nil_checked_vars_for_else(const ast::Expr &expr, std::unorde
 
     if (auto *unary_expr = std::get_if<ast::Unary_expr>(&expr.node))
     {
-        if (unary_expr->op == lex::TokenType::Bang)
+        if (unary_expr->op == lex::TokenType::LogicalNot)
         {
             collect_nil_checked_vars_for_then(*unary_expr->right, out);
             return;
