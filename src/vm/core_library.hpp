@@ -245,10 +245,10 @@ inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
     vm.bind_native<string_trim_left>("string::trim_left", {"string"}, "string", tc);
     vm.bind_native<string_trim_right>("string::trim_right", {"string"}, "string", tc);
     // Notice the "?" in the return type! The compiler knows these can fail and return nil.
-    vm.bind_native<string_parse_int>("string::parse_int", {"string"}, "i64?", tc);
-    vm.bind_native<string_parse_float>("string::parse_float", {"string"}, "f64?", tc);
-    vm.bind_native<string_parse_int>("parse_int", {"string"}, "i64?", tc);
-    vm.bind_native<string_parse_float>("parse_float", {"string"}, "f64?", tc);
+    vm.bind_native<string_parse_int>("string::parse_i64", {"string"}, "i64?", tc);
+    vm.bind_native<string_parse_float>("string::parse_f64", {"string"}, "f64?", tc);
+    vm.bind_native<string_parse_int>("parse_i64", {"string"}, "i64?", tc);
+    vm.bind_native<string_parse_float>("parse_f64", {"string"}, "f64?", tc);
 }
 
 }  // namespace phos::vm::core
