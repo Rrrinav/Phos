@@ -126,6 +126,8 @@ void Compiler::compile_stmt(ast::Stmt *stmt)
         visit_match_stmt(*node);
     else if (auto *node = std::get_if<ast::Union_stmt>(&stmt->node))
         visit_union_stmt(*node);
+    else if (auto *node = std::get_if<ast::Enum_stmt>(&stmt->node))
+        visit_enum_stmt(*node);
     else
         std::println(stderr, "Unimplemented stmt node at index: {}", stmt->node.index());
 }
@@ -158,6 +160,8 @@ void Compiler::compile_expr(ast::Expr *expr)
         visit_method_call_expr(*node);
     else if (auto *node = std::get_if<ast::Static_path_expr>(&expr->node))
         visit_static_path_expr(*node);
+    else if (auto *node = std::get_if<ast::Enum_member_expr>(&expr->node))
+        visit_enum_member_expr(*node);
     else if (auto *node = std::get_if<ast::Array_literal_expr>(&expr->node))
         visit_array_literal_expr(*node);
     else if (auto *node = std::get_if<ast::Array_access_expr>(&expr->node))
@@ -608,6 +612,13 @@ void Compiler::visit_union_stmt(const ast::Union_stmt &stmt)
     return;
 }
 
+void Compiler::visit_enum_stmt(const ast::Enum_stmt &stmt)
+{
+    // Enums are purely static type definitions.
+    // We emit absolutely ZERO bytecode for the declaration itself!
+    return;
+}
+
 void Compiler::visit_match_stmt(const ast::Match_stmt &stmt)
 {
     compile_expr(stmt.subject);
@@ -1009,6 +1020,13 @@ void Compiler::visit_static_path_expr(const ast::Static_path_expr &expr)
         emit_byte(identifier_constant(expr.member.lexeme, expr.loc), expr.loc);
         return;
     }
+    if (std::holds_alternative<mem::rc_ptr<types::Enum_type>>(type_var))
+    {
+        auto enum_type = std::get<mem::rc_ptr<types::Enum_type>>(type_var);
+        int64_t val = enum_type->variants.at(expr.member.lexeme);
+        emit_constant(Value(val), expr.loc);
+        return;
+    }
     // e.g., User::new -> Compiles down to Get_global "User::new"
     if (auto *base_var = std::get_if<ast::Variable_expr>(&expr.base->node))
     {
@@ -1016,6 +1034,20 @@ void Compiler::visit_static_path_expr(const ast::Static_path_expr &expr)
         uint8_t name_idx = identifier_constant(global_name, expr.loc);
         emit_op(Op_code::Get_global, expr.loc);
         emit_byte(name_idx, expr.loc);
+    }
+}
+
+void Compiler::visit_enum_member_expr(const ast::Enum_member_expr &expr)
+{
+    if (auto *enum_type_ptr = std::get_if<mem::rc_ptr<types::Enum_type>>(&expr.type))
+    {
+        int64_t val = (*enum_type_ptr)->variants.at(expr.member_name);
+        emit_constant(Value(val), expr.loc);
+    }
+    else
+    {
+        // Fallback just in case, though Type_checker ensures this never happens.
+        emit_op(Op_code::Nil, expr.loc);
     }
 }
 

@@ -38,6 +38,7 @@ private:
     void visit(ast::Function_stmt &stmt);
     void visit(ast::Model_stmt &stmt);
     void visit(ast::Union_stmt &stmt);
+    void visit(ast::Enum_stmt &stmt);
     void visit(ast::Block_stmt &stmt);
     void visit(ast::Var_stmt &stmt);
     void visit(ast::Print_stmt &stmt);
@@ -67,6 +68,7 @@ private:
     void visit(ast::Await_expr &expr);
     void visit(ast::Yield_expr &expr);
     void visit(ast::Fstring_expr &expr);
+    void visit(ast::Enum_member_expr &expr);
 };
 
 // TYPE CHECKER
@@ -77,6 +79,7 @@ class Type_checker
 public:
     std::unordered_map<std::string, mem::rc_ptr<types::Model_type>> model_signatures;
     std::unordered_map<std::string, mem::rc_ptr<types::Union_type>> m_union_signatures;
+    std::unordered_map<std::string, mem::rc_ptr<types::Enum_type>> enum_signatures;
 
     // --- FFI SIGNATURE REGISTRY ---
     struct Native_param
@@ -157,6 +160,7 @@ public:
     bool is_function(const types::Type &type) const;
     bool is_model(const types::Type &type) const;
     bool is_union(const types::Type &type) const;
+    bool is_enum(const types::Type &type) const;
     bool is_iterator(const types::Type &type) const;
     bool is_any(const types::Type &type) const;
     bool is_nil(const types::Type &type) const;
@@ -198,6 +202,7 @@ public:
     void check_stmt_node(ast::Function_stmt &stmt);
     void check_stmt_node(ast::Model_stmt &stmt);
     void check_stmt_node(ast::Union_stmt &stmt);
+    void check_stmt_node(ast::Enum_stmt &stmt);
     void check_stmt_node(ast::Block_stmt &stmt);
     void check_stmt_node(ast::Expr_stmt &stmt);
     void check_stmt_node(ast::If_stmt &stmt);
@@ -216,6 +221,7 @@ public:
     Result<types::Type> check_expr_node(ast::Closure_expr &expr, std::optional<types::Type> context_type);
     Result<types::Type> check_expr_node(ast::Field_access_expr &expr, std::optional<types::Type> context_type);
     Result<types::Type> check_expr_node(ast::Static_path_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Enum_member_expr &expr, std::optional<types::Type> context_type);
     Result<types::Type> check_expr_node(ast::Field_assignment_expr &expr, std::optional<types::Type> context_type);
     Result<types::Type> check_expr_node(ast::Literal_expr &expr, std::optional<types::Type> context_type);
     Result<types::Type> check_expr_node(ast::Method_call_expr &expr, std::optional<types::Type> context_type);

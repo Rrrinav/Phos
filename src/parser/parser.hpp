@@ -35,6 +35,7 @@ private:
     // populated during parse so parse_type() can resolve union vs model names
     std::unordered_set<std::string> m_known_model_names;
     std::unordered_set<std::string> m_known_union_names;
+    std::unordered_set<std::string> m_known_enum_names;
 
     // return types of top-level functions, used downstream by the type checker
     std::unordered_map<std::string, types::Type> function_types_;
@@ -63,6 +64,7 @@ private:
     Result<ast::Stmt *> model_declaration();
     Result<ast::Stmt *> parse_bind_statement();
     Result<ast::Stmt *> union_declaration();
+    Result<ast::Stmt*> enum_declaration();
     Result<ast::Stmt *> var_declaration();
     Result<std::pair<std::string, types::Type>> parse_model_field();
     Result<ast::Function_stmt> parse_model_method();

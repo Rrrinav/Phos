@@ -492,6 +492,18 @@ void AstPrinter::print_expr_node(const Static_path_expr &node)
                });
 }
 
+void AstPrinter::print_expr_node(const Enum_member_expr &node)
+{
+    indent();
+    print_str("Enum Member: ." + node.member_name);
+    with_child(false,
+               [&]
+               {
+                   indent();
+                   print_str("Type: " + types::type_to_string(node.type));
+               });
+}
+
 void AstPrinter::print_expr_node(const Range_expr &node)
 {
     indent();
@@ -839,6 +851,42 @@ void AstPrinter::print_stmt_node(const Union_stmt &node)
                });
 }
 
+void AstPrinter::print_stmt_node(const Enum_stmt &node)
+{
+    indent();
+    print_str("Enum: " + node.name);
+    with_child(false,
+               [&]
+               {
+                   indent();
+                   print_str("Variants");
+                   if (node.variants.empty())
+                   {
+                       with_child(false,
+                                  [&]
+                                  {
+                                      indent();
+                                      print_str("<none>");
+                                  });
+                   }
+                   else
+                   {
+                       for (size_t i = 0; i < node.variants.size(); ++i)
+                       {
+                           with_child(i + 1 < node.variants.size(),
+                                      [&]
+                                      {
+                                          indent();
+                                          std::string text = node.variants[i].first;
+                                          if (node.variants[i].second.has_value())
+                                              text += " = " + std::to_string(node.variants[i].second.value());
+                                          print_str(text);
+                                      });
+                       }
+                   }
+               });
+}
+
 void AstPrinter::print_stmt_node(const Match_stmt &node)
 {
     indent();
@@ -1016,6 +1064,11 @@ std::string Source_printer::print_node(const Array_assignment_expr &node)
 
 std::string Source_printer::print_node(const Static_path_expr &node) { return print_expr_ptr(node.base) + "::" + node.member.lexeme; }
 
+std::string Source_printer::print_node(const Enum_member_expr &node)
+{
+    return "." + node.member_name;
+}
+
 std::string Source_printer::print_node(const Range_expr &node)
 {
     std::string op = node.inclusive ? "..=" : "..";
@@ -1162,6 +1215,22 @@ std::string Source_printer::print_node(const Union_stmt &node)
     std::string res = get_indent() + "union " + node.name + " {\n";
     indent_level++;
     for (const auto &var : node.variants) res += get_indent() + "let " + var.first + ": " + types::type_to_string(var.second) + ";\n";
+    indent_level--;
+    res += get_indent() + "}";
+    return res;
+}
+
+std::string Source_printer::print_node(const Enum_stmt &node)
+{
+    std::string res = get_indent() + "enum " + node.name + " {\n";
+    indent_level++;
+    for (size_t i = 0; i < node.variants.size(); ++i)
+    {
+        res += get_indent() + node.variants[i].first;
+        if (node.variants[i].second.has_value())
+            res += " = " + std::to_string(node.variants[i].second.value());
+        res += ",\n";
+    }
     indent_level--;
     res += get_indent() + "}";
     return res;

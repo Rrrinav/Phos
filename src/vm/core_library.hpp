@@ -26,7 +26,8 @@ inline bool core_is_same(Value a, Value b)
         return get_array(a).get() == get_array(b).get();
     if (is_closure(a))
         return get_closure(a).get() == get_closure(b).get();
-
+    if (is_iterator(a))
+        return get_iterator(a) == get_iterator(b);
     if (is_int(a))
         return get_int(a) == get_int(b);
     if (is_float(a))
@@ -39,6 +40,11 @@ inline bool core_is_same(Value a, Value b)
         return true;
 
     return false;
+}
+
+inline bool core_is_same_mem()
+{
+    return true;
 }
 
 inline double clock_now()
@@ -698,8 +704,7 @@ inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
     vm.bind_native_sig<iter_has_next>("Iter::has_next", {{"", "any", std::nullopt}, {"step", "i64", Value(int64_t(1))}}, "bool", tc);
     vm.bind_native_sig<iter_has_prev>("Iter::has_prev", {{"", "any", std::nullopt}, {"step", "i64", Value(int64_t(1))}}, "bool", tc);
 
-    vm.bind_native_sig<optional_get>(
-    "Optional::get", {{"", "T?", std::nullopt}, {"message", "string", Value(std::string("Tried to extract a value from nil."))}}, "T", tc);
+    vm.bind_native_sig<optional_get>("Optional::get", {{"", "T?", std::nullopt}, {"message", "string", Value(std::string("Tried to extract a value from nil."))}}, "T", tc);
     vm.bind_native_sig<optional_or>("Optional::or", {{"", "T?", std::nullopt}, {"default", "T", std::nullopt}}, "T", tc);
     vm.bind_native_sig<optional_has_value>("Optional::has_value", {{"", "T?", std::nullopt}}, "bool", tc);
     vm.bind_native_sig<optional_is_some>("Optional::is_some", {{"", "T?", std::nullopt}}, "bool", tc);

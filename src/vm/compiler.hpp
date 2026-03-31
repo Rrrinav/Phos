@@ -68,6 +68,7 @@ public:
     void visit_return_stmt(const ast::Return_stmt &stmt);
     void visit_model_stmt(const ast::Model_stmt &stmt);
     void visit_union_stmt(const ast::Union_stmt &stmt);
+    void visit_enum_stmt(const ast::Enum_stmt &stmt);
     void visit_match_stmt(const ast::Match_stmt &stmt);
 
     // --- Expression Visitors ---
@@ -83,6 +84,7 @@ public:
     void visit_field_assignment_expr(const ast::Field_assignment_expr &expr);
     void visit_method_call_expr(const ast::Method_call_expr &expr);
     void visit_static_path_expr(const ast::Static_path_expr &expr);
+    void visit_enum_member_expr(const ast::Enum_member_expr &expr);
     void visit_array_literal_expr(const ast::Array_literal_expr &expr);
     void visit_array_access_expr(const ast::Array_access_expr &expr);
     void visit_array_assignment_expr(const ast::Array_assignment_expr &expr);

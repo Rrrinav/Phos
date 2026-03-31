@@ -103,6 +103,7 @@ void Parser::synchronize()
             case lex::TokenType::Model:
             case lex::TokenType::Bind:
             case lex::TokenType::Union:
+            case lex::TokenType::Enum:
                 return;
             default:
                 advance();
@@ -198,7 +199,7 @@ Result<std::vector<ast::Call_argument>> Parser::parse_call_arguments()
     return arguments;
 }
 
-// declaration -> fn_decl | model_decl | union_decl | var_decl | statement
+// declaration -> fn_decl | model_decl | union_decl | enum_decl | var_decl | statement
 Result<std::optional<ast::Stmt*>> Parser::declaration()
 {
     skip_newlines();
@@ -213,6 +214,7 @@ Result<std::optional<ast::Stmt*>> Parser::declaration()
         return std::optional<ast::Stmt*>{std::nullopt};
     }
     if (match({lex::TokenType::Union})) return std::optional<ast::Stmt*>{__Try(union_declaration())};
+    if (match({lex::TokenType::Enum}))  return std::optional<ast::Stmt*>{__Try(enum_declaration())};
     if (match({lex::TokenType::Let}))   return std::optional<ast::Stmt*>{__Try(var_declaration())};
 
     return std::optional<ast::Stmt*>{__Try(statement())};
@@ -357,6 +359,46 @@ Result<ast::Stmt*> Parser::union_declaration()
 
     return mem::Arena::alloc(this->arena_, ast::Stmt{
         ast::Union_stmt{
+            .name     = name.lexeme,
+            .variants = variants,
+            .loc      = {name.line, name.column},
+        }
+    });
+}
+
+// enum_decl -> "enum" IDENT "{" (IDENT ("=" INT)? ","?)* "}"
+Result<ast::Stmt*> Parser::enum_declaration()
+{
+    auto name = __Try(consume(lex::TokenType::Identifier, "Expected enum name"));
+    m_known_enum_names.insert(name.lexeme);
+
+    __TryIgnore(consume(lex::TokenType::LeftBrace, "Expect '{' after enum name"));
+
+    std::vector<std::pair<std::string, std::optional<int64_t>>> variants;
+    while (!check(lex::TokenType::RightBrace) && !is_at_end())
+    {
+        skip_newlines();
+        if (check(lex::TokenType::RightBrace)) break;
+
+        auto variant_name = __Try(consume(lex::TokenType::Identifier, "Expect enum variant name"));
+
+        std::optional<int64_t> value = std::nullopt;
+        if (match({lex::TokenType::Assign}))
+        {
+            auto val_tok = __Try(consume(lex::TokenType::Integer64, "Expect integer value after '=' in enum"));
+            value = std::get<int64_t>(val_tok.literal);
+        }
+
+        variants.push_back({variant_name.lexeme, value});
+
+        match({lex::TokenType::Comma}); // Optional trailing comma
+        skip_newlines();
+    }
+
+    __TryIgnore(consume(lex::TokenType::RightBrace, "Expect '}' after enum body"));
+
+    return mem::Arena::alloc(this->arena_, ast::Stmt{
+        ast::Enum_stmt{
             .name     = name.lexeme,
             .variants = variants,
             .loc      = {name.line, name.column},
@@ -791,7 +833,7 @@ Result<ast::Expr*> Parser::assignment()
     return expr;
 }
 
-// range_expr -> logical_or ((".." | "..=") logical_or)?
+// range_expr -> logical_or (".." logical_or)?
 Result<ast::Expr*> Parser::range_expr()
 {
     auto expr = __Try(logical_or());
@@ -1147,12 +1189,27 @@ Result<ast::Expr*> Parser::call()
 //          | "this" | closure | "[" array_literal "]" | FSTRING
 //          | "spawn" expr | "await" expr | "yield" expr?
 //          | IDENT ("::" IDENT | "{" model_literal "}")?
+//          | "." IDENT
 //          | "(" expr ")"
 Result<ast::Expr*> Parser::primary()
 {
     if (peek().type == lex::TokenType::Print)
         return std::unexpected(create_error(peek(),
             "print is a statement, not an expression. Did you forget a semicolon?"));
+
+    // implicit enum member expression
+    if (match({lex::TokenType::Dot}))
+    {
+        ast::Source_location loc{previous().line, previous().column};
+        auto member = __Try(consume(lex::TokenType::Identifier, "Expect enum variant name after '.'"));
+        return mem::Arena::alloc(this->arena_, ast::Expr{
+            ast::Enum_member_expr{
+                .member_name = member.lexeme,
+                .loc         = loc,
+                .type        = types::Type(types::Primitive_kind::Void),
+            }
+        });
+    }
 
     // concurrency
 
@@ -1299,7 +1356,7 @@ Result<ast::Expr*> Parser::primary()
 
         if (match({lex::TokenType::ColonColon}))
         {
-            // Type::Member  or  Union::Variant
+            // Type::Member  or  Union::Variant or Enum::Variant
             auto member = __Try(consume(lex::TokenType::Identifier, "Expect member name after '::'"));
             auto* base_var_expr = mem::Arena::alloc(arena_, ast::Expr{
                 ast::Variable_expr{id.lexeme, types::Type(types::Primitive_kind::Void), {id.line, id.column}}
@@ -1314,6 +1371,7 @@ Result<ast::Expr*> Parser::primary()
         }
 
         // Only parse as a literal if the identifier is actually a registered type!
+        // (Enums are purposely excluded from model `{}` literal instantiation)
         bool is_known_type = m_known_model_names.count(id.lexeme) || m_known_union_names.count(id.lexeme);
 
         if (check(lex::TokenType::LeftBrace) && is_known_type)
@@ -1596,6 +1654,12 @@ Result<types::Type> Parser::parse_type()
             auto union_type  = mem::make_rc<types::Union_type>();
             union_type->name = type_name;
             current_type     = types::Type(union_type);
+        }
+        else if (m_known_enum_names.count(type_name))
+        {
+            auto enum_type  = mem::make_rc<types::Enum_type>();
+            enum_type->name = type_name;
+            current_type    = types::Type(enum_type);
         }
         else
         {

@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 #include <variant>
+#include <cstdint>
+#include <optional>
 
 #include "../value/type.hpp"
 #include "../value/value.hpp"
@@ -217,6 +219,13 @@ struct Fstring_expr
     Source_location           loc;
 };
 
+struct Enum_member_expr
+{
+    std::string member_name;
+    Source_location loc;
+    types::Type type = types::Primitive_kind::Void;
+};
+
 // =============================================================================
 // Unified expression wrapper
 // =============================================================================
@@ -244,7 +253,8 @@ struct Expr
         Spawn_expr,
         Await_expr,
         Yield_expr,
-        Fstring_expr
+        Fstring_expr,
+        Enum_member_expr
     >;
 
     Node node;
@@ -368,6 +378,14 @@ struct Match_stmt
     Source_location         loc;
 };
 
+struct Enum_stmt
+{
+    std::string name;
+
+    std::vector<std::pair<std::string, std::optional<int64_t>>> variants;
+    Source_location loc;
+};
+
 // =============================================================================
 // Unified statement wrapper
 // =============================================================================
@@ -387,7 +405,8 @@ struct Stmt
         For_stmt,
         For_in_stmt,
         Union_stmt,
-        Match_stmt
+        Match_stmt,
+        Enum_stmt
     >;
 
     Node node;

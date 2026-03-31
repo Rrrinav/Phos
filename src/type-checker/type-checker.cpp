@@ -230,6 +230,10 @@ bool Type_checker::default_expr_uses_forbidden_names(const ast::Expr &expr, cons
         {
             return default_expr_uses_forbidden_names(*node.base, forbidden_names);
         }
+        else if constexpr (std::is_same_v<T, ast::Enum_member_expr>)
+        {
+            return false;
+        }
         else if constexpr (std::is_same_v<T, ast::Range_expr>)
         {
             bool bad = false;
@@ -544,6 +548,8 @@ types::Type Type_checker::parse_type_string(std::string str) const
         return types::Type(model_signatures.at(str));
     if (m_union_signatures.contains(str))
         return types::Type(m_union_signatures.at(str));
+    if (enum_signatures.contains(str))
+        return types::Type(enum_signatures.at(str));
 
     return types::Primitive_kind::Any;
 }
@@ -581,8 +587,10 @@ void TypeResolver::resolve_type(types::Type &type)
             type = checker.model_signatures.at(name);
         else if (checker.m_union_signatures.count(name))
             type = checker.m_union_signatures.at(name);
+        else if (checker.enum_signatures.count(name))
+            type = checker.enum_signatures.at(name);
         else
-            checker.type_error({}, "Unknown model or union type '" + name + "'.");
+            checker.type_error({}, "Unknown type '" + name + "'.");
     }
     else if (auto *union_type_ptr = std::get_if<mem::rc_ptr<types::Union_type>>(&type))
     {
@@ -593,8 +601,24 @@ void TypeResolver::resolve_type(types::Type &type)
             type = checker.m_union_signatures.at(name);
         else if (checker.model_signatures.count(name))
             type = checker.model_signatures.at(name);
+        else if (checker.enum_signatures.count(name))
+            type = checker.enum_signatures.at(name);
         else
-            checker.type_error({}, "Unknown model or union type '" + name + "'.");
+            checker.type_error({}, "Unknown type '" + name + "'.");
+    }
+    else if (auto *enum_type_ptr = std::get_if<mem::rc_ptr<types::Enum_type>>(&type))
+    {
+        if ((*enum_type_ptr)->name.empty())
+            return;
+        const std::string &name = (*enum_type_ptr)->name;
+        if (checker.enum_signatures.count(name))
+            type = checker.enum_signatures.at(name);
+        else if (checker.model_signatures.count(name))
+            type = checker.model_signatures.at(name);
+        else if (checker.m_union_signatures.count(name))
+            type = checker.m_union_signatures.at(name);
+        else
+            checker.type_error({}, "Unknown type '" + name + "'.");
     }
     else if (auto *func_type_ptr = std::get_if<mem::rc_ptr<types::Function_type>>(&type))
     {
@@ -643,6 +667,9 @@ void TypeResolver::visit(ast::Union_stmt &stmt)
 {
     for (auto &variant : stmt.variants) resolve_type(variant.second);
 }
+
+void TypeResolver::visit(ast::Enum_stmt &stmt) { (void)stmt; }
+void TypeResolver::visit(ast::Enum_member_expr &expr) { (void)expr; }
 
 void TypeResolver::visit(ast::Block_stmt &stmt)
 {
@@ -881,6 +908,7 @@ std::vector<err::msg> Type_checker::check(std::vector<ast::Stmt *> &statements)
     model_data.clear();
     model_signatures.clear();
     m_union_signatures.clear();
+    enum_signatures.clear();
 
     collect_signatures(statements);
 
@@ -905,7 +933,7 @@ void Type_checker::collect_signatures(const std::vector<ast::Stmt *> &statements
         }
         else if (const auto *model_stmt = std::get_if<ast::Model_stmt>(&stmt->node))
         {
-            if (model_signatures.contains(model_stmt->name) || m_union_signatures.contains(model_stmt->name))
+            if (model_signatures.contains(model_stmt->name) || m_union_signatures.contains(model_stmt->name) || enum_signatures.contains(model_stmt->name))
             {
                 type_error(model_stmt->loc, "Type name '" + model_stmt->name + "' is already defined.");
             }
@@ -941,7 +969,7 @@ void Type_checker::collect_signatures(const std::vector<ast::Stmt *> &statements
         }
         else if (const auto *union_stmt = std::get_if<ast::Union_stmt>(&stmt->node))
         {
-            if (m_union_signatures.contains(union_stmt->name) || model_signatures.contains(union_stmt->name))
+            if (m_union_signatures.contains(union_stmt->name) || model_signatures.contains(union_stmt->name) || enum_signatures.contains(union_stmt->name))
             {
                 type_error(union_stmt->loc, "Type name '" + union_stmt->name + "' is already defined.");
             }
@@ -956,6 +984,30 @@ void Type_checker::collect_signatures(const std::vector<ast::Stmt *> &statements
                     union_type->variants.push_back({variant.first, variant.second});
                 }
                 m_union_signatures[union_stmt->name] = union_type;
+            }
+        }
+        else if (const auto *enum_stmt = std::get_if<ast::Enum_stmt>(&stmt->node))
+        {
+            if (enum_signatures.contains(enum_stmt->name) || model_signatures.contains(enum_stmt->name) || m_union_signatures.contains(enum_stmt->name))
+            {
+                type_error(enum_stmt->loc, "Type name '" + enum_stmt->name + "' is already defined.");
+            }
+            else
+            {
+                auto enum_type = mem::make_rc<types::Enum_type>();
+                enum_type->name = enum_stmt->name;
+
+                int64_t current_value = 0;
+                for (const auto &variant : enum_stmt->variants)
+                {
+                    if (variant.second.has_value())
+                        current_value = variant.second.value();
+                    if (enum_type->variants.contains(variant.first))
+                        type_error(enum_stmt->loc, "Duplicate variant '" + variant.first + "' in enum.");
+                    enum_type->variants[variant.first] = current_value;
+                    current_value++;
+                }
+                enum_signatures[enum_stmt->name] = enum_type;
             }
         }
     }
@@ -1068,6 +1120,7 @@ bool Type_checker::is_array(const types::Type &type) const { return std::holds_a
 bool Type_checker::is_function(const types::Type &type) const { return std::holds_alternative<mem::rc_ptr<types::Function_type>>(type); }
 bool Type_checker::is_model(const types::Type &type) const { return std::holds_alternative<mem::rc_ptr<types::Model_type>>(type); }
 bool Type_checker::is_union(const types::Type &type) const { return std::holds_alternative<mem::rc_ptr<types::Union_type>>(type); }
+bool Type_checker::is_enum(const types::Type &type) const { return std::holds_alternative<mem::rc_ptr<types::Enum_type>>(type); }
 bool Type_checker::is_iterator(const types::Type &type) const { return std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(type); }
 bool Type_checker::is_any(const types::Type &type) const
 {
@@ -1164,6 +1217,8 @@ Result<std::pair<types::Type, bool>> Type_checker::lookup(const std::string &nam
         return std::make_pair(model_signatures.at(name), true);
     if (m_union_signatures.count(name))
         return std::make_pair(m_union_signatures.at(name), true);
+    if (enum_signatures.count(name))
+        return std::make_pair(enum_signatures.at(name), true);
 
     type_error(loc, "Undefined variable, function, or type '" + name + "'.");
     return std::unexpected(err::msg("", "", 0, 0));
@@ -1231,6 +1286,7 @@ void Type_checker::check_stmt_node(ast::Model_stmt &stmt)
 }
 
 void Type_checker::check_stmt_node(ast::Union_stmt &stmt) { (void)stmt; }
+void Type_checker::check_stmt_node(ast::Enum_stmt &stmt) { (void)stmt; }
 
 void Type_checker::check_stmt_node(ast::Block_stmt &stmt)
 {
@@ -1833,6 +1889,14 @@ Result<types::Type> Type_checker::check_expr_node(ast::Cast_expr &expr, std::opt
 
     auto original_type = original_type_res.value();
     auto &target_type = expr.target_type;
+
+    // --- NEW ENUM CASTING ---
+    if (is_enum(original_type) && target_type == types::Type(types::Primitive_kind::Int))
+        return expr.target_type;
+    if (original_type == types::Type(types::Primitive_kind::Int) && is_enum(target_type))
+        return expr.target_type;
+    // ------------------------
+
     if (is_optional(original_type) && !is_optional(target_type))
     {
         if (auto *var_expr = std::get_if<ast::Variable_expr>(&expr.expression->node))
@@ -1963,9 +2027,38 @@ Result<types::Type> Type_checker::check_expr_node(ast::Static_path_expr &expr, s
         }
         return expr.type = find_by_key(model_type->static_methods, expr.member.lexeme)->second.return_type;
     }
+    else if (is_enum(*base_res))
+    {
+        auto enum_type = types::get_enum_type(*base_res);
+        if (!enum_type->variants.contains(expr.member.lexeme))
+        {
+            type_error(expr.loc, "Enum '" + enum_type->name + "' has no variant '" + expr.member.lexeme + "'.");
+            return expr.type = types::Primitive_kind::Void;
+        }
+        return expr.type = types::Type(enum_type);
+    }
 
-    type_error(expr.loc, "Scope resolution operator '::' is only supported for union variants and static model methods.");
+    type_error(expr.loc, "Scope resolution operator '::' is only supported for union variants, static model methods, and enum variants.");
     return expr.type = types::Primitive_kind::Void;
+}
+
+Result<types::Type> Type_checker::check_expr_node(ast::Enum_member_expr &expr, std::optional<types::Type> context_type)
+{
+    if (!context_type || !is_enum(*context_type))
+    {
+        type_error(expr.loc, "Cannot infer enum type for '." + expr.member_name + "'. Context is missing.");
+        return expr.type = types::Primitive_kind::Void;
+    }
+
+    auto enum_type = types::get_enum_type(*context_type);
+
+    if (!enum_type->variants.contains(expr.member_name))
+    {
+        type_error(expr.loc, "Enum '" + enum_type->name + "' has no variant '" + expr.member_name + "'.");
+        return expr.type = types::Primitive_kind::Void;
+    }
+
+    return expr.type = types::Type(enum_type);
 }
 
 Result<types::Type> Type_checker::check_expr_node(ast::Field_assignment_expr &expr, std::optional<types::Type> context_type)
