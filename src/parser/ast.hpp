@@ -381,8 +381,8 @@ struct Match_stmt
 struct Enum_stmt
 {
     std::string name;
-
-    std::vector<std::pair<std::string, std::optional<int64_t>>> variants;
+    types::Type base_type;
+    std::vector<std::pair<std::string, std::optional<Value>>> variants;
     Source_location loc;
 };
 

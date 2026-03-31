@@ -1023,8 +1023,8 @@ void Compiler::visit_static_path_expr(const ast::Static_path_expr &expr)
     if (std::holds_alternative<mem::rc_ptr<types::Enum_type>>(type_var))
     {
         auto enum_type = std::get<mem::rc_ptr<types::Enum_type>>(type_var);
-        int64_t val = enum_type->variants.at(expr.member.lexeme);
-        emit_constant(Value(val), expr.loc);
+        Value val = enum_type->variants->map.at(expr.member.lexeme);
+        emit_constant(val, expr.loc);
         return;
     }
     // e.g., User::new -> Compiles down to Get_global "User::new"
@@ -1041,8 +1041,8 @@ void Compiler::visit_enum_member_expr(const ast::Enum_member_expr &expr)
 {
     if (auto *enum_type_ptr = std::get_if<mem::rc_ptr<types::Enum_type>>(&expr.type))
     {
-        int64_t val = (*enum_type_ptr)->variants.at(expr.member_name);
-        emit_constant(Value(val), expr.loc);
+        Value val = (*enum_type_ptr)->variants->map.at(expr.member_name);
+        emit_constant(val, expr.loc);
     }
     else
     {

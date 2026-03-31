@@ -366,15 +366,23 @@ Result<ast::Stmt*> Parser::union_declaration()
     });
 }
 
-// enum_decl -> "enum" IDENT "{" (IDENT ("=" INT)? ","?)* "}"
+// enum_decl -> "enum" IDENT (":" type)? "{" (IDENT ("=" INT | STRING)? ","?)* "}"
 Result<ast::Stmt*> Parser::enum_declaration()
 {
     auto name = __Try(consume(lex::TokenType::Identifier, "Expected enum name"));
     m_known_enum_names.insert(name.lexeme);
 
+    types::Type base_type = types::Primitive_kind::Int;
+    if (match({lex::TokenType::Colon}))
+    {
+        base_type = __Try(parse_type());
+        if (base_type != types::Type(types::Primitive_kind::Int) && base_type != types::Type(types::Primitive_kind::String))
+            return std::unexpected(create_error(previous(), "Enum base type must be 'i64' or 'string'."));
+    }
+
     __TryIgnore(consume(lex::TokenType::LeftBrace, "Expect '{' after enum name"));
 
-    std::vector<std::pair<std::string, std::optional<int64_t>>> variants;
+    std::vector<std::pair<std::string, std::optional<Value>>> variants;
     while (!check(lex::TokenType::RightBrace) && !is_at_end())
     {
         skip_newlines();
@@ -382,11 +390,16 @@ Result<ast::Stmt*> Parser::enum_declaration()
 
         auto variant_name = __Try(consume(lex::TokenType::Identifier, "Expect enum variant name"));
 
-        std::optional<int64_t> value = std::nullopt;
+        std::optional<Value> value = std::nullopt;
         if (match({lex::TokenType::Assign}))
         {
-            auto val_tok = __Try(consume(lex::TokenType::Integer64, "Expect integer value after '=' in enum"));
-            value = std::get<int64_t>(val_tok.literal);
+            if (base_type == types::Type(types::Primitive_kind::Int)) {
+                auto val_tok = __Try(consume(lex::TokenType::Integer64, "Expect integer value after '=' in i64 enum"));
+                value = Value(std::get<int64_t>(val_tok.literal));
+            } else {
+                auto val_tok = __Try(consume(lex::TokenType::String, "Expect string value after '=' in string enum"));
+                value = Value(std::get<std::string>(val_tok.literal));
+            }
         }
 
         variants.push_back({variant_name.lexeme, value});
@@ -399,9 +412,10 @@ Result<ast::Stmt*> Parser::enum_declaration()
 
     return mem::Arena::alloc(this->arena_, ast::Stmt{
         ast::Enum_stmt{
-            .name     = name.lexeme,
-            .variants = variants,
-            .loc      = {name.line, name.column},
+            .name      = name.lexeme,
+            .base_type = base_type,
+            .variants  = variants,
+            .loc       = {name.line, name.column},
         }
     });
 }
@@ -1633,15 +1647,7 @@ Result<types::Type> Parser::parse_type()
         current_type = types::Type(closure_t);
     }
     else if (match({lex::TokenType::TInt64}))   current_type = types::Type(types::Primitive_kind::Int);
-    //else if (match({lex::TokenType::TInt32}))   current_type = types::Type(types::Primitive_kind::Int32);
-    //else if (match({lex::TokenType::TInt16}))   current_type = types::Type(types::Primitive_kind::Int16);
-    //else if (match({lex::TokenType::TInt8}))    current_type = types::Type(types::Primitive_kind::Int8);
-    //else if (match({lex::TokenType::TUInt64}))  current_type = types::Type(types::Primitive_kind::UInt64);
-    //else if (match({lex::TokenType::TUInt32}))  current_type = types::Type(types::Primitive_kind::UInt32);
-    //else if (match({lex::TokenType::TUInt16}))  current_type = types::Type(types::Primitive_kind::UInt16);
-    //else if (match({lex::TokenType::TUInt8}))   current_type = types::Type(types::Primitive_kind::UInt8);
     else if (match({lex::TokenType::TFloat64})) current_type = types::Type(types::Primitive_kind::Float);
-    //else if (match({lex::TokenType::TFloat32})) current_type = types::Type(types::Primitive_kind::Float32);
     else if (match({lex::TokenType::TBool}))    current_type = types::Type(types::Primitive_kind::Bool);
     else if (match({lex::TokenType::TString}))  current_type = types::Type(types::Primitive_kind::String);
     else if (match({lex::TokenType::TVoid}))    current_type = types::Type(types::Primitive_kind::Void);

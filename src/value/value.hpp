@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <utility>
+#include <unordered_map>
 
 #include "../memory/ref_counted.hpp"
 #include "type.hpp"
@@ -46,6 +47,11 @@ using Value = std::variant<
     std::nullptr_t,
     std::monostate
 >;
+
+// 3. Define the wrapper struct here so it has full access to the complete Value alias
+struct Enum_variants {
+    std::unordered_map<std::string, Value> map;
+};
 
 // Raw C++ Function Pointer for the Zero-Overhead FFI
 using Native_fn = Value (*)(vm::Virtual_machine *vm, uint8_t arg_count);

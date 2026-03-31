@@ -988,7 +988,8 @@ void Type_checker::collect_signatures(const std::vector<ast::Stmt *> &statements
         }
         else if (const auto *enum_stmt = std::get_if<ast::Enum_stmt>(&stmt->node))
         {
-            if (enum_signatures.contains(enum_stmt->name) || model_signatures.contains(enum_stmt->name) || m_union_signatures.contains(enum_stmt->name))
+            if (enum_signatures.contains(enum_stmt->name) || model_signatures.contains(enum_stmt->name) ||
+                m_union_signatures.contains(enum_stmt->name))
             {
                 type_error(enum_stmt->loc, "Type name '" + enum_stmt->name + "' is already defined.");
             }
@@ -996,16 +997,41 @@ void Type_checker::collect_signatures(const std::vector<ast::Stmt *> &statements
             {
                 auto enum_type = mem::make_rc<types::Enum_type>();
                 enum_type->name = enum_stmt->name;
+                enum_type->base_type = enum_stmt->base_type;
+                enum_type->variants = mem::make_rc<Enum_variants>();  // Allocate the wrapper here
 
-                int64_t current_value = 0;
+                int64_t current_int_value = 0;
                 for (const auto &variant : enum_stmt->variants)
                 {
+                    Value val = Value(nullptr);
                     if (variant.second.has_value())
-                        current_value = variant.second.value();
-                    if (enum_type->variants.contains(variant.first))
+                    {
+                        val = variant.second.value();
+                        if (is_int(val))
+                            current_int_value = get_int(val) + 1;
+                    }
+                    else
+                    {
+                        // Auto Derive String, or Auto Increment Int
+                        if (enum_type->base_type == types::Type(types::Primitive_kind::Int))
+                            val = Value(current_int_value++);
+                        else
+                            val = Value(variant.first);
+                    }
+
+                    if (enum_type->variants->map.contains(variant.first))
                         type_error(enum_stmt->loc, "Duplicate variant '" + variant.first + "' in enum.");
-                    enum_type->variants[variant.first] = current_value;
-                    current_value++;
+
+                    for (const auto &[existing_name, existing_val] : enum_type->variants->map)
+                    {
+                        if (existing_val == val)
+                        {
+                            type_error(enum_stmt->loc,
+                                       "Enum variant value " + value_to_string(val) + " is already used by variant '" + existing_name +
+                                       "'. Variant values must be unique.");
+                        }
+                    }
+                    enum_type->variants->map[variant.first] = val;
                 }
                 enum_signatures[enum_stmt->name] = enum_type;
             }
@@ -1546,11 +1572,18 @@ Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr, std::o
     types::Type left_type = left_res.value();
     types::Type right_type = right_res.value();
 
+    // FIX FOR THE "UNKNOWN" ERROR: Extract enum name locally if type_to_string doesn't know it!
+    auto get_type_str = [](const types::Type& t) {
+        if (std::holds_alternative<mem::rc_ptr<types::Enum_type>>(t))
+            return std::get<mem::rc_ptr<types::Enum_type>>(t)->name;
+        return types::type_to_string(t);
+    };
+
     auto report_error = [&](const std::string &message)
     {
         type_error(
         expr.loc,
-        std::format("{} (left is '{}', right is '{}')", message, types::type_to_string(left_type), types::type_to_string(right_type)));
+        std::format("{} (left is '{}', right is '{}')", message, get_type_str(left_type), get_type_str(right_type)));
     };
 
     switch (expr.op)
@@ -1613,7 +1646,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr, std::o
             if ((is_optional(left_type) && is_nil(right_type)) || (is_nil(left_type) && is_optional(right_type)))
                 return expr.type = types::Primitive_kind::Bool;
             if (!is_compatible(left_type, right_type) && !is_compatible(right_type, left_type))
-                report_error("Cannot compare incompatible types.");
+                report_error("Cannot compare incompatible types. Remember to use 'as' for enum casting.");
             return expr.type = types::Primitive_kind::Bool;
         case lex::TokenType::LogicalAnd:
         case lex::TokenType::LogicalOr:
@@ -1891,10 +1924,14 @@ Result<types::Type> Type_checker::check_expr_node(ast::Cast_expr &expr, std::opt
     auto &target_type = expr.target_type;
 
     // --- NEW ENUM CASTING ---
-    if (is_enum(original_type) && target_type == types::Type(types::Primitive_kind::Int))
-        return expr.target_type;
-    if (original_type == types::Type(types::Primitive_kind::Int) && is_enum(target_type))
-        return expr.target_type;
+    if (is_enum(original_type)) {
+        auto enum_t = types::get_enum_type(original_type);
+        if (target_type == enum_t->base_type) return expr.target_type;
+    }
+    if (is_enum(target_type)) {
+        auto enum_t = types::get_enum_type(target_type);
+        if (original_type == enum_t->base_type) return expr.target_type;
+    }
     // ------------------------
 
     if (is_optional(original_type) && !is_optional(target_type))
@@ -2030,7 +2067,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Static_path_expr &expr, s
     else if (is_enum(*base_res))
     {
         auto enum_type = types::get_enum_type(*base_res);
-        if (!enum_type->variants.contains(expr.member.lexeme))
+        if (!enum_type->variants->map.contains(expr.member.lexeme))  // Access via wrapper map
         {
             type_error(expr.loc, "Enum '" + enum_type->name + "' has no variant '" + expr.member.lexeme + "'.");
             return expr.type = types::Primitive_kind::Void;
@@ -2052,7 +2089,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Enum_member_expr &expr, s
 
     auto enum_type = types::get_enum_type(*context_type);
 
-    if (!enum_type->variants.contains(expr.member_name))
+    if (!enum_type->variants->map.contains(expr.member_name)) // Access via wrapper map
     {
         type_error(expr.loc, "Enum '" + enum_type->name + "' has no variant '" + expr.member_name + "'.");
         return expr.type = types::Primitive_kind::Void;

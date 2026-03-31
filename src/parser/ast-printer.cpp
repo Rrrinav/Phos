@@ -879,7 +879,8 @@ void AstPrinter::print_stmt_node(const Enum_stmt &node)
                                           indent();
                                           std::string text = node.variants[i].first;
                                           if (node.variants[i].second.has_value())
-                                              text += " = " + std::to_string(node.variants[i].second.value());
+                                              // Fixed: Use value_to_string instead of std::to_string
+                                              text += " = " + value_to_string(node.variants[i].second.value());
                                           print_str(text);
                                       });
                        }
@@ -1228,7 +1229,8 @@ std::string Source_printer::print_node(const Enum_stmt &node)
     {
         res += get_indent() + node.variants[i].first;
         if (node.variants[i].second.has_value())
-            res += " = " + std::to_string(node.variants[i].second.value());
+            // Fixed: Use value_to_string instead of std::to_string
+            res += " = " + value_to_string(node.variants[i].second.value());
         res += ",\n";
     }
     indent_level--;
