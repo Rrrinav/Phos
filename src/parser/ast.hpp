@@ -226,6 +226,14 @@ struct Enum_member_expr
     types::Type type = types::Primitive_kind::Void;
 };
 
+struct Anon_model_literal_expr
+{
+    std::vector<std::pair<std::string, Expr *>> fields;
+    types::Type type{types::Primitive_kind::Void};
+
+    Source_location loc;
+};
+
 // =============================================================================
 // Unified expression wrapper
 // =============================================================================
@@ -254,7 +262,8 @@ struct Expr
         Await_expr,
         Yield_expr,
         Fstring_expr,
-        Enum_member_expr
+        Enum_member_expr,
+        Anon_model_literal_expr
     >;
 
     Node node;
@@ -364,10 +373,9 @@ struct For_in_stmt
 // One arm of a match statement
 struct Match_arm
 {
-    std::string  union_name;   // e.g. "Result"
-    std::string  variant_name; // e.g. "Ok"
-    std::string  bind_name;    // e.g. "s" (Empty if no payload bound)
-    bool         is_wildcard = false;
+    struct Expr* pattern     = nullptr;
+    std::string  bind_name;             // e.g. "s" in `ip_addr::v4(s)`
+    bool         is_wildcard = false;   // true for `_ =>`
     struct Stmt* body        = nullptr;
 };
 

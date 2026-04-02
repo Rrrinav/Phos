@@ -909,13 +909,51 @@ void AstPrinter::print_stmt_node(const Match_stmt &node)
                        with_child(i + 1 < node.arms.size(),
                                   [&]
                                   {
-                                      indent();
                                       if (node.arms[i].is_wildcard)
-                                          print_str("_:");
+                                      {
+                                          indent();
+                                          print_str("Wildcard (_)");
+                                      }
                                       else
-                                          print_str(node.arms[i].union_name +
-                                                    (node.arms[i].bind_name.empty() ? "" : "(" + node.arms[i].bind_name + ")") + ":");
+                                      {
+                                          indent();
+                                          std::string bind_str =
+                                          node.arms[i].bind_name.empty() ? "" : " (binds: " + node.arms[i].bind_name + ")";
+                                          print_str("Pattern" + bind_str);
+                                          with_child(true, [&] { print_expr_ptr(node.arms[i].pattern); });
+                                      }
+
+                                      indent();
+                                      print_str("Body");
                                       with_child(false, [&] { print_stmt_ptr(node.arms[i].body); });
+                                  });
+                   }
+               });
+}
+
+void AstPrinter::print_expr_node(const Anon_model_literal_expr &node)
+{
+    indent();
+    print_str("Anonymous Model Literal");
+    with_child(true,
+               [&]
+               {
+                   indent();
+                   print_str("Inferred Type: " + (types::type_to_string(node.type)));
+               });
+    with_child(false,
+               [&]
+               {
+                   indent();
+                   print_str("Fields");
+                   for (size_t i = 0; i < node.fields.size(); ++i)
+                   {
+                       with_child(i + 1 < node.fields.size(),
+                                  [&]
+                                  {
+                                      indent();
+                                      print_str("." + node.fields[i].first);
+                                      with_child(false, [&] { print_expr_ptr(node.fields[i].second); });
                                   });
                    }
                });
@@ -1249,11 +1287,11 @@ std::string Source_printer::print_node(const Match_stmt &node)
             res += "_";
         else
         {
-            res += arm.union_name;
+            res += print_expr_ptr(arm.pattern);
             if (!arm.bind_name.empty())
                 res += "(" + arm.bind_name + ")";
         }
-        res += ":\n";
+        res += " =>\n";
         indent_level++;
         res += print_stmt_ptr(arm.body) + ",\n";
         indent_level--;
@@ -1261,6 +1299,18 @@ std::string Source_printer::print_node(const Match_stmt &node)
     indent_level--;
     res += get_indent() + "}";
     return res;
+}
+
+std::string Source_printer::print_node(const Anon_model_literal_expr &node)
+{
+    std::string res = ".{ ";
+    for (size_t i = 0; i < node.fields.size(); ++i)
+    {
+        res += node.fields[i].first + ": " + print_expr_ptr(node.fields[i].second);
+        if (i + 1 < node.fields.size())
+            res += ", ";
+    }
+    return res + " }";
 }
 
 }  // namespace phos::ast

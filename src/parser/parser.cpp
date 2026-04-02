@@ -279,7 +279,6 @@ Result<ast::Stmt*> Parser::model_declaration()
     }
 
     __TryIgnore(consume(lex::TokenType::RightBrace, "Expect '};' after model body"));
-    __TryIgnore(consume(lex::TokenType::Semicolon, "Expect ';' after model body"));
     current_model_.clear();
 
     auto stmt = mem::Arena::alloc(this->arena_, ast::Stmt{
@@ -695,7 +694,7 @@ Result<ast::Stmt*> Parser::for_in_statement()
 }
 
 // match_stmt -> "match" expr "{" match_arm* "}"
-// match_arm  -> (IDENT ("(" IDENT ")")? | "_") ":" statement ","?
+// match_arm  -> (expr ("(" IDENT ")")? | "_") "=>" statement ","?
 Result<ast::Stmt *> Parser::match_statement()
 {
     ast::Source_location loc{peek().line, peek().column};
@@ -718,20 +717,25 @@ Result<ast::Stmt *> Parser::match_statement()
         }
         else
         {
-            // 1. Union Name
-            arm.union_name = __Try(consume(lex::TokenType::Identifier, "Expect Union name in match arm")).lexeme;
+            // Parse the pattern as a standard expression
+            arm.pattern = __Try(expression());
 
-            // 2. ColonColon
-            __TryIgnore(consume(lex::TokenType::ColonColon, "Expect '::' after Union name"));
-
-            // 3. Variant Name
-            arm.variant_name = __Try(consume(lex::TokenType::Identifier, "Expect variant name")).lexeme;
-
-            // 4. Payload variable
-            if (match({lex::TokenType::LeftParen}))
+            // If the user typed `Result::Ok(data)`, the expression parser
+            // naturally consumed it as a Call_expr. We unpack that into the
+            // actual pattern + the binding name!
+            if (auto *call_node = std::get_if<ast::Call_expr>(&arm.pattern->node))
             {
-                arm.bind_name = __Try(consume(lex::TokenType::Identifier, "Expect binding name")).lexeme;
-                __TryIgnore(consume(lex::TokenType::RightParen, "Expect ')' after binding name"));
+                // 1. The actual pattern is just the callee (e.g., Result::Ok)
+                arm.pattern = call_node->callee;
+
+                // 2. Validate and extract the payload binding name
+                if (call_node->arguments.size() != 1)
+                    return std::unexpected(err::msg("Match union payloads can only bind exactly one variable.", "parser", loc.l, loc.c));
+
+                if (auto *var_node = std::get_if<ast::Variable_expr>(&call_node->arguments[0].value->node))
+                    arm.bind_name = var_node->name;
+                else
+                    return std::unexpected(err::msg("Match binding payload must be a simple identifier.", "parser", loc.l, loc.c));
             }
         }
 
@@ -1211,10 +1215,45 @@ Result<ast::Expr*> Parser::primary()
         return std::unexpected(create_error(peek(),
             "print is a statement, not an expression. Did you forget a semicolon?"));
 
-    // implicit enum member expression
+    // implicit enum member expression or anonymous model literal
     if (match({lex::TokenType::Dot}))
     {
         ast::Source_location loc{previous().line, previous().column};
+
+        if (match({lex::TokenType::LeftBrace}))
+        {
+            std::vector<std::pair<std::string, ast::Expr*>> fields;
+
+            if (!check(lex::TokenType::RightBrace))
+            {
+                do
+                {
+                    if (check(lex::TokenType::RightBrace)) break; // handle trailing comma gracefully
+
+                    std::string field_name;
+                    if (check(lex::TokenType::Identifier) && check_next(lex::TokenType::Colon))
+                    {
+                        field_name = advance().lexeme;
+                        advance(); // Consume ':'
+                    }
+                    
+                    ast::Expr* field_val = __Try(expression());
+
+                    fields.push_back({field_name, field_val});
+                } while (match({lex::TokenType::Comma}));
+            }
+
+            __TryIgnore(consume(lex::TokenType::RightBrace, "Expect '}' after anonymous model fields."));
+
+            return mem::Arena::alloc(this->arena_, ast::Expr{
+                ast::Anon_model_literal_expr{
+                    .fields = std::move(fields),
+                    .type   = types::Type(types::Primitive_kind::Void),
+                    .loc    = loc,
+                }
+            });
+        }
+
         auto member = __Try(consume(lex::TokenType::Identifier, "Expect enum variant name after '.'"));
         return mem::Arena::alloc(this->arena_, ast::Expr{
             ast::Enum_member_expr{
@@ -1485,7 +1524,7 @@ Result<ast::Expr*> Parser::parse_array_literal()
     });
 }
 
-// model_literal -> IDENT "{" (IDENT ":" expr ("," IDENT ":" expr)*)? "}"
+// model_literal -> IDENT "{" ( (IDENT ":")? expr ("," (IDENT ":")? expr)* ","? )? "}"
 Result<ast::Expr*> Parser::parse_model_literal(const std::string& model_name)
 {
     auto brace = __Try(consume(lex::TokenType::LeftBrace, "Expect '{' for model literal"));
@@ -1494,10 +1533,17 @@ Result<ast::Expr*> Parser::parse_model_literal(const std::string& model_name)
     if (!check(lex::TokenType::RightBrace))
     {
         do {
-            auto field_name = __Try(consume(lex::TokenType::Identifier, "Expect field name"));
-            __TryIgnore(consume(lex::TokenType::Colon, "Expect ':' after field name"));
+            if (check(lex::TokenType::RightBrace)) break; // trailing comma support
+
+            std::string field_name;
+            if (check(lex::TokenType::Identifier) && check_next(lex::TokenType::Colon))
+            {
+                field_name = advance().lexeme;
+                advance(); // Consume ':'
+            }
+            
             auto value = __Try(expression());
-            fields.push_back({field_name.lexeme, value});
+            fields.push_back({field_name, value});
         } while (match({lex::TokenType::Comma}));
     }
 
@@ -1606,6 +1652,7 @@ Result<ast::Expr*> Parser::parse_fstring(const lex::Token& tok)
 
 // type        -> "(" type ")"
 //              | ("|" param_types "|" | "||") "->" type    closure type
+//              | "model" "{" (IDENT ":" type (";" IDENT ":" type)*)? ";"? "}"
 //              | type_name type_suffix*
 // type_suffix -> "[" "]"                                   array type
 //              | "?"                                       optional type
@@ -1652,6 +1699,31 @@ Result<types::Type> Parser::parse_type()
     else if (match({lex::TokenType::TString}))  current_type = types::Type(types::Primitive_kind::String);
     else if (match({lex::TokenType::TVoid}))    current_type = types::Type(types::Primitive_kind::Void);
     else if (match({lex::TokenType::TAny}))     current_type = types::Type(types::Primitive_kind::Any);
+    else if (match({lex::TokenType::Model}))
+    {
+        auto model_type  = mem::make_rc<types::Model_type>();
+        model_type->name = ""; // Empty string name means it's an anonymous structural model!
+
+        __TryIgnore(consume(lex::TokenType::LeftBrace, "Expect '{' after 'model' in anonymous type"));
+
+        while (!check(lex::TokenType::RightBrace) && !is_at_end())
+        {
+            auto field_name = __Try(consume(lex::TokenType::Identifier, "Expect field name in anonymous model type"));
+            __TryIgnore(consume(lex::TokenType::Colon, "Expect ':' after field name"));
+            auto field_type = __Try(parse_type());
+            model_type->fields.push_back({field_name.lexeme, field_type});
+            
+            // Note: Support parsing semicolons to separate structural fields
+            if (check(lex::TokenType::Semicolon)) {
+                advance(); // consume ';'
+            } else if (check(lex::TokenType::Comma)) {
+                advance(); // gracefully allow comma fallback 
+            }
+        }
+
+        __TryIgnore(consume(lex::TokenType::RightBrace, "Expect '}' after anonymous model fields"));
+        current_type = types::Type(model_type);
+    }
     else if (match({lex::TokenType::Identifier}))
     {
         std::string type_name = previous().lexeme;

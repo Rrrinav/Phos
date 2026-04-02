@@ -1438,78 +1438,74 @@ void Type_checker::check_stmt_node(ast::For_in_stmt &stmt)
 
 void Type_checker::check_stmt_node(ast::Match_stmt &stmt)
 {
-    auto subject_type_res = check_expr(*stmt.subject);
-    if (!subject_type_res)
+    // 1. Resolve the subject we are matching against
+    auto subject_res = check_expr(*stmt.subject);
+    if (!subject_res)
         return;
 
-    auto subject_type = subject_type_res.value();
-    auto union_t = std::get_if<mem::rc_ptr<types::Union_type>>(&subject_type);
-
-    if (!union_t)
-    {
-        type_error(stmt.loc, "Match subject must be a Union type.");
-        return;
-    }
-
-    // Exhaustiveness Tracking ---
-    std::unordered_set<std::string> matched_variants;
-    bool has_wildcard = false;
+    types::Type subject_type = subject_res.value();
 
     for (auto &arm : stmt.arms)
     {
-        begin_scope();  // Open a scope for the bound variable!
+        // 2. Open a new scope for every arm so payload bindings don't leak
+        begin_scope();
 
-        if (arm.is_wildcard)
+        if (!arm.is_wildcard)
         {
-            has_wildcard = true;
-        }
-        else if (arm.union_name != (*union_t)->name)
-        {
-            type_error(stmt.loc, "Match arm union '" + arm.union_name + "' does not match subject union '" + (*union_t)->name + "'.");
-        }
-        else if (!contains_key((*union_t)->variants, arm.variant_name))
-        {
-            type_error(stmt.loc, "Unknown variant '" + arm.variant_name + "' in match arm.");
-        }
-        else
-        {
-            // Mark this variant as successfully handled
-            matched_variants.insert(arm.variant_name);
-
-            if (!arm.bind_name.empty())
+            // --- UNION MATCHING ---
+            if (auto *static_path = std::get_if<ast::Static_path_expr>(&arm.pattern->node))
             {
-                // INJECT THE PAYLOAD TYPE INTO THE SCOPE!
-                auto payload_type = find_by_key((*union_t)->variants, arm.variant_name)->second;
-                declare(arm.bind_name, payload_type, true, stmt.loc);
+                if (auto *union_type = std::get_if<mem::rc_ptr<types::Union_type>>(&subject_type))
+                {
+                    auto variant_it = std::find_if((*union_type)->variants.begin(),
+                                                   (*union_type)->variants.end(),
+                                                   [&](const auto &v) { return v.first == static_path->member.lexeme; });
+
+                    if (variant_it == (*union_type)->variants.end())
+                    {
+                        type_error(static_path->loc,
+                                   "Variant '" + static_path->member.lexeme + "' does not exist in union '" + (*union_type)->name + "'.");
+                    }
+                    else if (!arm.bind_name.empty())
+                    {
+                        if (variant_it->second == types::Type(types::Primitive_kind::Void))
+                            type_error(static_path->loc, "Variant '" + static_path->member.lexeme + "' does not hold a payload to bind.");
+                        else
+                            declare(arm.bind_name, variant_it->second, true, stmt.loc);
+                    }
+                    static_path->type = subject_type;
+                }
+                else
+                {
+                    type_error(static_path->loc, "Cannot use union variant pattern on a non-union subject.");
+                }
+            }
+            else
+            {
+                auto pattern_res = check_expr(*arm.pattern);
+                if (!pattern_res)
+                {
+                    end_scope();
+                    continue;  // Skip checking the rest of this arm if the pattern itself is invalid
+                }
+
+                types::Type pattern_type = pattern_res.value();
+
+                // Protocol Rule: Ranges match against Integers
+                bool is_range_match = std::holds_alternative<ast::Range_expr>(arm.pattern->node) &&
+                                      is_compatible(subject_type, types::Type(types::Primitive_kind::Int));
+
+                if (!is_compatible(subject_type, pattern_type) && !is_range_match)
+                    type_error(ast::get_loc(arm.pattern->node), "Match arm pattern type must be compatible with subject type.");
             }
         }
 
+        // 3. Type-check the body with the newly bound variables in scope
         if (arm.body)
             check_stmt(*arm.body);
 
-        end_scope();  // Destroy the bound variable so it doesn't leak to the next arm
+        end_scope();
     }
-
-    // The Exhaustiveness Check! ---
-    if (!has_wildcard && matched_variants.size() < (*union_t)->variants.size())
-    {
-        std::string missing_variants;
-        for (const auto &variant : (*union_t)->variants)
-        {
-            if (!matched_variants.contains(variant.first))
-            {
-                if (!missing_variants.empty())
-                    missing_variants += ", ";
-                missing_variants += variant.first;
-            }
-        }
-
-        type_error(
-        stmt.loc,
-        "Match statement is not exhaustive. Missing variants: [" + missing_variants + "]. Add a wildcard '_' or match all variants.");
-    }
-
-    return;
 }
 
 Result<types::Type> Type_checker::check_expr_node(ast::Assignment_expr &expr, std::optional<types::Type> context_type)
@@ -2612,6 +2608,20 @@ Result<types::Type> Type_checker::check_expr_node(ast::Model_literal_expr &expr,
     {
         auto model_type = *model_t;
 
+        if (expr.fields.size() > model_type->fields.size())
+        {
+            type_error(expr.loc, "Too many fields provided for model '" + expr.model_name + "'.");
+            return expr.type = types::Primitive_kind::Void;
+        }
+
+        for (size_t i = 0; i < expr.fields.size(); ++i)
+        {
+            if (expr.fields[i].first.empty())
+            {
+                expr.fields[i].first = model_type->fields[i].first;
+            }
+        }
+
         std::unordered_set<std::string> provided_fields;
         for (const auto &field : expr.fields) provided_fields.insert(field.first);
 
@@ -2694,6 +2704,52 @@ Result<types::Type> Type_checker::check_expr_node(ast::Fstring_expr &expr, std::
         if (interp)
             std::ignore = check_expr(*interp);
     return expr.type = types::Primitive_kind::String;
+}
+
+Result<types::Type> Type_checker::check_expr_node(ast::Anon_model_literal_expr &expr, std::optional<types::Type> context_type)
+{
+    // 1. Ensure we actually have a context to infer from
+    if (!context_type || !types::is_model(*context_type))
+    {
+        type_error(expr.loc, "Cannot infer type of anonymous model literal '.{}'. Context is missing or is not a model type.");
+        return expr.type = types::Primitive_kind::Void;
+    }
+
+    auto expected_model = types::get_model_type(*context_type);
+
+    // 2. Check if the structural length matches
+    if (expr.fields.size() != expected_model->fields.size())
+    {
+        type_error(expr.loc,
+                   "Anonymous model field count mismatch. Expected " + std::to_string(expected_model->fields.size()) + ", got " +
+                   std::to_string(expr.fields.size()) + ".");
+        return expr.type = types::Primitive_kind::Void;
+    }
+
+    // 3. Linearly verify exact structural match (names and types in order)
+    for (size_t i = 0; i < expr.fields.size(); ++i)
+    {
+        if (expr.fields[i].first.empty())
+            expr.fields[i].first = expected_model->fields[i].first;
+
+        // Check field name
+        if (expr.fields[i].first != expected_model->fields[i].first)
+        {
+            type_error(expr.loc,
+                       "Structural mismatch at field " + std::to_string(i) + ". Expected '" + expected_model->fields[i].first +
+                       "', but got '" + expr.fields[i].first + "'. Order matters.");
+        }
+
+        // Check field type recursively, passing the expected type down as the new context
+        auto expected_field_type = expected_model->fields[i].second;
+        auto actual_field_type = check_expr(*expr.fields[i].second, expected_field_type);
+
+        if (!actual_field_type || !is_compatible(expected_field_type, actual_field_type.value()))
+            type_error(expr.loc, "Type mismatch for field '" + expr.fields[i].first + "'.");
+    }
+
+    // 4. Stamp the AST node with the inferred contextual type!
+    return expr.type = types::Type(expected_model);
 }
 
 bool Type_checker::match_ffi_type(std::string expected_str,

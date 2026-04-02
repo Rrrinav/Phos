@@ -236,5 +236,6 @@ public:
     Result<types::Type> check_expr_node(ast::Await_expr &expr, std::optional<types::Type> context_type);
     Result<types::Type> check_expr_node(ast::Yield_expr &expr, std::optional<types::Type> context_type);
     Result<types::Type> check_expr_node(ast::Fstring_expr &expr, std::optional<types::Type> context_type);
+    Result<types::Type> check_expr_node(ast::Anon_model_literal_expr &expr, std::optional<types::Type> context_type);
 };
 }  // namespace phos

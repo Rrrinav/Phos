@@ -485,6 +485,62 @@ inline Value iter_prev(mem::rc_ptr<Iterator_value> iter, int64_t steps)
     return result;
 }
 
+inline bool iter_contains(mem::rc_ptr<Iterator_value> iter, Value target)
+{
+    if (!iter)
+        return false;
+
+    return std::visit(
+    [&](const auto &state) -> bool
+    {
+        using T = std::decay_t<decltype(state)>;
+
+        // 1. O(1) Math check for Ranges (The secret sauce for pattern matching!)
+        if constexpr (std::is_same_v<T, Iterator_value::Interval_state>)
+        {
+            if (!is_int(target))
+                return false;
+            int64_t val = get_int(target);
+
+            if (state.start <= state.end)
+                if (state.inclusive)
+                    return val >= state.start && val <= state.end;
+                else
+                    return val >= state.start && val < state.end;
+            else if (state.inclusive)
+                return val <= state.start && val >= state.end;
+            else
+                return val <= state.start && val > state.end;
+        }
+        // 2. O(N) Linear scan for Arrays
+        else if constexpr (std::is_same_v<T, Iterator_value::Array_state>)
+        {
+            if (!state.array)
+                return false;
+            for (const auto &elem : state.array->elements)
+                if (core_is_same(elem, target))
+                    return true;
+            return false;
+        }
+        // 3. Substring check for Strings
+        else if constexpr (std::is_same_v<T, Iterator_value::String_state>)
+        {
+            if (!is_string(target))
+                return false;
+            return state.source.find(get_string(target)) != std::string::npos;
+        }
+        // 4. Exact match for Singletons
+        else if constexpr (std::is_same_v<T, Iterator_value::Singleton_state>)
+        {
+            return core_is_same(state.value, target);
+        }
+
+        // Empty state
+        return false;
+    },
+    iter->source);
+}
+
 inline Value make_iterator(types::Type element_type, Iterator_value::Source source)
 {
     return Value(mem::make_rc<Iterator_value>(std::move(element_type), std::move(source)));
@@ -703,6 +759,7 @@ inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
     vm.bind_native_sig<iter_get>("Iter::get", {{"", "any", std::nullopt}}, "any", tc);
     vm.bind_native_sig<iter_has_next>("Iter::has_next", {{"", "any", std::nullopt}, {"step", "i64", Value(int64_t(1))}}, "bool", tc);
     vm.bind_native_sig<iter_has_prev>("Iter::has_prev", {{"", "any", std::nullopt}, {"step", "i64", Value(int64_t(1))}}, "bool", tc);
+    vm.bind_native_sig<iter_contains>("Iter::contains", {{"", "any", std::nullopt}, {"target", "any", std::nullopt}}, "bool", tc);
 
     vm.bind_native_sig<optional_get>("Optional::get", {{"", "T?", std::nullopt}, {"message", "string", Value(std::string("Tried to extract a value from nil."))}}, "T", tc);
     vm.bind_native_sig<optional_or>("Optional::or", {{"", "T?", std::nullopt}, {"default", "T", std::nullopt}}, "T", tc);

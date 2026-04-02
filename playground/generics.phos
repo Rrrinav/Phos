@@ -1,0 +1,42 @@
+// This is a playground to save the desired syntax for implementation in future.
+
+model[T] vec {
+    @if @is_integral(T) {
+        x: T;
+        y: T;
+    } @else if @is_floating(T) {
+        x: T;
+        y: T;
+    } @else {
+        @error("This type is not supported by vec");
+    }
+};
+
+model[T] vec
+where { @is_integral(T) || @is_floating(T) }
+error { "vectors can only contain magnitudes i.e numbers" } {
+    x: T;
+    y: T;
+};
+
+
+model[@numerical(T)] vec {
+    x: T;
+    y: T;
+};
+
+fn foo[T](x: T) -> T where { @is_string(T) || @is_array_of(T, string) } {
+    @match T {
+        string => {
+            return x + "foo";
+        },
+        string[] => {
+            y = clone(x);
+            y.push("f");
+            y.push("o");
+            y.push("o");
+            return y;
+        }
+        _ => { @error("Unsupported type"); }
+    }
+}
