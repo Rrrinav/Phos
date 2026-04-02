@@ -626,22 +626,21 @@ void Compiler::visit_match_stmt(const ast::Match_stmt &stmt)
     if (stmt.subject)
         compile_expr(stmt.subject);
 
-    // We must register the subject in the compiler's local array so the
-    // stack offsets for 's' don't get misaligned!
-    current()->locals.push_back(Local{"<match_subject>", current()->scope_depth});
+    // 1. Fetch the static type to differentiate Unions from Enums/Static values
+    types::Type subject_type = ast::get_type(stmt.subject->node);
+    bool is_union_subject = std::holds_alternative<mem::rc_ptr<types::Union_type>>(subject_type);
 
+    current()->locals.push_back(Local{"<match_subject>", current()->scope_depth});
     std::vector<size_t> end_jumps;
 
     for (const auto &arm : stmt.arms)
     {
         if (arm.is_wildcard)
         {
-            // Wildcard always matches: push true!
             emit_op(Op_code::True, stmt.loc);
         }
         else if (auto *literal = std::get_if<ast::Literal_expr>(&arm.pattern->node))
         {
-            // Match exact value: subject == literal
             emit_op(Op_code::Get_local, stmt.loc);
             emit_byte(static_cast<uint8_t>(current()->locals.size() - 1), stmt.loc);
             compile_expr(arm.pattern);
@@ -649,12 +648,10 @@ void Compiler::visit_match_stmt(const ast::Match_stmt &stmt)
         }
         else if (auto *range = std::get_if<ast::Range_expr>(&arm.pattern->node))
         {
-            // Range match: Iter::contains(start..end, subject)
             uint8_t contains_idx = identifier_constant("Iter::contains", stmt.loc);
             emit_op(Op_code::Get_global, stmt.loc);
             emit_byte(contains_idx, stmt.loc);
 
-            // 1. Build the range iterator
             const std::string helper_name = range->inclusive ? "__range_inclusive" : "__range_exclusive";
             uint8_t helper_idx = identifier_constant(helper_name, stmt.loc);
             emit_op(Op_code::Get_global, stmt.loc);
@@ -664,73 +661,72 @@ void Compiler::visit_match_stmt(const ast::Match_stmt &stmt)
             emit_op(Op_code::Call, stmt.loc);
             emit_byte(2, stmt.loc);
 
-            // 2. Push the subject as the target argument for Iter::contains
             emit_op(Op_code::Get_local, stmt.loc);
             emit_byte(static_cast<uint8_t>(current()->locals.size() - 1), stmt.loc);
 
-            // 3. Call Iter::contains(range, subject) -> pushes bool
             emit_op(Op_code::Call, stmt.loc);
             emit_byte(2, stmt.loc);
         }
         else if (auto *static_path = std::get_if<ast::Static_path_expr>(&arm.pattern->node))
         {
-            // Union match: Match_variant pushes the payload AND a boolean
-            emit_op(Op_code::Match_variant, stmt.loc);
-            emit_byte(identifier_constant(static_path->member.lexeme, stmt.loc), stmt.loc);
+            // 2. Safely emit Match_variant ONLY if the subject is actually a Union!
+            if (is_union_subject)
+            {
+                emit_op(Op_code::Match_variant, stmt.loc);
+                emit_byte(identifier_constant(static_path->member.lexeme, stmt.loc), stmt.loc);
+            }
+            else
+            {
+                // Otherwise, treat it as a standard Enum value check
+                emit_op(Op_code::Get_local, stmt.loc);
+                emit_byte(static_cast<uint8_t>(current()->locals.size() - 1), stmt.loc);
+                compile_expr(arm.pattern);
+                emit_op(Op_code::Equal, stmt.loc);
+            }
         }
         else
         {
-            // Fallback for general expressions (e.g. matching against a variable)
             emit_op(Op_code::Get_local, stmt.loc);
             emit_byte(static_cast<uint8_t>(current()->locals.size() - 1), stmt.loc);
             compile_expr(arm.pattern);
             emit_op(Op_code::Equal, stmt.loc);
         }
 
-        // By protocol rule, the top of the stack is ALWAYS a boolean right now.
         size_t next_arm_jump = emit_jump(Op_code::Jump_if_false, stmt.loc);
-        emit_op(Op_code::Pop, stmt.loc);  // Pop the 'true' bool
+        emit_op(Op_code::Pop, stmt.loc);
 
         begin_scope();
 
-        bool is_union_match = !arm.is_wildcard && std::holds_alternative<ast::Static_path_expr>(arm.pattern->node);
+        bool is_union_match = !arm.is_wildcard && is_union_subject && std::holds_alternative<ast::Static_path_expr>(arm.pattern->node);
 
         if (is_union_match)
         {
             if (!arm.bind_name.empty())
-            {
-                // The payload is already sitting right there on the stack!
-                // We just formally claim it as a local variable.
                 current()->locals.push_back(Local{arm.bind_name, current()->scope_depth});
-            }
             else
-            {
-                // If we didn't bind the payload (e.g. `Result::Ok =>`), pop it.
                 emit_op(Op_code::Pop, stmt.loc);
-            }
         }
 
         if (arm.body)
             compile_stmt(arm.body);
 
-        end_scope(stmt.loc);  // This cleanly pops bindings from the physical stack
+        end_scope(stmt.loc);
 
-        // Jump to the very end of the match statement
         end_jumps.push_back(emit_jump(Op_code::Jump, stmt.loc));
 
-        // --- Setup for the next arm if the condition was FALSE ---
         patch_jump(next_arm_jump, stmt.loc);
-        emit_op(Op_code::Pop, stmt.loc);  // Pop the 'false' bool
+        emit_op(Op_code::Pop, stmt.loc);
 
-        // If Match_variant failed, it pushed a dummy nil payload we must pop.
         if (is_union_match)
             emit_op(Op_code::Pop, stmt.loc);
     }
 
-    emit_op(Op_code::Pop, stmt.loc);  // Pop the actual subject
-    current()->locals.pop_back();     // Remove <match_subject> tracker
-
+    // Patch the jumps to land exactly ON the Pop instruction!
+    // This ensures successful branches clean up the match subject before continuing.
     for (size_t j : end_jumps) patch_jump(j, stmt.loc);
+
+    emit_op(Op_code::Pop, stmt.loc);
+    current()->locals.pop_back();
 }
 
 void Compiler::visit_variable_expr(const ast::Variable_expr &expr)

@@ -1445,53 +1445,52 @@ void Type_checker::check_stmt_node(ast::Match_stmt &stmt)
 
     types::Type subject_type = subject_res.value();
 
+    // NEW: We only treat static paths as special payload-binders if the subject is actually a Union!
+    bool is_union_subject = is_union(subject_type);
+
     for (auto &arm : stmt.arms)
     {
-        // 2. Open a new scope for every arm so payload bindings don't leak
         begin_scope();
 
         if (!arm.is_wildcard)
         {
             // --- UNION MATCHING ---
-            if (auto *static_path = std::get_if<ast::Static_path_expr>(&arm.pattern->node))
+            if (is_union_subject && std::holds_alternative<ast::Static_path_expr>(arm.pattern->node))
             {
-                if (auto *union_type = std::get_if<mem::rc_ptr<types::Union_type>>(&subject_type))
-                {
-                    auto variant_it = std::find_if((*union_type)->variants.begin(),
-                                                   (*union_type)->variants.end(),
-                                                   [&](const auto &v) { return v.first == static_path->member.lexeme; });
+                auto *static_path = std::get_if<ast::Static_path_expr>(&arm.pattern->node);
+                auto union_type = types::get_union_type(subject_type);
 
-                    if (variant_it == (*union_type)->variants.end())
-                    {
-                        type_error(static_path->loc,
-                                   "Variant '" + static_path->member.lexeme + "' does not exist in union '" + (*union_type)->name + "'.");
-                    }
-                    else if (!arm.bind_name.empty())
-                    {
-                        if (variant_it->second == types::Type(types::Primitive_kind::Void))
-                            type_error(static_path->loc, "Variant '" + static_path->member.lexeme + "' does not hold a payload to bind.");
-                        else
-                            declare(arm.bind_name, variant_it->second, true, stmt.loc);
-                    }
-                    static_path->type = subject_type;
-                }
-                else
+                auto variant_it = std::find_if(union_type->variants.begin(),
+                                               union_type->variants.end(),
+                                               [&](const auto &v) { return v.first == static_path->member.lexeme; });
+
+                if (variant_it == union_type->variants.end())
                 {
-                    type_error(static_path->loc, "Cannot use union variant pattern on a non-union subject.");
+                    type_error(static_path->loc,
+                               "Variant '" + static_path->member.lexeme + "' does not exist in union '" + union_type->name + "'.");
                 }
+                else if (!arm.bind_name.empty())
+                {
+                    if (variant_it->second == types::Type(types::Primitive_kind::Void))
+                        type_error(static_path->loc, "Variant '" + static_path->member.lexeme + "' does not hold a payload to bind.");
+                    else
+                        declare(arm.bind_name, variant_it->second, true, stmt.loc);
+                }
+                static_path->type = subject_type;
             }
+            // --- GENERAL EXPRESSION MATCHING (Includes Enums!) ---
             else
             {
-                auto pattern_res = check_expr(*arm.pattern);
+                // NEW: Pass subject_type as the context to unlock `.Variant` syntax!
+                auto pattern_res = check_expr(*arm.pattern, subject_type);
                 if (!pattern_res)
                 {
                     end_scope();
-                    continue;  // Skip checking the rest of this arm if the pattern itself is invalid
+                    continue;
                 }
 
                 types::Type pattern_type = pattern_res.value();
 
-                // Protocol Rule: Ranges match against Integers
                 bool is_range_match = std::holds_alternative<ast::Range_expr>(arm.pattern->node) &&
                                       is_compatible(subject_type, types::Type(types::Primitive_kind::Int));
 
@@ -1500,7 +1499,6 @@ void Type_checker::check_stmt_node(ast::Match_stmt &stmt)
             }
         }
 
-        // 3. Type-check the body with the newly bound variables in scope
         if (arm.body)
             check_stmt(*arm.body);
 
