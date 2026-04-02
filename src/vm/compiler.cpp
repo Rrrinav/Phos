@@ -1,4 +1,5 @@
 #include "compiler.hpp"
+#include <algorithm>
 #include <print>
 #include "opcodes.hpp"
 
@@ -359,14 +360,19 @@ void Compiler::visit_return_stmt(const ast::Return_stmt &stmt)
 
 void Compiler::visit_print_stmt(const ast::Print_stmt &stmt)
 {
-    if (stmt.expression)
-        compile_expr(stmt.expression);
+    for (auto *expr : stmt.expressions) compile_expr(expr);
+
+    emit_constant(Value(stmt.sep), stmt.loc);
+    emit_constant(Value(stmt.end), stmt.loc);
 
     if (stmt.stream == ast::Print_stream::STDERR)
         emit_op(Op_code::Print_err, stmt.loc);
     else
         emit_op(Op_code::Print, stmt.loc);
+
+    emit_byte(static_cast<uint8_t>(stmt.expressions.size()), stmt.loc);
 }
+
 void Compiler::visit_expr_stmt(const ast::Expr_stmt &stmt)
 {
     compile_expr(stmt.expression);
@@ -686,10 +692,105 @@ void Compiler::visit_match_stmt(const ast::Match_stmt &stmt)
         }
         else
         {
-            emit_op(Op_code::Get_local, stmt.loc);
-            emit_byte(static_cast<uint8_t>(current()->locals.size() - 1), stmt.loc);
-            compile_expr(arm.pattern);
-            emit_op(Op_code::Equal, stmt.loc);
+            // --- NEW: THE CUSTOM PROTOCOL EXECUTION ---
+            types::Type pattern_type = ast::get_type(arm.pattern->node);
+            bool uses_custom_protocol = false;
+
+            if (auto *model_t = std::get_if<mem::rc_ptr<types::Model_type>>(&pattern_type))
+            {
+                auto& methods = (*model_t)->methods;
+                if (auto it = std::find_if(methods.begin(), methods.end(), [] (std::pair<std::string, types::Function_type>& x) { return x.first == "__match__"; }); it != methods.end())
+                    uses_custom_protocol = true;
+            }
+
+            if (uses_custom_protocol)
+            {
+                auto model_type = types::get_model_type(pattern_type);
+                std::string global_method_name = model_type->name + "::__match__";
+
+                // 1. Fetch the __match__ function pointer from globals
+                emit_op(Op_code::Get_global, stmt.loc);
+                emit_byte(identifier_constant(global_method_name, stmt.loc), stmt.loc);
+
+                // 2. Push the pattern object (This acts as the implicit 'this' context)
+                compile_expr(arm.pattern);
+
+                // 3. Push the subject (This acts as the argument)
+                emit_op(Op_code::Get_local, stmt.loc);
+                emit_byte(static_cast<uint8_t>(current()->locals.size() - 1), stmt.loc);
+
+                // 4. Call the method! (Arity 2: 'this' + 'subject') -> leaves a bool on stack
+                emit_op(Op_code::Call, stmt.loc);
+                emit_byte(2, stmt.loc);
+            }
+            else if (std::holds_alternative<ast::Anon_model_literal_expr>(arm.pattern->node) ||
+                     std::holds_alternative<ast::Model_literal_expr>(arm.pattern->node))
+            {
+                // Structural field-by-field match
+                // The subject is already on the stack as a local — fetch its model type
+                auto *model_t = std::get_if<mem::rc_ptr<types::Model_type>>(&pattern_type);
+                if (!model_t)
+                {
+                    emit_op(Op_code::False, stmt.loc);
+                }
+                else
+                {
+                    auto &fields = (*model_t)->fields;
+                    // Collect the pattern's field values
+                    // We'll emit: (subj.f0 == pat.f0) && (subj.f1 == pat.f1) && ...
+                    // Build it as a sequence of comparisons AND-ed together
+
+                    // Helper: get the pattern fields in signature order
+                    std::vector<ast::Expr *> pattern_field_exprs(fields.size(), nullptr);
+
+                    if (auto *anon = std::get_if<ast::Anon_model_literal_expr>(&arm.pattern->node))
+                    {
+                        for (size_t i = 0; i < fields.size(); ++i)
+                            for (auto &[name, val_expr] : anon->fields)
+                                if (name == fields[i].first)
+                                {
+                                    pattern_field_exprs[i] = val_expr;
+                                    break;
+                                }
+                    }
+                    else if (auto *named = std::get_if<ast::Model_literal_expr>(&arm.pattern->node))
+                    {
+                        for (size_t i = 0; i < fields.size(); ++i)
+                            for (auto &[name, val_expr] : named->fields)
+                                if (name == fields[i].first)
+                                {
+                                    pattern_field_exprs[i] = val_expr;
+                                    break;
+                                }
+                    }
+
+                    uint8_t subject_slot = static_cast<uint8_t>(current()->locals.size() - 1);
+
+                    // Emit the first comparison to bootstrap the AND chain
+                    emit_op(Op_code::Get_local, stmt.loc);
+                    emit_byte(subject_slot, stmt.loc);
+                    emit_op(Op_code::Get_field, stmt.loc);
+                    emit_byte(static_cast<uint8_t>(0), stmt.loc);
+                    compile_expr(pattern_field_exprs[0]);
+                    emit_op(Op_code::Equal, stmt.loc);
+
+                    // AND in each subsequent field
+                    for (size_t i = 1; i < fields.size(); ++i)
+                    {
+                        size_t short_circuit = emit_jump(Op_code::Jump_if_false, stmt.loc);
+                        emit_op(Op_code::Pop, stmt.loc);
+
+                        emit_op(Op_code::Get_local, stmt.loc);
+                        emit_byte(subject_slot, stmt.loc);
+                        emit_op(Op_code::Get_field, stmt.loc);
+                        emit_byte(static_cast<uint8_t>(i), stmt.loc);
+                        compile_expr(pattern_field_exprs[i]);
+                        emit_op(Op_code::Equal, stmt.loc);
+
+                        patch_jump(short_circuit, stmt.loc);
+                    }
+                }
+            }
         }
 
         size_t next_arm_jump = emit_jump(Op_code::Jump_if_false, stmt.loc);
@@ -1162,18 +1263,37 @@ void Compiler::visit_range_expr(const ast::Range_expr &expr)
 
 void Compiler::visit_anon_model_literal_expr(const ast::Anon_model_literal_expr &expr)
 {
-    // 1. Compile each field's value in order so they sit on the VM stack
-    // (The Type Checker already guaranteed they are in the correct structural order)
-    for (const auto &field : expr.fields) 
-        compile_expr(field.second);
+    // --- 1. UNION ANONYMOUS LITERAL ---
+    if (std::holds_alternative<mem::rc_ptr<types::Union_type>>(expr.type))
+    {
+        auto union_type_ptr = std::get<mem::rc_ptr<types::Union_type>>(expr.type);
 
-    // 2. Retrieve the inferred expected model signature
-    auto model_type_ptr = std::get<mem::rc_ptr<types::Model_type>>(expr.type);
+        // The Type Checker guarantees unions have exactly 1 field here
+        std::string variant_name = expr.fields[0].first;
 
-    // 3. Emit the standard model construction opcodes
-    emit_op(Op_code::Construct_model, expr.loc);
-    emit_byte(static_cast<uint8_t>(model_type_ptr->fields.size()), expr.loc);
-    emit_byte(identifier_constant(model_type_ptr->name, expr.loc), expr.loc);
+        // Push the payload onto the stack
+        compile_expr(expr.fields[0].second);
+
+        // Tell the VM to wrap it in a Union_value
+        emit_op(Op_code::Construct_union, expr.loc);
+        emit_byte(identifier_constant(union_type_ptr->name, expr.loc), expr.loc);
+        emit_byte(identifier_constant(variant_name, expr.loc), expr.loc);
+        return;
+    }
+
+    // --- 2. MODEL ANONYMOUS LITERAL ---
+    if (std::holds_alternative<mem::rc_ptr<types::Model_type>>(expr.type))
+    {
+        // Compile each field's value in structural order
+        for (const auto &field : expr.fields) compile_expr(field.second);
+
+        auto model_type_ptr = std::get<mem::rc_ptr<types::Model_type>>(expr.type);
+
+        emit_op(Op_code::Construct_model, expr.loc);
+        emit_byte(static_cast<uint8_t>(model_type_ptr->fields.size()), expr.loc);
+        emit_byte(identifier_constant(model_type_ptr->name, expr.loc), expr.loc);
+        return;
+    }
 }
 
 // ============================================================================

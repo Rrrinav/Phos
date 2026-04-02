@@ -39,7 +39,7 @@ int main(int argc, char *argv[])
     auto parse_res = p.parse(argc, argv);
     if (!parse_res)
     {
-        std::println(stderr, "{}", parse_res.error());
+        std::println("Args error: {}", parse_res.error());
         return EXIT_FAILURE;
     }
 
@@ -88,6 +88,7 @@ int main(int argc, char *argv[])
     {
         phos::lex::Lexer lexer(source);
         auto tokens = lexer.tokenize();
+        // TODO: Do this in lexer itself.
         for (const auto &token : tokens)
         {
             if (token.type == phos::lex::TokenType::Invalid)
@@ -110,17 +111,18 @@ int main(int argc, char *argv[])
         phos::vm::core::register_core_library(vm, type_checker);  // MUST BE BEFORE .check()!
 
         auto checked = type_checker.check(parse_result.value());
-        if (checked.size() > 0)
-        {
-            for (auto e : checked) std::println(stderr, "{}:{}", filename, e.format());
-            return 1;  // Halt compilation if types are invalid
-        }
-
         if (print_ast)
         {
             phos::ast::AstPrinter printer;
             printer.use_unicode = print_use_unicode;
             printer.print_statements(parse_result.value());
+            std::cout.flush();
+        }
+
+        if (checked.size() > 0)
+        {
+            for (auto e : checked) std::println(stderr, "{}:{}", filename, e.format());
+            return 1;  // Halt compilation if types are invalid
         }
 
         // 4. Compile to Bytecode

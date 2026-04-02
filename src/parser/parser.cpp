@@ -552,19 +552,90 @@ Result<ast::Stmt*> Parser::statement()
     return expression_statement();
 }
 
-// print_stmt -> ("print" | "print_err") "(" expr ")" ";"
+// print_stmt -> ("print" | "eprint") "(" (expr ("," expr)*)? ("," "sep" "=" expr)? ("," "end" "=" expr)? ")" ";"
 Result<ast::Stmt*> Parser::print_statement(ast::Print_stream stream)
 {
     __TryIgnore(consume(lex::TokenType::LeftParen, "Expect '(' after 'print'."));
-    auto expr_result = __Try(expression());
-    __TryIgnore(consume(lex::TokenType::RightParen, "Expect ')' after print expression."));
-    __TryIgnore(consume(lex::TokenType::Semicolon, "Expect ';' after print statement"));
+
+    std::vector<ast::Expr*> expressions;
+    std::string sep = " ";
+    std::string end = "\n";
+
+    // Empty print() -> just print the end character (newline by default)
+    if (check(lex::TokenType::RightParen))
+    {
+        advance();
+        __TryIgnore(consume(lex::TokenType::Semicolon, "Expect ';' after print statement."));
+        return mem::Arena::alloc(this->arena_, ast::Stmt{
+            ast::Print_stmt{
+                .stream      = stream,
+                .expressions = {},
+                .sep         = "",
+                .end         = "\n",
+                .loc         = {previous().line, previous().column},
+            }
+        });
+    }
+
+    bool seen_named = false;
+
+    do
+    {
+        // Allow trailing comma: "print(a, b,)"
+        if (check(lex::TokenType::RightParen))
+            break;
+
+        // Peek for named args: sep= or end=
+        if (check(lex::TokenType::Identifier) && check_next(lex::TokenType::Assign))
+        {
+            std::string name = peek().lexeme;
+            if (name == "sep" || name == "end")
+            {
+                seen_named = true;
+                advance(); // consume identifier
+                advance(); // consume '='
+
+                auto val_result = __Try(expression());
+
+                auto *lit = std::get_if<ast::Literal_expr>(&val_result->node);
+                if (!lit || !std::holds_alternative<std::string>(lit->value))
+                    return std::unexpected(create_error(previous(), "'sep' and 'end' must be string literals."));
+
+                if (name == "sep")
+                    sep = std::get<std::string>(lit->value);
+                else
+                    end = std::get<std::string>(lit->value);
+            }
+            else
+            {
+                if (seen_named)
+                    return std::unexpected(create_error(peek(), "Positional arguments cannot appear after named arguments in print()."));
+
+                auto expr_result = __Try(expression());
+                expressions.push_back(expr_result);
+            }
+        }
+        else
+        {
+            if (seen_named)
+                return std::unexpected(create_error(peek(), "Positional arguments cannot appear after named arguments in print()."));
+
+            auto expr_result = __Try(expression());
+            expressions.push_back(expr_result);
+        }
+    }
+    while (match({lex::TokenType::Comma}));
+
+    __TryIgnore(consume(lex::TokenType::RightParen, "Expect ')' after print arguments."));
+    __TryIgnore(consume(lex::TokenType::Semicolon, "Expect ';' after print statement."));
 
     return mem::Arena::alloc(this->arena_, ast::Stmt{
         ast::Print_stmt{
-            .stream     = stream,
-            .expression = expr_result,
-            .loc        = {previous().line, previous().column},
+            .stream      = stream,
+            .expressions = std::move(expressions),
+            .sep         = sep,
+            .end         = end,
+            .loc         = {previous().line, previous().column},
         }
     });
 }
@@ -1236,7 +1307,6 @@ Result<ast::Expr*> Parser::primary()
                         field_name = advance().lexeme;
                         advance(); // Consume ':'
                     }
-                    
                     ast::Expr* field_val = __Try(expression());
 
                     fields.push_back({field_name, field_val});

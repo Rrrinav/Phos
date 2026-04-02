@@ -584,13 +584,27 @@ Result<void> Virtual_machine::run()
             }
 
             case Op_code::Print:
-            {
-                *config_.out_stream << value_to_str_debug(pop()) << "\n";
-                break;
-            }
             case Op_code::Print_err:
             {
-                *config_.err_stream << value_to_str_debug(pop()) << "\n";
+                uint8_t count = *ip++;
+
+                // Stack layout (bottom to top): val[0], val[1], ..., val[n-1], sep, end
+                std::string end_str = get_string(pop());
+                std::string sep_str = get_string(pop());
+
+                // Collect values — they're still on the stack in forward order
+                std::vector<Value> values(count);
+                for (int i = count - 1; i >= 0; --i) values[i] = pop();
+
+                std::ostream &out = (static_cast<Op_code>(instruction) == Op_code::Print_err) ? *config_.err_stream : *config_.out_stream;
+
+                for (uint8_t i = 0; i < count; ++i)
+                {
+                    if (i > 0)
+                        out << sep_str;
+                    out << value_to_str_debug(values[i]);
+                }
+                out << end_str;
                 break;
             }
             case Op_code::Halt:

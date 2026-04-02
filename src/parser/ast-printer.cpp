@@ -3,6 +3,7 @@
 
 #include <format>
 #include <iostream>
+#include <ranges>
 
 namespace phos::ast
 {
@@ -696,7 +697,7 @@ void AstPrinter::print_stmt_node(const Print_stmt &node)
 {
     indent();
     print_str(std::string("Print(") + (node.stream == Print_stream::STDOUT ? "stdout" : "stderr") + ")");
-    with_child(false, [&] { print_expr_ptr(node.expression); });
+    with_child(false, [&] { for (auto& exp : node.expressions) print_expr_ptr(exp); });
 }
 
 void AstPrinter::print_stmt_node(const Expr_stmt &node)
@@ -1199,7 +1200,9 @@ std::string Source_printer::print_node(const Var_stmt &node)
 std::string Source_printer::print_node(const Print_stmt &node)
 {
     std::string kw = (node.stream == Print_stream::STDOUT) ? "print" : "print_err";
-    return get_indent() + kw + "(" + print_expr_ptr(node.expression) + ");";
+    std::string exprs = "";
+    for (auto& ex : node.expressions) exprs += print_expr_ptr(ex);
+    return std::format("{} {} ({}, end ='{}', sep='{}')", get_indent(), kw, exprs, node.end, node.sep);
 }
 
 std::string Source_printer::print_node(const Expr_stmt &node) { return get_indent() + print_expr_ptr(node.expression) + ";"; }

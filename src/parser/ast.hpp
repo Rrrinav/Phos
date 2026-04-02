@@ -319,8 +319,10 @@ enum class Print_stream { STDOUT, STDERR };
 
 struct Print_stmt
 {
-    Print_stream    stream;
-    struct Expr*    expression;
+    Print_stream stream{Print_stream::STDOUT};
+    std::vector<struct Expr*> expressions{};
+    std::string sep = " ";
+    std::string end = "\n";
     Source_location loc;
 };
 

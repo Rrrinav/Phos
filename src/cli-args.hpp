@@ -13,6 +13,7 @@ inline cl::Opt_id ast_print_unicode;
 inline cl::Opt_id file;
 inline cl::Opt_id print_ir;
 inline cl::Opt_id print_ir_op;
+inline cl::Opt_id print_help;
 }  // namespace id
 
 void add_arguemnts(cl::Parser &p)
@@ -24,5 +25,6 @@ void add_arguemnts(cl::Parser &p)
     // IR and IR_OP are mutually includsive "-o" is only valid if -print_ir is set
     id::print_ir          = p.add<cl::Flag>(cl::name("", "print_ir"), cl::desc("print IR"), cl::deflt(false));
     id::print_ir_op       = p.add<cl::Text>(cl::name("o", "output"), cl::desc("Output file for IR code."), cl::deflt("ir.phosasm"));
+    id::print_help        = p.add<cl::Flag>(cl::name("h", "help"), cl::desc("Print help"), cl::deflt(false));
 }
 }  // namespace phos::cli
