@@ -1194,14 +1194,18 @@ void Compiler::visit_static_path_expr(const ast::Static_path_expr &expr)
 
 void Compiler::visit_enum_member_expr(const ast::Enum_member_expr &expr)
 {
-    if (auto *enum_type_ptr = std::get_if<mem::rc_ptr<types::Enum_type>>(&expr.type))
+    types::Type base_type = expr.type;
+    if (auto* opt_t = std::get_if<mem::rc_ptr<types::Optional_type>>(&base_type)) {
+        base_type = (*opt_t)->base_type;
+    }
+
+    if (auto *enum_type_ptr = std::get_if<mem::rc_ptr<types::Enum_type>>(&base_type))
     {
         Value val = (*enum_type_ptr)->variants->map.at(expr.member_name);
         emit_constant(val, expr.loc);
     }
     else
     {
-        // Fallback just in case, though Type_checker ensures this never happens.
         emit_op(Op_code::Nil, expr.loc);
     }
 }
@@ -1233,7 +1237,7 @@ void Compiler::visit_cast_expr(const ast::Cast_expr &expr)
 
         // We only need runtime casts for actual memory-changing conversions
         // You can expand this if-statement as you add i32, u8, etc.
-        if (prim == types::Primitive_kind::Int || prim == types::Primitive_kind::Float)
+        if (types::is_numeric_primitive(prim))
         {
             emit_op(Op_code::Cast, expr.loc);
             emit_byte(static_cast<uint8_t>(prim), expr.loc);  // The operand is the target type!
@@ -1263,10 +1267,15 @@ void Compiler::visit_range_expr(const ast::Range_expr &expr)
 
 void Compiler::visit_anon_model_literal_expr(const ast::Anon_model_literal_expr &expr)
 {
+    // Unwrap the Optional context if it exists
+    types::Type base_type = expr.type;
+    if (auto *opt_t = std::get_if<mem::rc_ptr<types::Optional_type>>(&base_type))
+        base_type = (*opt_t)->base_type;
+
     // --- 1. UNION ANONYMOUS LITERAL ---
-    if (std::holds_alternative<mem::rc_ptr<types::Union_type>>(expr.type))
+    if (std::holds_alternative<mem::rc_ptr<types::Union_type>>(base_type))
     {
-        auto union_type_ptr = std::get<mem::rc_ptr<types::Union_type>>(expr.type);
+        auto union_type_ptr = std::get<mem::rc_ptr<types::Union_type>>(base_type);
 
         // The Type Checker guarantees unions have exactly 1 field here
         std::string variant_name = expr.fields[0].first;
@@ -1282,12 +1291,12 @@ void Compiler::visit_anon_model_literal_expr(const ast::Anon_model_literal_expr 
     }
 
     // --- 2. MODEL ANONYMOUS LITERAL ---
-    if (std::holds_alternative<mem::rc_ptr<types::Model_type>>(expr.type))
+    if (std::holds_alternative<mem::rc_ptr<types::Model_type>>(base_type))
     {
         // Compile each field's value in structural order
         for (const auto &field : expr.fields) compile_expr(field.second);
 
-        auto model_type_ptr = std::get<mem::rc_ptr<types::Model_type>>(expr.type);
+        auto model_type_ptr = std::get<mem::rc_ptr<types::Model_type>>(base_type);
 
         emit_op(Op_code::Construct_model, expr.loc);
         emit_byte(static_cast<uint8_t>(model_type_ptr->fields.size()), expr.loc);

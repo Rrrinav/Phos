@@ -20,6 +20,7 @@ std::string phos::lex::token_to_string(phos::lex::TokenType t)
         case TokenType::TUInt8:       return "TUInt8";
         case TokenType::TFloat64:     return "TFloat64";
         case TokenType::TFloat32:     return "TFloat32";
+        case TokenType::TFloat16:     return "TFloat16";
         case TokenType::TBool:        return "TBool";
         case TokenType::TString:      return "TString";
         case TokenType::TVoid:        return "TVoid";

@@ -34,9 +34,27 @@ std::string type_to_string(const Type &type)
     {
         switch (get_primitive_kind(type))
         {
-            case Primitive_kind::Int:
+            case Primitive_kind::I8:
+                return "i8";
+            case Primitive_kind::I16:
+                return "i16";
+            case Primitive_kind::I32:
+                return "i32";
+            case Primitive_kind::I64:
                 return "i64";
-            case Primitive_kind::Float:
+            case Primitive_kind::U8:
+                return "u8";
+            case Primitive_kind::U16:
+                return "u16";
+            case Primitive_kind::U32:
+                return "u32";
+            case Primitive_kind::U64:
+                return "u64";
+            case Primitive_kind::F16:
+                return "f16";
+            case Primitive_kind::F32:
+                return "f32";
+            case Primitive_kind::F64:
                 return "f64";
             case Primitive_kind::Bool:
                 return "bool";

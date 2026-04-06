@@ -6,10 +6,18 @@
 #include <cstdint>
 #include <cstddef>
 #include <utility>
-#include <unordered_map>
+#include <optional>
+#include <type_traits>
 
 #include "../memory/ref_counted.hpp"
 #include "type.hpp"
+
+#ifndef __STDCPP_FLOAT16_T__
+namespace std {
+using float16_t = _Float16;
+}
+#endif
+
 
 // --- Forward Declarations ---
 namespace phos::vm
@@ -34,7 +42,16 @@ struct Iterator_value;
 // The Core Value Variant (Notice Native_function_value is GONE!)
 // ============================================================================
 using Value = std::variant<
-    long,
+    std::int8_t,
+    std::int16_t,
+    std::int32_t,
+    std::int64_t,
+    std::uint8_t,
+    std::uint16_t,
+    std::uint32_t,
+    std::uint64_t,
+    std::float16_t,
+    float,
     double,
     bool,
     std::string,
@@ -180,8 +197,11 @@ struct Iterator_value
 
 bool is_nil(const Value &val);
 bool is_bool(const Value &val);
-bool is_int(const Value &val);
+bool is_integer(const Value &val);
+bool is_signed_integer(const Value &val);
+bool is_unsigned_integer(const Value &val);
 bool is_float(const Value &val);
+bool is_numeric(const Value &val);
 bool is_string(const Value &val);
 bool is_array(const Value &val);
 bool is_model(const Value &val);
@@ -190,7 +210,8 @@ bool is_union(const Value &val);
 bool is_iterator(const Value &val);
 
 bool get_bool(const Value &val);
-long get_int(const Value &val);
+std::int64_t get_int(const Value &val);
+std::uint64_t get_uint(const Value &val);
 double get_float(const Value &val);
 std::string get_string(const Value &val);
 mem::rc_ptr<Array_value> get_array(const Value &val);
@@ -198,6 +219,32 @@ mem::rc_ptr<Model_value> get_model(const Value &val);
 mem::rc_ptr<Closure_value> get_closure(const Value &val);
 mem::rc_ptr<Union_value> get_union(const Value &val);
 mem::rc_ptr<Iterator_value> get_iterator(const Value &val);
+
+types::Primitive_kind numeric_type_of(const Value &val);
+std::optional<Value> cast_numeric_value(const Value &val, types::Primitive_kind target_type);
+std::optional<Value> coerce_numeric_literal(const Value &val, types::Primitive_kind target_type);
+
+template <typename T>
+inline constexpr bool is_numeric_cpp_v =
+std::is_same_v<T, std::int8_t> || std::is_same_v<T, std::int16_t> || std::is_same_v<T, std::int32_t> || std::is_same_v<T, std::int64_t> ||
+std::is_same_v<T, std::uint8_t> || std::is_same_v<T, std::uint16_t> || std::is_same_v<T, std::uint32_t> || std::is_same_v<T, std::uint64_t> ||
+std::is_same_v<T, std::float16_t> || std::is_same_v<T, float> || std::is_same_v<T, double>;
+
+template <typename T>
+inline constexpr bool is_integer_cpp_v =
+std::is_same_v<T, std::int8_t> || std::is_same_v<T, std::int16_t> || std::is_same_v<T, std::int32_t> || std::is_same_v<T, std::int64_t> ||
+std::is_same_v<T, std::uint8_t> || std::is_same_v<T, std::uint16_t> || std::is_same_v<T, std::uint32_t> || std::is_same_v<T, std::uint64_t>;
+
+template <typename T>
+inline constexpr bool is_signed_integer_cpp_v =
+std::is_same_v<T, std::int8_t> || std::is_same_v<T, std::int16_t> || std::is_same_v<T, std::int32_t> || std::is_same_v<T, std::int64_t>;
+
+template <typename T>
+inline constexpr bool is_unsigned_integer_cpp_v =
+std::is_same_v<T, std::uint8_t> || std::is_same_v<T, std::uint16_t> || std::is_same_v<T, std::uint32_t> || std::is_same_v<T, std::uint64_t>;
+
+template <typename T>
+inline constexpr bool is_float_cpp_v = std::is_same_v<T, std::float16_t> || std::is_same_v<T, float> || std::is_same_v<T, double>;
 
 // ============================================================================
 // Utility

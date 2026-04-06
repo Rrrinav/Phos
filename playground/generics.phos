@@ -1,6 +1,6 @@
 // This is a playground to save the desired syntax for implementation in future.
 
-model[T] vec {
+model[T: Type] vec {
     @if @is_integral(T) {
         x: T;
         y: T;
@@ -40,3 +40,10 @@ fn foo[T](x: T) -> T where { @is_string(T) || @is_array_of(T, string) } {
         _ => { @error("Unsupported type"); }
     }
 }
+
+model[c: i64] Counter {
+    l :i64 = 0;
+    h :i64 = c;
+}
+
+vec[u8] v = {};

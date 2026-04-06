@@ -28,8 +28,10 @@ inline bool core_is_same(Value a, Value b)
         return get_closure(a).get() == get_closure(b).get();
     if (is_iterator(a))
         return get_iterator(a) == get_iterator(b);
-    if (is_int(a))
+    if (is_signed_integer(a))
         return get_int(a) == get_int(b);
+    if (is_unsigned_integer(a))
+        return get_uint(a) == get_uint(b);
     if (is_float(a))
         return get_float(a) == get_float(b);
     if (is_bool(a))
@@ -498,7 +500,7 @@ inline bool iter_contains(mem::rc_ptr<Iterator_value> iter, Value target)
         // 1. O(1) Math check for Ranges (The secret sauce for pattern matching!)
         if constexpr (std::is_same_v<T, Iterator_value::Interval_state>)
         {
-            if (!is_int(target))
+            if (!is_signed_integer(target))
                 return false;
             int64_t val = get_int(target);
 
@@ -548,10 +550,10 @@ inline Value make_iterator(types::Type element_type, Iterator_value::Source sour
 
 inline types::Type runtime_value_type(const Value &value)
 {
-    if (is_int(value))
-        return types::Primitive_kind::Int;
+    if (is_numeric(value))
+        return numeric_type_of(value);
     if (is_float(value))
-        return types::Primitive_kind::Float;
+        return numeric_type_of(value);
     if (is_bool(value))
         return types::Primitive_kind::Bool;
     if (is_string(value))
@@ -591,12 +593,12 @@ inline Value iterator_from_value(Value value)
 
 inline Value range_exclusive(int64_t start, int64_t end)
 {
-    return make_iterator(types::Primitive_kind::Int, Iterator_value::Interval_state{start, end, false});
+    return make_iterator(types::Primitive_kind::I64, Iterator_value::Interval_state{start, end, false});
 }
 
 inline Value range_inclusive(int64_t start, int64_t end)
 {
-    return make_iterator(types::Primitive_kind::Int, Iterator_value::Interval_state{start, end, true});
+    return make_iterator(types::Primitive_kind::I64, Iterator_value::Interval_state{start, end, true});
 }
 
 inline Value deep_clone_value(const Value &value, std::unordered_map<const void *, Value> &seen);
@@ -646,7 +648,7 @@ inline Value clone_iterator(mem::rc_ptr<Iterator_value> iter, std::unordered_map
 
 inline Value deep_clone_value(const Value &value, std::unordered_map<const void *, Value> &seen)
 {
-    if (is_nil(value) || is_bool(value) || is_int(value) || is_float(value) || is_string(value) || is_closure(value))
+    if (is_nil(value) || is_bool(value) || is_numeric(value) || is_string(value) || is_closure(value))
         return value;
 
     if (is_array(value))

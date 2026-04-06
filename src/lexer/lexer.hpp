@@ -40,7 +40,7 @@ private:
 
     bool is_at_end() const { return current >= source.size(); }
 
-    char peek()      const { return is_at_end()            ? '\0' : source[current]; }
+    char peek()      const { return is_at_end() ? '\0' : source[current]; }
     char peek_next() const { return current + 1 >= source.size() ? '\0' : source[current + 1]; }
 
     char advance()
@@ -204,8 +204,7 @@ private:
             if (std::isalpha(c) || c == '_')
                 return scan_identifier(start_col);
 
-            return Token(TokenType::Invalid,
-                         std::string(1, c), std::monostate{}, line, start_col);
+            return Token(TokenType::Invalid, std::string(1, c), std::monostate{}, line, start_col);
         }
     }
 

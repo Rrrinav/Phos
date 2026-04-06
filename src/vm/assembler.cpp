@@ -69,8 +69,10 @@ std::string Assembler::serialize(mem::rc_ptr<Closure_value> main_closure)
         {
             const auto &val = chunk->constants[j];
             ss << "      @" << j << " = ";
-            if (is_int(val))
+            if (is_signed_integer(val))
                 ss << "int " << get_int(val) << "\n";
+            else if (is_unsigned_integer(val))
+                ss << "uint " << get_uint(val) << "\n";
             else if (is_float(val))
                 ss << "float " << get_float(val) << "\n";
             else if (is_bool(val))
@@ -336,7 +338,9 @@ mem::rc_ptr<Closure_value> Assembler::assemble(const std::string &ir_source)
             val.erase(0, val.find_first_not_of(" \t"));
 
             if (type == "int")
-                current_closure->chunk->add_constant(Value(std::stoll(val)));
+                current_closure->chunk->add_constant(Value(static_cast<std::int64_t>(std::stoll(val))));
+            else if (type == "uint")
+                current_closure->chunk->add_constant(Value(static_cast<std::uint64_t>(std::stoull(val))));
             else if (type == "float")
                 current_closure->chunk->add_constant(Value(std::stod(val)));
             else if (type == "bool")

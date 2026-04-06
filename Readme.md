@@ -11,26 +11,23 @@ model User {
     id: i64;
     name: string;
     is_active: bool;
-};
+}
 
 fn find_first(users: User?[], predicate: (|User| -> bool)?) -> User? {
 
-    let mut actual_p : |User| -> bool = |u: User| -> bool { return u.is_active; };
+    let mut actual_p: |User| -> bool = |u: User| -> bool { return u.is_active; };
 
     if predicate != nil {
         actual_p = predicate as (|User| -> bool);
     }
 
-    let mut i := 0;
-    while i < len(users) {
-        let maybe_user := users[i];
-        if maybe_user != nil {
-            let user := maybe_user as User;
+    for i in 0..len(users) {
+        if users[i] != nil {
+            let user := users[i].get();
             if actual_p(user) {
                 return user;
             }
         }
-        i = i + 1;
     }
 
     return nil;
@@ -38,21 +35,22 @@ fn find_first(users: User?[], predicate: (|User| -> bool)?) -> User? {
 
 fn foo() -> (|| -> void) {
     let x := "x from function.";
-    return || -> void { print("Hello from function, this is: " + x); };
+    // Replaced string concatenation with variadic arguments
+    return || -> void { print("Hello from function, this is:", x); };
 }
 
-let user_list : User?[] = [
-    User { id: 1, name: "Alex", is_active: false },
+let user_list: User?[] = [
+    .{ id: 1, name: "Alex", is_active: false },
+    .{ id: 2, name: "Blake", is_active: true },
     nil,
-    User { id: 2, name: "Blake", is_active: true },
-    User { id: 3, name: "Casey", is_active: true }
+    .{ id: 3, name: "Casey", is_active: true }
 ];
 
 let first_active_user := find_first(user_list, nil);
 
 if first_active_user != nil {
     let actual_user := first_active_user as User;
-    print("Found active user: " + actual_user.name);
+    print("Found active user: ", actual_user.name, end="!\n");
 }
 
 foo()();

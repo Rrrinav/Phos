@@ -424,18 +424,39 @@ Result<void> Virtual_machine::run()
                     return err;
                 break;
             case Op_code::BitNot:
-                if (auto err = execute_unary_op([](auto v, auto l) { return Result<Value>(Value(~get_int(v))); }, frame, ip); !err)
-                    return err;
+            {
+                Value v = pop();
+                auto res = std::visit(
+                [&](const auto &value) -> Result<Value>
+                {
+                    using T = std::decay_t<decltype(value)>;
+                    if constexpr (is_integer_cpp_v<T>)
+                        return Value(static_cast<T>(~value));
+                    return std::unexpected(err::msg("Operand must be an integer for '~'", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
+                },
+                v);
+                if (!res)
+                    return std::unexpected(res.error());
+                push(res.value());
                 break;
+            }
             case Op_code::Negate:
             {
                 Value r = pop();
-                if (is_int(r))
-                    push(Value(-get_int(r)));
-                else if (is_float(r))
-                    push(Value(-get_float(r)));
-                else
+                auto res = std::visit(
+                [&](const auto &value) -> Result<Value>
+                {
+                    using T = std::decay_t<decltype(value)>;
+                    if constexpr (is_signed_integer_cpp_v<T> || is_float_cpp_v<T>)
+                        return Value(static_cast<T>(-value));
+                    if constexpr (is_unsigned_integer_cpp_v<T>)
+                        return std::unexpected(err::msg("Operand must not be unsigned for unary '-'", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
                     return std::unexpected(err::msg("Operand must be a number for '-'", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
+                },
+                r);
+                if (!res)
+                    return std::unexpected(res.error());
+                push(res.value());
                 break;
             }
             case Op_code::Create_array:
@@ -534,31 +555,10 @@ Result<void> Virtual_machine::run()
                 auto target_kind = static_cast<types::Primitive_kind>(target_type_byte);
                 Value val = pop();
 
-                switch (target_kind)
-                {
-                    case types::Primitive_kind::Int:
-                        if (is_float(val))
-                            push(Value(static_cast<int64_t>(get_float(val))));
-                        else if (is_int(val))
-                            push(val);  // Already i64
-                        else
-                            return std::unexpected(err::msg("Invalid cast to i64", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
-                        break;
-
-                    case types::Primitive_kind::Float:
-                        if (is_int(val))
-                            push(Value(static_cast<double>(get_int(val))));
-                        else if (is_float(val))
-                            push(val);  // Already f64
-                        else
-                            return std::unexpected(err::msg("Invalid cast to f64", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
-                        break;
-
-                        // As you add i8, u32, etc., just add cases here!
-
-                    default:
-                        return std::unexpected(err::msg("Unsupported runtime cast", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
-                }
+                auto casted = cast_numeric_value(val, target_kind);
+                if (!casted)
+                    return std::unexpected(err::msg("Unsupported runtime cast", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
+                push(casted.value());
                 break;
             }
 

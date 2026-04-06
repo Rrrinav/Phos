@@ -18,8 +18,17 @@ namespace phos::types
 
 enum class Primitive_kind : uint8_t
 {
-    Int,
-    Float,
+    I8,
+    I16,
+    I32,
+    I64,
+    U8,
+    U16,
+    U32,
+    U64,
+    F16,
+    F32,
+    F64,
     Bool,
     String,
     Void,
@@ -140,5 +149,80 @@ inline phos::mem::rc_ptr<Enum_type> get_enum_type(const Type &type) { return std
 
 inline bool is_any(const Type &type) { return is_primitive(type) && get_primitive_kind(type) == Primitive_kind::Any; }
 inline bool is_nil(const Type &type) { return is_primitive(type) && get_primitive_kind(type) == Primitive_kind::Nil; }
+
+inline bool is_signed_integer_primitive(Primitive_kind kind)
+{
+    switch (kind)
+    {
+        case Primitive_kind::I8:
+        case Primitive_kind::I16:
+        case Primitive_kind::I32:
+        case Primitive_kind::I64:
+            return true;
+        default:
+            return false;
+    }
+}
+
+inline bool is_unsigned_integer_primitive(Primitive_kind kind)
+{
+    switch (kind)
+    {
+        case Primitive_kind::U8:
+        case Primitive_kind::U16:
+        case Primitive_kind::U32:
+        case Primitive_kind::U64:
+            return true;
+        default:
+            return false;
+    }
+}
+
+inline bool is_integer_primitive(Primitive_kind kind)
+{
+    return is_signed_integer_primitive(kind) || is_unsigned_integer_primitive(kind);
+}
+
+inline bool is_float_primitive(Primitive_kind kind)
+{
+    switch (kind)
+    {
+        case Primitive_kind::F16:
+        case Primitive_kind::F32:
+        case Primitive_kind::F64:
+            return true;
+        default:
+            return false;
+    }
+}
+
+inline bool is_numeric_primitive(Primitive_kind kind)
+{
+    return is_integer_primitive(kind) || is_float_primitive(kind);
+}
+
+inline int primitive_bit_width(Primitive_kind kind)
+{
+    switch (kind)
+    {
+        case Primitive_kind::I8:
+        case Primitive_kind::U8:
+            return 8;
+        case Primitive_kind::I16:
+        case Primitive_kind::U16:
+        case Primitive_kind::F16:
+            return 16;
+        case Primitive_kind::I32:
+        case Primitive_kind::U32:
+        case Primitive_kind::F32:
+            return 32;
+        case Primitive_kind::I64:
+        case Primitive_kind::U64:
+        case Primitive_kind::F64:
+            return 64;
+        default:
+            return 0;
+    }
+}
 
 }  // namespace phos::types

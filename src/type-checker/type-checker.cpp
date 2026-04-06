@@ -512,10 +512,28 @@ types::Type Type_checker::parse_type_string(std::string str) const
     str.erase(str.find_last_not_of(" \t\r\n") + 1);
     str.erase(0, str.find_first_not_of(" \t\r\n"));
 
+    if (str == "i8")
+        return types::Primitive_kind::I8;
+    if (str == "i16")
+        return types::Primitive_kind::I16;
+    if (str == "i32")
+        return types::Primitive_kind::I32;
     if (str == "i64")
-        return types::Primitive_kind::Int;
+        return types::Primitive_kind::I64;
+    if (str == "u8")
+        return types::Primitive_kind::U8;
+    if (str == "u16")
+        return types::Primitive_kind::U16;
+    if (str == "u32")
+        return types::Primitive_kind::U32;
+    if (str == "u64")
+        return types::Primitive_kind::U64;
+    if (str == "f16")
+        return types::Primitive_kind::F16;
+    if (str == "f32")
+        return types::Primitive_kind::F32;
     if (str == "f64")
-        return types::Primitive_kind::Float;
+        return types::Primitive_kind::F64;
     if (str == "bool")
         return types::Primitive_kind::Bool;
     if (str == "string")
@@ -1000,21 +1018,38 @@ void Type_checker::collect_signatures(const std::vector<ast::Stmt *> &statements
                 enum_type->base_type = enum_stmt->base_type;
                 enum_type->variants = mem::make_rc<Enum_variants>();  // Allocate the wrapper here
 
-                int64_t current_int_value = 0;
+                std::int64_t current_signed_value = 0;
+                std::uint64_t current_unsigned_value = 0;
                 for (const auto &variant : enum_stmt->variants)
                 {
                     Value val = Value(nullptr);
                     if (variant.second.has_value())
                     {
                         val = variant.second.value();
-                        if (is_int(val))
-                            current_int_value = get_int(val) + 1;
+                        if (is_signed_integer(val))
+                            current_signed_value = get_int(val) + 1;
+                        else if (is_unsigned_integer(val))
+                            current_unsigned_value = get_uint(val) + 1;
                     }
                     else
                     {
                         // Auto Derive String, or Auto Increment Int
-                        if (enum_type->base_type == types::Type(types::Primitive_kind::Int))
-                            val = Value(current_int_value++);
+                        if (types::is_primitive(enum_type->base_type) &&
+                            types::is_integer_primitive(types::get_primitive_kind(enum_type->base_type)))
+                        {
+                            auto base_kind = types::get_primitive_kind(enum_type->base_type);
+                            auto next_value = types::is_signed_integer_primitive(base_kind) ? Value(current_signed_value++) : Value(current_unsigned_value++);
+                            auto coerced = coerce_numeric_literal(next_value, base_kind);
+                            if (!coerced)
+                            {
+                                type_error(enum_stmt->loc, "Enum auto-increment value overflowed the enum base type.");
+                                val = Value(nullptr);
+                            }
+                            else
+                            {
+                                val = coerced.value();
+                            }
+                        }
                         else
                             val = Value(variant.first);
                     }
@@ -1113,18 +1148,31 @@ bool Type_checker::is_argument_compatible(const std::vector<types::Type> &allowe
 
 types::Type Type_checker::promote_numeric_type(const types::Type &left, const types::Type &right) const
 {
-    if ((is_numeric(left) && std::get<types::Primitive_kind>(left) == types::Primitive_kind::Float) ||
-        (is_numeric(right) && std::get<types::Primitive_kind>(right) == types::Primitive_kind::Float))
+    auto left_kind = std::get<types::Primitive_kind>(left);
+    auto right_kind = std::get<types::Primitive_kind>(right);
+
+    if (types::is_float_primitive(left_kind) || types::is_float_primitive(right_kind))
     {
-        return types::Primitive_kind::Float;
+        if (types::is_float_primitive(left_kind) && types::is_float_primitive(right_kind))
+            return types::primitive_bit_width(left_kind) >= types::primitive_bit_width(right_kind) ? left_kind : right_kind;
+
+        return types::is_float_primitive(left_kind) ? left_kind : right_kind;
     }
-    return types::Primitive_kind::Int;
+
+    bool same_signedness =
+    (types::is_signed_integer_primitive(left_kind) && types::is_signed_integer_primitive(right_kind)) ||
+    (types::is_unsigned_integer_primitive(left_kind) && types::is_unsigned_integer_primitive(right_kind));
+
+    if (!same_signedness)
+        return types::Primitive_kind::Any;
+
+    return types::primitive_bit_width(left_kind) >= types::primitive_bit_width(right_kind) ? left_kind : right_kind;
 }
 
 bool Type_checker::is_numeric(const types::Type &type) const
 {
     if (const auto *prim = std::get_if<types::Primitive_kind>(&type))
-        return *prim == types::Primitive_kind::Int || *prim == types::Primitive_kind::Float;
+        return types::is_numeric_primitive(*prim);
     return false;
 }
 
@@ -1491,9 +1539,9 @@ void Type_checker::check_stmt_node(ast::Match_stmt &stmt)
                 types::Type pattern_type = pattern_res.value();
 
                 bool is_range_match = std::holds_alternative<ast::Range_expr>(arm.pattern->node) &&
-                                      is_compatible(subject_type, types::Type(types::Primitive_kind::Int));
+                                      is_compatible(subject_type, types::Type(types::Primitive_kind::I64));
 
-                // --- NEW: THE CUSTOM PROTOCOL CHECK ---
+                // --- THE CUSTOM PROTOCOL CHECK ---
                 bool has_custom_match = false;
                 if (auto *model_t = std::get_if<mem::rc_ptr<types::Model_type>>(&pattern_type))
                 {
@@ -1683,17 +1731,33 @@ Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr, std::o
         case lex::TokenType::BitAnd:
         case lex::TokenType::BitLShift:
         case lex::TokenType::BitRshift:
-            if (left_type != types::Type(types::Primitive_kind::Int) || right_type != types::Type(types::Primitive_kind::Int))
+            if (!types::is_primitive(left_type) || !types::is_primitive(right_type) ||
+                !types::is_integer_primitive(types::get_primitive_kind(left_type)) ||
+                !types::is_integer_primitive(types::get_primitive_kind(right_type)))
             {
-                report_error("Bitwise operators require 'i64' operands.");
+                report_error("Bitwise operators require integer operands.");
                 return expr.type = types::Primitive_kind::Void;
             }
-            return expr.type = types::Primitive_kind::Int;
+            expr.type = promote_numeric_type(left_type, right_type);
+            if (expr.type == types::Type(types::Primitive_kind::Any))
+            {
+                report_error("Bitwise operators require integers from the same signedness family.");
+                return expr.type = types::Primitive_kind::Void;
+            }
+            return expr.type;
         case lex::TokenType::Plus:
             if (is_string(left_type) && is_string(right_type))
                 return expr.type = types::Primitive_kind::String;
             if (is_numeric(left_type) && is_numeric(right_type))
-                return expr.type = promote_numeric_type(left_type, right_type);
+            {
+                expr.type = promote_numeric_type(left_type, right_type);
+                if (expr.type == types::Type(types::Primitive_kind::Any))
+                {
+                    report_error("Mixed signed and unsigned integer arithmetic requires an explicit cast.");
+                    return expr.type = types::Primitive_kind::Void;
+                }
+                return expr.type;
+            }
 
             report_error("Operands must be two numbers or two strings for '+'");
             return expr.type = types::Primitive_kind::Void;
@@ -1705,7 +1769,13 @@ Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr, std::o
                 report_error("Operands must be two numbers for this operator.");
                 return expr.type = types::Primitive_kind::Void;
             }
-            return expr.type = promote_numeric_type(left_type, right_type);
+            expr.type = promote_numeric_type(left_type, right_type);
+            if (expr.type == types::Type(types::Primitive_kind::Any))
+            {
+                report_error("Mixed signed and unsigned integer arithmetic requires an explicit cast.");
+                return expr.type = types::Primitive_kind::Void;
+            }
+            return expr.type;
 
         case lex::TokenType::Slash:
             if (!is_numeric(left_type) || !is_numeric(right_type))
@@ -1713,23 +1783,39 @@ Result<types::Type> Type_checker::check_expr_node(ast::Binary_expr &expr, std::o
                 report_error("Operands for division must be numbers.");
                 return expr.type = types::Primitive_kind::Void;
             }
-            return expr.type = types::Primitive_kind::Float;
+            if (types::is_primitive(left_type) && types::is_primitive(right_type))
+            {
+                auto left_kind = types::get_primitive_kind(left_type);
+                auto right_kind = types::get_primitive_kind(right_type);
+
+                if (types::is_float_primitive(left_kind) || types::is_float_primitive(right_kind))
+                    return expr.type = promote_numeric_type(left_type, right_type);
+            }
+            return expr.type = types::Primitive_kind::F64;
 
         case lex::TokenType::Percent:
-            if (left_type != types::Type(types::Primitive_kind::Int) || right_type != types::Type(types::Primitive_kind::Int))
+            if (!types::is_primitive(left_type) || !types::is_primitive(right_type) ||
+                !types::is_integer_primitive(types::get_primitive_kind(left_type)) ||
+                !types::is_integer_primitive(types::get_primitive_kind(right_type)))
             {
                 report_error("Operands for '%' must be integers.");
                 return expr.type = types::Primitive_kind::Void;
             }
-            return expr.type = types::Primitive_kind::Int;
+            expr.type = promote_numeric_type(left_type, right_type);
+            if (expr.type == types::Type(types::Primitive_kind::Any))
+            {
+                report_error("Mixed signed and unsigned integer modulo requires an explicit cast.");
+                return expr.type = types::Primitive_kind::Void;
+            }
+            return expr.type;
         case lex::TokenType::Greater:
         case lex::TokenType::GreaterEqual:
         case lex::TokenType::Less:
         case lex::TokenType::LessEqual:
             if (!is_numeric(left_type) || !is_numeric(right_type))
                 report_error("Comparison operators require numeric operands.");
-            else if (left_type != right_type)
-                report_error("Operands for comparison must have the same numeric type (e.g. both int or both float).");
+            else if (promote_numeric_type(left_type, right_type) == types::Type(types::Primitive_kind::Any))
+                report_error("Mixed signed and unsigned numeric comparison requires an explicit cast.");
             return expr.type = types::Primitive_kind::Bool;
         case lex::TokenType::Equal:
         case lex::TokenType::NotEqual:
@@ -2209,9 +2295,23 @@ Result<types::Type> Type_checker::check_expr_node(ast::Field_assignment_expr &ex
 
 Result<types::Type> Type_checker::check_expr_node(ast::Literal_expr &expr, std::optional<types::Type> context_type)
 {
-    (void)context_type;
     if (std::holds_alternative<std::nullptr_t>(expr.value))
         return expr.type = types::Primitive_kind::Nil;
+
+    if (context_type && types::is_primitive(*context_type))
+    {
+        auto target_kind = types::get_primitive_kind(*context_type);
+        if (types::is_numeric_primitive(target_kind) && is_numeric(expr.type))
+        {
+            auto coerced = coerce_numeric_literal(expr.value, target_kind);
+            if (coerced)
+            {
+                expr.value = coerced.value();
+                return expr.type = *context_type;
+            }
+        }
+    }
+
     return expr.type;
 }
 
@@ -2286,8 +2386,8 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
                 if (!expr.arguments[0].name.empty() && expr.arguments[0].name != "step")
                     type_error(expr.arguments[0].loc, "Unknown named argument '" + expr.arguments[0].name + "' for " + expr.method_name + "().");
 
-                auto arg_type = check_expr(*expr.arguments[0].value, types::Type(types::Primitive_kind::Int));
-                if (arg_type && *arg_type != types::Type(types::Primitive_kind::Int))
+                auto arg_type = check_expr(*expr.arguments[0].value, types::Type(types::Primitive_kind::I64));
+                if (arg_type && *arg_type != types::Type(types::Primitive_kind::I64))
                     type_error(ast::get_loc(expr.arguments[0].value->node), "Iterator step must be an i64.");
             }
             return expr.type = optional_element;
@@ -2304,8 +2404,8 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
                 if (!expr.arguments[0].name.empty() && expr.arguments[0].name != "step")
                     type_error(expr.arguments[0].loc, "Unknown named argument '" + expr.arguments[0].name + "' for " + expr.method_name + "().");
 
-                auto arg_type = check_expr(*expr.arguments[0].value, types::Type(types::Primitive_kind::Int));
-                if (arg_type && *arg_type != types::Type(types::Primitive_kind::Int))
+                auto arg_type = check_expr(*expr.arguments[0].value, types::Type(types::Primitive_kind::I64));
+                if (arg_type && *arg_type != types::Type(types::Primitive_kind::I64))
                     type_error(ast::get_loc(expr.arguments[0].value->node), "Iterator step must be an i64.");
             }
             return expr.type = types::Primitive_kind::Bool;
@@ -2532,15 +2632,19 @@ Result<types::Type> Type_checker::check_expr_node(ast::Unary_expr &expr, std::op
         case lex::TokenType::Minus:
             if (!is_numeric(right_type))
                 type_error(expr.loc, "Operand for '-' must be a number");
+            else if (types::is_primitive(right_type) &&
+                     types::is_unsigned_integer_primitive(types::get_primitive_kind(right_type)))
+                type_error(expr.loc, "Operand for unary '-' cannot be an unsigned integer. Cast to a signed type first.");
             return expr.type = right_type;
         case lex::TokenType::LogicalNot:
             if (!is_boolean(right_type))
                 type_error(expr.loc, "Operand for '!' must be a boolean");
             return expr.type = types::Primitive_kind::Bool;
         case lex::TokenType::BitNot:
-            if (right_type != types::Type(types::Primitive_kind::Int))
-                type_error(expr.loc, "Operand for '~' must be an integer ('i64')");
-            return expr.type = types::Primitive_kind::Int;
+            if (!types::is_primitive(right_type) ||
+                !types::is_integer_primitive(types::get_primitive_kind(right_type)))
+                type_error(expr.loc, "Operand for '~' must be an integer.");
+            return expr.type = right_type;
         default:
             type_error(expr.loc, "Unsupported unary operator");
             return expr.type = types::Primitive_kind::Void;
@@ -2562,9 +2666,13 @@ Result<types::Type> Type_checker::check_expr_node(ast::Array_literal_expr &expr,
     types::Type common_type = types::Primitive_kind::Nil;
     bool has_nil = false;
 
+    std::optional<types::Type> element_context = std::nullopt;
+    if (context_type && is_array(context_type.value()))
+        element_context = types::get_array_type(context_type.value())->element_type;
+
     for (const auto &elem_expr : expr.elements)
     {
-        auto elem_type_res = check_expr(*elem_expr);
+        auto elem_type_res = check_expr(*elem_expr, element_context);
         if (!elem_type_res)
             continue;
 
@@ -2577,10 +2685,21 @@ Result<types::Type> Type_checker::check_expr_node(ast::Array_literal_expr &expr,
         {
             common_type = elem_type;
         }
-        else if (!is_compatible(common_type, elem_type) && !is_compatible(elem_type, common_type))
+        else
         {
-            type_error(ast::get_loc(elem_expr->node), "Array elements must have a consistent type.");
-            return expr.type = types::Type(mem::make_rc<types::Array_type>(types::Primitive_kind::Void));
+            // Unwrap optionals for comparison
+            auto unwrapped_common = is_optional(common_type) ? types::get_optional_type(common_type)->base_type : common_type;
+            auto unwrapped_elem = is_optional(elem_type) ? types::get_optional_type(elem_type)->base_type : elem_type;
+
+            if (!is_compatible(unwrapped_common, unwrapped_elem) && !is_compatible(unwrapped_elem, unwrapped_common))
+            {
+                type_error(ast::get_loc(elem_expr->node), "Array elements must have a consistent type.");
+                return expr.type = types::Type(mem::make_rc<types::Array_type>(types::Primitive_kind::Void));
+            }
+
+            // If either was optional, ensure the common type becomes optional
+            if (is_optional(elem_type) && !is_optional(common_type))
+                common_type = types::Type(mem::make_rc<types::Optional_type>(common_type));
         }
     }
 
@@ -2626,8 +2745,8 @@ Result<types::Type> Type_checker::check_expr_node(ast::Array_access_expr &expr, 
     }
 
     auto index_type_res = check_expr(*expr.index);
-    if (index_type_res && index_type_res.value() != types::Type(types::Primitive_kind::Int))
-        type_error(ast::get_loc(expr.index->node), "Array index must be an integer.");
+    if (index_type_res && index_type_res.value() != types::Type(types::Primitive_kind::I64))
+        type_error(ast::get_loc(expr.index->node), "Array index must be an i64.");
 
     const auto &array_type = std::get<mem::rc_ptr<types::Array_type>>(array_type_res.value());
     return expr.type = array_type->element_type;
@@ -2646,8 +2765,8 @@ Result<types::Type> Type_checker::check_expr_node(ast::Array_assignment_expr &ex
     }
 
     auto index_type_res = check_expr(*expr.index);
-    if (index_type_res && index_type_res.value() != types::Type(types::Primitive_kind::Int))
-        type_error(ast::get_loc(expr.index->node), "Array index must be an integer.");
+    if (index_type_res && index_type_res.value() != types::Type(types::Primitive_kind::I64))
+        type_error(ast::get_loc(expr.index->node), "Array index must be an i64.");
 
     const auto &array_type = std::get<mem::rc_ptr<types::Array_type>>(array_type_res.value());
 
@@ -2756,12 +2875,12 @@ Result<types::Type> Type_checker::check_expr_node(ast::Range_expr &expr, std::op
     (void)context_type;
     auto start_res = check_expr(*expr.start);
     auto end_res = check_expr(*expr.end);
-    if (start_res && start_res.value() != types::Type(types::Primitive_kind::Int))
-        type_error(expr.loc, "Range start must be an integer.");
-    if (end_res && end_res.value() != types::Type(types::Primitive_kind::Int))
-        type_error(expr.loc, "Range end must be an integer.");
+    if (start_res && start_res.value() != types::Type(types::Primitive_kind::I64))
+        type_error(expr.loc, "Range start must be an i64.");
+    if (end_res && end_res.value() != types::Type(types::Primitive_kind::I64))
+        type_error(expr.loc, "Range end must be an i64.");
 
-    return expr.type = types::Type(mem::make_rc<types::Iterator_type>(types::Type(types::Primitive_kind::Int)));
+    return expr.type = types::Type(mem::make_rc<types::Iterator_type>(types::Type(types::Primitive_kind::I64)));
 }
 
 Result<types::Type> Type_checker::check_expr_node(ast::Spawn_expr &expr, std::optional<types::Type> context_type)
@@ -2809,10 +2928,19 @@ Result<types::Type> Type_checker::check_expr_node(ast::Anon_model_literal_expr &
         return expr.type = types::Primitive_kind::Void;
     }
 
-    // --- NEW: UNION ANONYMOUS LITERAL ---
-    if (is_union(*context_type))
+    types::Type expected_type = context_type.value();
+    bool is_ctx_optional = false;
+
+    if (is_optional(expected_type))
     {
-        auto expected_union = types::get_union_type(*context_type);
+        expected_type = types::get_optional_type(*context_type)->base_type;
+        is_ctx_optional = true;
+    }
+
+    // --- NEW: UNION ANONYMOUS LITERAL ---
+    if (is_union(expected_type))
+    {
+        auto expected_union = types::get_union_type(expected_type);
 
         if (expr.fields.size() != 1)
         {
@@ -2835,13 +2963,13 @@ Result<types::Type> Type_checker::check_expr_node(ast::Anon_model_literal_expr &
         if (actual_payload_type && !is_compatible(expected_payload_type, actual_payload_type.value()))
             type_error(ast::get_loc(payload_expr->node), "Type mismatch for union variant payload.");
 
-        return expr.type = *context_type;
+        return expr.type = is_ctx_optional ? context_type.value() : expected_type;
     }
 
     // --- MODEL ANONYMOUS LITERAL ---
-    if (is_model(*context_type))
+    if (is_model(expected_type))
     {
-        auto expected_model = types::get_model_type(*context_type);
+        auto expected_model = types::get_model_type(expected_type);
 
         if (expr.fields.size() != expected_model->fields.size())
         {
@@ -2870,7 +2998,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Anon_model_literal_expr &
                 type_error(expr.loc, "Type mismatch for field '" + expr.fields[i].first + "'.");
         }
 
-        return expr.type = *context_type;
+        return expr.type = is_ctx_optional ? context_type.value() : expected_type;
     }
 
     type_error(expr.loc, "Context for anonymous literal '.{}' is neither a model nor a union type.");

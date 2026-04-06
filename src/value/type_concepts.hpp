@@ -50,7 +50,7 @@ concept is_logical_op = (T == lex::TokenType::LogicalAnd || T == lex::TokenType:
 
 // --- Value Type Concepts (your brilliant new idea!) ---
 template <typename L, typename R>
-concept are_numeric = (is_int(L{}) && is_int(R{})) || (is_numeric(L{}) && is_numeric(R{}));
+concept are_numeric = (is_integer(L{}) && is_integer(R{})) || (is_numeric(L{}) && is_numeric(R{}));
 
 template <typename L, typename R>
 concept are_addable = are_numeric<L, R> || (is_string(L{}) && is_string(R{}));

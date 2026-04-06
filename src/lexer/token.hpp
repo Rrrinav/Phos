@@ -25,7 +25,7 @@ enum class TokenType : uint8_t
     // Unsigned integers
     TUInt64, TUInt32, TUInt16, TUInt8,
     // Floats
-    TFloat64, TFloat32,
+    TFloat64, TFloat32, TFloat16,
     // Other primitives
     TBool, TString, TVoid, TAny,
 
@@ -161,6 +161,7 @@ static const std::unordered_map<std::string_view, TokenType> token_keywords =
     { "u8",        TokenType::TUInt8    },
     { "f64",       TokenType::TFloat64  },
     { "f32",       TokenType::TFloat32  },
+    { "f16",       TokenType::TFloat16  },
     { "bool",      TokenType::TBool     },
     { "string",    TokenType::TString   },
     { "void",      TokenType::TVoid     },
