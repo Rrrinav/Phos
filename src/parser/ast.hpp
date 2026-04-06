@@ -29,6 +29,14 @@ struct Function_param
     Source_location loc;
 };
 
+struct Typed_member_decl
+{
+    std::string     name;
+    types::Type     type;
+    struct Expr*    default_value = nullptr;
+    Source_location loc;
+};
+
 struct Call_argument
 {
     std::string   name;
@@ -209,8 +217,8 @@ struct Yield_expr
 };
 
 // f"hello {name}, result {x + 1}"
-// The parser expands this into a Binary_expr concat tree at parse time.
-// This node is kept only for the AST printer.
+// The parser keeps this as a dedicated node so the compiler can stringify
+// interpolations with display-style formatting for any runtime value.
 struct Fstring_expr
 {
     std::string               raw_template;    // e.g. "hello {name}"
@@ -291,17 +299,17 @@ struct Function_stmt
 
 struct Model_stmt
 {
-    std::string                                  name;
-    std::vector<std::pair<std::string, types::Type>> fields;
-    std::vector<Function_stmt*>                  methods;
-    Source_location                              loc;
+    std::string                      name;
+    std::vector<Typed_member_decl>   fields;
+    std::vector<Function_stmt*>      methods;
+    Source_location                  loc;
 };
 
 struct Union_stmt
 {
-    std::string                                      name;
-    std::vector<std::pair<std::string, types::Type>> variants;
-    Source_location                                  loc;
+    std::string                    name;
+    std::vector<Typed_member_decl> variants;
+    Source_location                loc;
 };
 
 struct Var_stmt

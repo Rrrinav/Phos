@@ -173,6 +173,8 @@ void Compiler::compile_expr(ast::Expr *expr)
         visit_cast_expr(*node);
     else if (auto *node = std::get_if<ast::Range_expr>(&expr->node))
         visit_range_expr(*node);
+    else if (auto *node = std::get_if<ast::Fstring_expr>(&expr->node))
+        visit_fstring_expr(*node);
     else if (auto *node = std::get_if<ast::Anon_model_literal_expr>(&expr->node))
         visit_anon_model_literal_expr(*node);
     else
@@ -300,21 +302,6 @@ void Compiler::visit_call_expr(const ast::Call_expr &expr)
         }
     }
 
-    if (auto *static_path = std::get_if<ast::Static_path_expr>(&expr.callee->node))
-    {
-        auto type_var = ast::get_type(static_path->base->node);
-        if (std::holds_alternative<mem::rc_ptr<types::Union_type>>(type_var))
-        {
-            auto union_name = std::get<mem::rc_ptr<types::Union_type>>(type_var)->name;
-
-            compile_expr(expr.arguments[0].value);  // Push payload
-
-            emit_op(Op_code::Construct_union, expr.loc);
-            emit_byte(identifier_constant(union_name, expr.loc), expr.loc);
-            emit_byte(identifier_constant(static_path->member.lexeme, expr.loc), expr.loc);
-            return;
-        }
-    }
     // First, push the function object
     compile_expr(expr.callee);
 
@@ -690,6 +677,21 @@ void Compiler::visit_match_stmt(const ast::Match_stmt &stmt)
                 emit_op(Op_code::Equal, stmt.loc);
             }
         }
+        else if (auto *member = std::get_if<ast::Enum_member_expr>(&arm.pattern->node))
+        {
+            if (is_union_subject)
+            {
+                emit_op(Op_code::Match_variant, stmt.loc);
+                emit_byte(identifier_constant(member->member_name, stmt.loc), stmt.loc);
+            }
+            else
+            {
+                emit_op(Op_code::Get_local, stmt.loc);
+                emit_byte(static_cast<uint8_t>(current()->locals.size() - 1), stmt.loc);
+                compile_expr(arm.pattern);
+                emit_op(Op_code::Equal, stmt.loc);
+            }
+        }
         else
         {
             // --- NEW: THE CUSTOM PROTOCOL EXECUTION ---
@@ -798,7 +800,9 @@ void Compiler::visit_match_stmt(const ast::Match_stmt &stmt)
 
         begin_scope();
 
-        bool is_union_match = !arm.is_wildcard && is_union_subject && std::holds_alternative<ast::Static_path_expr>(arm.pattern->node);
+        bool is_union_match = !arm.is_wildcard && is_union_subject &&
+                              (std::holds_alternative<ast::Static_path_expr>(arm.pattern->node) ||
+                               std::holds_alternative<ast::Enum_member_expr>(arm.pattern->node));
 
         if (is_union_match)
         {
@@ -983,7 +987,10 @@ void Compiler::visit_model_literal_expr(const ast::Model_literal_expr &expr)
         ast::Expr *payload = expr.fields[0].second;
 
         // 1. Push the payload onto the stack
-        compile_expr(payload);
+        if (payload)
+            compile_expr(payload);
+        else
+            emit_op(Op_code::Nil, expr.loc);
 
         // 2. Wrap it in the Union memory object!
         emit_op(Op_code::Construct_union, expr.loc);
@@ -1166,6 +1173,12 @@ void Compiler::visit_static_path_expr(const ast::Static_path_expr &expr)
     auto type_var = ast::get_type(expr.base->node);
     if (std::holds_alternative<mem::rc_ptr<types::Union_type>>(type_var))
     {
+        if (!std::holds_alternative<mem::rc_ptr<types::Union_type>>(expr.type))
+        {
+            emit_op(Op_code::Nil, expr.loc);
+            return;
+        }
+
         // It's a Union Variant with NO payload!
         auto union_name = std::get<mem::rc_ptr<types::Union_type>>(type_var)->name;
 
@@ -1229,6 +1242,20 @@ void Compiler::visit_array_access_expr(const ast::Array_access_expr &expr)
 
 void Compiler::visit_cast_expr(const ast::Cast_expr &expr)
 {
+    if (auto *target_array = std::get_if<mem::rc_ptr<types::Array_type>>(&expr.target_type))
+    {
+        if ((*target_array)->element_type == types::Type(types::Primitive_kind::U8))
+        {
+            uint8_t bytes_idx = identifier_constant("bytes", expr.loc);
+            emit_op(Op_code::Get_global, expr.loc);
+            emit_byte(bytes_idx, expr.loc);
+            compile_expr(expr.expression);
+            emit_op(Op_code::Call, expr.loc);
+            emit_byte(1, expr.loc);
+            return;
+        }
+    }
+
     compile_expr(expr.expression);
 
     if (std::holds_alternative<types::Primitive_kind>(expr.target_type))
@@ -1265,6 +1292,73 @@ void Compiler::visit_range_expr(const ast::Range_expr &expr)
     emit_byte(2, expr.loc);
 }
 
+void Compiler::visit_fstring_expr(const ast::Fstring_expr &expr)
+{
+    bool has_component = false;
+    size_t interpolation_index = 0;
+    std::string literal_buf;
+
+    auto append_literal = [&](const std::string &text)
+    {
+        if (text.empty())
+            return;
+
+        emit_constant(Value(text), expr.loc);
+        if (has_component)
+            emit_op(Op_code::Add, expr.loc);
+        else
+            has_component = true;
+    };
+
+    auto append_interpolation = [&](ast::Expr *interpolation)
+    {
+        uint8_t to_str_idx = identifier_constant("to_str", expr.loc);
+        emit_op(Op_code::Get_global, expr.loc);
+        emit_byte(to_str_idx, expr.loc);
+        compile_expr(interpolation);
+        emit_op(Op_code::Call, expr.loc);
+        emit_byte(1, expr.loc);
+
+        if (has_component)
+            emit_op(Op_code::Add, expr.loc);
+        else
+            has_component = true;
+    };
+
+    size_t i = 0;
+    while (i < expr.raw_template.size())
+    {
+        if (expr.raw_template[i] == '{')
+        {
+            append_literal(literal_buf);
+            literal_buf.clear();
+
+            size_t start = ++i;
+            int depth = 1;
+            while (i < expr.raw_template.size() && depth > 0)
+            {
+                if (expr.raw_template[i] == '{')      depth++;
+                else if (expr.raw_template[i] == '}') depth--;
+                if (depth > 0) i++;
+            }
+            (void)start;
+            i++;
+
+            if (interpolation_index < expr.interpolations.size())
+                append_interpolation(expr.interpolations[interpolation_index++]);
+        }
+        else
+        {
+            literal_buf += expr.raw_template[i++];
+        }
+    }
+
+    append_literal(literal_buf);
+
+    if (!has_component)
+        emit_constant(Value(std::string("")), expr.loc);
+}
+
 void Compiler::visit_anon_model_literal_expr(const ast::Anon_model_literal_expr &expr)
 {
     // Unwrap the Optional context if it exists
@@ -1281,7 +1375,10 @@ void Compiler::visit_anon_model_literal_expr(const ast::Anon_model_literal_expr 
         std::string variant_name = expr.fields[0].first;
 
         // Push the payload onto the stack
-        compile_expr(expr.fields[0].second);
+        if (expr.fields[0].second)
+            compile_expr(expr.fields[0].second);
+        else
+            emit_op(Op_code::Nil, expr.loc);
 
         // Tell the VM to wrap it in a Union_value
         emit_op(Op_code::Construct_union, expr.loc);

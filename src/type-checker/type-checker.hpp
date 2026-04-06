@@ -127,8 +127,15 @@ public:
     struct ModelData
     {
         mem::rc_ptr<types::Model_type> signature;
+        std::unordered_map<std::string, const ast::Expr *> field_defaults;
         std::unordered_map<std::string, FunctionData> methods;
         std::unordered_map<std::string, FunctionData> static_methods;
+    };
+
+    struct UnionData
+    {
+        mem::rc_ptr<types::Union_type> signature;
+        std::unordered_map<std::string, const ast::Expr *> variant_defaults;
     };
 
     using Scope = std::unordered_map<std::string, std::pair<types::Type, bool>>;
@@ -137,6 +144,7 @@ public:
 
     std::unordered_map<std::string, FunctionData> functions;
     std::unordered_map<std::string, ModelData> model_data;
+    std::unordered_map<std::string, UnionData> union_data;
 
     std::optional<types::Type> current_return_type;
     std::optional<mem::rc_ptr<types::Model_type>> current_model_type;
@@ -166,6 +174,8 @@ public:
     bool is_nil(const types::Type &type) const;
     bool default_expr_uses_forbidden_names(const ast::Expr &expr, const std::unordered_set<std::string> &forbidden_names) const;
     void validate_function_defaults(const ast::Function_stmt &stmt);
+    void validate_model_defaults(const ast::Model_stmt &stmt);
+    void validate_union_defaults(const ast::Union_stmt &stmt);
 
     struct Bound_call_arguments
     {

@@ -90,6 +90,7 @@ public:
     void visit_array_assignment_expr(const ast::Array_assignment_expr &expr);
     void visit_cast_expr(const ast::Cast_expr &expr);
     void visit_range_expr(const ast::Range_expr &expr);
+    void visit_fstring_expr(const ast::Fstring_expr &expr);
     void visit_anon_model_literal_expr(const ast::Anon_model_literal_expr &expr);
 
     // --- Bytecode Emitters ---

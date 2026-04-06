@@ -224,7 +224,53 @@ inline Value core_to_f64(std::string str)
 
 inline std::string core_to_str(Value val)
 {
-    return value_to_string(val);
+    return is_string(val) ? value_to_string(val) : value_to_str_debug(val);
+}
+
+[[noreturn]] inline void bytes_panic(const std::string &message)
+{
+    std::println(stderr, "Runtime error: {}", message);
+    std::exit(1);
+}
+
+inline Value core_bytes(Value value)
+{
+    auto byte_array_type = types::Type(mem::make_rc<types::Array_type>(types::Primitive_kind::U8));
+    std::vector<Value> elements;
+
+    if (is_string(value))
+    {
+        const auto &str = get_string(value);
+        elements.reserve(str.size());
+        for (unsigned char c : str)
+            elements.push_back(Value(static_cast<std::uint8_t>(c)));
+        return Value(mem::make_rc<Array_value>(byte_array_type, std::move(elements)));
+    }
+
+    if (is_array(value))
+    {
+        auto arr = get_array(value);
+        elements.reserve(arr->elements.size());
+
+        for (const auto &elem : arr->elements)
+        {
+            if (is_bool(elem))
+            {
+                elements.push_back(Value(static_cast<std::uint8_t>(get_bool(elem) ? 1 : 0)));
+                continue;
+            }
+
+            auto casted = cast_numeric_value(elem, types::Primitive_kind::U8);
+            if (!casted)
+                bytes_panic("bytes(...) can only convert strings, bool arrays, or integer arrays to u8[].");
+
+            elements.push_back(casted.value());
+        }
+
+        return Value(mem::make_rc<Array_value>(byte_array_type, std::move(elements)));
+    }
+
+    bytes_panic("bytes(...) can only convert strings, bool arrays, or integer arrays to u8[].");
 }
 
 [[noreturn]] inline void optional_panic(const std::string &message);
@@ -784,6 +830,11 @@ inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
 
     vm.bind_native<iterator_from_value>("iter", {"any"}, "any", tc);
     vm.bind_native<core_clone>("clone", {"any"}, "any", tc);
+    vm.bind_native<core_to_str>("to_str", {"any"}, "string", tc);
+    vm.bind_native_sig<core_bytes>("bytes",
+                                   {{"value", "string | bool[] | i8[] | i16[] | i32[] | i64[] | u8[] | u16[] | u32[] | u64[]", std::nullopt}},
+                                   "u8[]",
+                                   tc);
 
     vm.bind_native_sig<range_exclusive>("__range_exclusive",
                                         {{"start", std::string(integer_types), std::nullopt},

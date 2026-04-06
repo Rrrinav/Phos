@@ -66,7 +66,7 @@ private:
     Result<ast::Stmt *> union_declaration();
     Result<ast::Stmt*> enum_declaration();
     Result<ast::Stmt *> var_declaration();
-    Result<std::pair<std::string, types::Type>> parse_model_field();
+    Result<ast::Typed_member_decl> parse_model_field();
     Result<ast::Function_stmt> parse_model_method();
 
     Result<ast::Stmt *> statement();

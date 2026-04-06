@@ -330,7 +330,8 @@ void AstPrinter::print_expr_node(const Model_literal_expr &node)
                                   {
                                       indent();
                                       print_str("." + node.fields[i].first);
-                                      with_child(false, [&] { print_expr_ptr(node.fields[i].second); });
+                                      if (node.fields[i].second)
+                                          with_child(false, [&] { print_expr_ptr(node.fields[i].second); });
                                   });
                    }
                });
@@ -650,7 +651,10 @@ void AstPrinter::print_stmt_node(const Model_stmt &node)
                                       [&]
                                       {
                                           indent();
-                                          print_str(node.fields[i].first + " : " + types::type_to_string(node.fields[i].second));
+                                          std::string text = node.fields[i].name + " : " + types::type_to_string(node.fields[i].type);
+                                          if (node.fields[i].default_value)
+                                              text += " = " + Source_printer{}.print_expr_ptr(node.fields[i].default_value);
+                                          print_str(text);
                                       });
                        }
                    }
@@ -845,7 +849,10 @@ void AstPrinter::print_stmt_node(const Union_stmt &node)
                                       [&]
                                       {
                                           indent();
-                                          print_str(node.variants[i].first + " : " + types::type_to_string(node.variants[i].second));
+                                          std::string text = node.variants[i].name + " : " + types::type_to_string(node.variants[i].type);
+                                          if (node.variants[i].default_value)
+                                              text += " = " + Source_printer{}.print_expr_ptr(node.variants[i].default_value);
+                                          print_str(text);
                                       });
                        }
                    }
@@ -954,7 +961,8 @@ void AstPrinter::print_expr_node(const Anon_model_literal_expr &node)
                                   {
                                       indent();
                                       print_str("." + node.fields[i].first);
-                                      with_child(false, [&] { print_expr_ptr(node.fields[i].second); });
+                                      if (node.fields[i].second)
+                                          with_child(false, [&] { print_expr_ptr(node.fields[i].second); });
                                   });
                    }
                });
@@ -1050,7 +1058,10 @@ std::string Source_printer::print_node(const Model_literal_expr &node)
     std::string res = node.model_name + " { ";
     for (size_t i = 0; i < node.fields.size(); ++i)
     {
-        res += node.fields[i].first + ": " + print_expr_ptr(node.fields[i].second);
+        if (node.fields[i].second)
+            res += node.fields[i].first + ": " + print_expr_ptr(node.fields[i].second);
+        else
+            res += node.fields[i].first;
         if (i + 1 < node.fields.size())
             res += ", ";
     }
@@ -1128,9 +1139,7 @@ std::string Source_printer::print_node(const Yield_expr &node)
 
 std::string Source_printer::print_node(const Fstring_expr &node)
 {
-    std::string res = "f\"";
-    for (auto *e : node.interpolations) res += "{" + print_expr_ptr(e) + "}";
-    return res + "\"";
+    return "f\"" + node.raw_template + "\"";
 }
 
 // --- Statements ---
@@ -1167,7 +1176,13 @@ std::string Source_printer::print_node(const Model_stmt &node)
 {
     std::string res = get_indent() + "model " + node.name + " {\n";
     indent_level++;
-    for (const auto &field : node.fields) res += get_indent() + "let " + field.first + ": " + types::type_to_string(field.second) + ";\n";
+    for (const auto &field : node.fields)
+    {
+        res += get_indent() + field.name + ": " + types::type_to_string(field.type);
+        if (field.default_value)
+            res += " = " + print_expr_ptr(field.default_value);
+        res += ";\n";
+    }
     for (const auto *method : node.methods)
         res += print_node(*method) + "\n";
     indent_level--;
@@ -1256,7 +1271,13 @@ std::string Source_printer::print_node(const Union_stmt &node)
 {
     std::string res = get_indent() + "union " + node.name + " {\n";
     indent_level++;
-    for (const auto &var : node.variants) res += get_indent() + "let " + var.first + ": " + types::type_to_string(var.second) + ";\n";
+    for (const auto &var : node.variants)
+    {
+        res += get_indent() + var.name + ": " + types::type_to_string(var.type);
+        if (var.default_value)
+            res += " = " + print_expr_ptr(var.default_value);
+        res += ";\n";
+    }
     indent_level--;
     res += get_indent() + "}";
     return res;
@@ -1309,7 +1330,10 @@ std::string Source_printer::print_node(const Anon_model_literal_expr &node)
     std::string res = ".{ ";
     for (size_t i = 0; i < node.fields.size(); ++i)
     {
-        res += node.fields[i].first + ": " + print_expr_ptr(node.fields[i].second);
+        if (node.fields[i].second)
+            res += node.fields[i].first + ": " + print_expr_ptr(node.fields[i].second);
+        else
+            res += node.fields[i].first;
         if (i + 1 < node.fields.size())
             res += ", ";
     }

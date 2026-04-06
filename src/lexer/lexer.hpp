@@ -345,13 +345,47 @@ private:
             return Token(token_type, lexeme, coerced.value(), line, start_col);
         };
 
+        auto strip_underscores = [](std::string_view text) -> std::string
+        {
+            std::string cleaned;
+            cleaned.reserve(text.size());
+            for (char c : text)
+                if (c != '_')
+                    cleaned += c;
+            return cleaned;
+        };
+
+        auto consume_digits = [&](auto is_valid_digit, bool saw_digit = false) -> bool
+        {
+            while (true)
+            {
+                char c = peek();
+                if (is_valid_digit(c))
+                {
+                    saw_digit = true;
+                    advance();
+                    continue;
+                }
+
+                if (c == '_' && saw_digit && is_valid_digit(peek_next()))
+                {
+                    advance();
+                    continue;
+                }
+
+                break;
+            }
+            return saw_digit;
+        };
+
         // hex literal: 0x...
         if (source[start] == '0' && (peek() == 'x' || peek() == 'X'))
         {
             advance(); // consume 'x'
-            while (std::isxdigit(peek())) advance();
-            std::string lexeme(source.substr(start, current - start));
-            int64_t val = std::stoll(lexeme, nullptr, 16);
+            if (!consume_digits([](char c) { return std::isxdigit(static_cast<unsigned char>(c)); }))
+                return Token(TokenType::Invalid, "Invalid hex literal", std::string("Invalid hex literal"), line, start_col);
+            std::string cleaned = strip_underscores(source.substr(start, current - start));
+            int64_t val = std::stoll(cleaned, nullptr, 16);
             return finish_numeric_token(Value(static_cast<std::int64_t>(val)), TokenType::Integer64);
         }
 
@@ -359,31 +393,55 @@ private:
         if (source[start] == '0' && (peek() == 'b' || peek() == 'B'))
         {
             advance(); // consume 'b'
-            while (peek() == '0' || peek() == '1') advance();
-            std::string lexeme(source.substr(start, current - start));
-            int64_t val = std::stoll(lexeme.substr(2), nullptr, 2);
+            if (!consume_digits([](char c) { return c == '0' || c == '1'; }))
+                return Token(TokenType::Invalid, "Invalid binary literal", std::string("Invalid binary literal"), line, start_col);
+            std::string cleaned = strip_underscores(source.substr(start, current - start));
+            int64_t val = std::stoll(cleaned.substr(2), nullptr, 2);
             return finish_numeric_token(Value(static_cast<std::int64_t>(val)), TokenType::Integer64);
         }
 
-        while (std::isdigit(peek())) advance();
+        // octal literal: 0o...
+        if (source[start] == '0' && (peek() == 'o' || peek() == 'O'))
+        {
+            advance(); // consume 'o'
+            if (!consume_digits([](char c) { return c >= '0' && c <= '7'; }))
+                return Token(TokenType::Invalid, "Invalid octal literal", std::string("Invalid octal literal"), line, start_col);
+            std::string cleaned = strip_underscores(source.substr(start, current - start));
+            int64_t val = std::stoll(cleaned.substr(2), nullptr, 8);
+            return finish_numeric_token(Value(static_cast<std::int64_t>(val)), TokenType::Integer64);
+        }
+
+        consume_digits([](char c) { return std::isdigit(static_cast<unsigned char>(c)); }, true);
+        bool is_float = false;
 
         // float: digits '.' digits  (but NOT '..' which is a range token)
         if (peek() == '.' && peek_next() != '.' && std::isdigit(peek_next()))
         {
+            is_float = true;
             advance(); // consume '.'
-            while (std::isdigit(peek())) advance();
-            // optional exponent: e/E [+-] digits
-            if (peek() == 'e' || peek() == 'E')
-            {
-                advance();
-                if (peek() == '+' || peek() == '-') advance();
-                while (std::isdigit(peek())) advance();
-            }
-            return finish_numeric_token(Value(std::stod(std::string(source.substr(start, current - start)))), TokenType::Float64);
+            consume_digits([](char c) { return std::isdigit(static_cast<unsigned char>(c)); });
         }
 
-        return finish_numeric_token(Value(static_cast<std::int64_t>(std::stoll(std::string(source.substr(start, current - start))))),
-                                    TokenType::Integer64);
+        if (peek() == 'e' || peek() == 'E')
+        {
+            size_t exp_pos = current;
+            advance();
+            if (peek() == '+' || peek() == '-') advance();
+            if (!consume_digits([](char c) { return std::isdigit(static_cast<unsigned char>(c)); }))
+            {
+                current = exp_pos;
+            }
+            else
+            {
+                is_float = true;
+            }
+        }
+
+        std::string cleaned = strip_underscores(source.substr(start, current - start));
+        if (is_float)
+            return finish_numeric_token(Value(std::stod(cleaned)), TokenType::Float64);
+
+        return finish_numeric_token(Value(static_cast<std::int64_t>(std::stoll(cleaned))), TokenType::Integer64);
     }
 
     //  identifier / keyword scanner

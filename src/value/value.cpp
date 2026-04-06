@@ -438,7 +438,7 @@ std::string value_to_str_debug(const Value &val)
     if (std::holds_alternative<mem::rc_ptr<Union_value>>(val))
     {
         auto u = std::get<mem::rc_ptr<Union_value>>(val);
-        return std::format("{}::{}({})", u->union_name, u->variant_name, value_to_str_debug(u->payload));
+        return std::format("{}{{ {}: {} }}", u->union_name, u->variant_name, value_to_str_debug(u->payload));
     }
 
     return value_to_string(val);  // Fallback to internal
