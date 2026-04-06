@@ -1,0 +1,46 @@
+// 04_functions_and_closures.phos
+//
+// This file covers function declarations, return types, default arguments,
+// named arguments, and closures.
+
+// A function with an explicit return type.
+fn add_pair(left: i64, right: i64) -> i64 {
+    return left + right;
+}
+
+// If you omit "-> type", the return type is void.
+fn greet(name: string, punctuation: string = "!") {
+    print("Hello, " + name + punctuation);
+}
+
+// Default arguments can be omitted by the caller.
+greet("reader");
+
+// Named arguments can make call sites clearer.
+greet(name = "team", punctuation = "!!");
+
+print("add_pair(20, 22) = ", add_pair(20, 22), sep = "");
+
+// Closure expressions use typed parameters and a block body.
+let doubler: |i64| -> i64 = |value: i64| -> i64 {
+    return value * 2;
+};
+
+// Zero-argument closures use "||".
+let banner: || -> string = || -> string {
+    return "closures are values";
+};
+
+print("doubler(21) = ", doubler(21), sep = "");
+print(banner());
+
+// Closures can be passed to functions just like any other value.
+fn apply_once(value: i64, operation: |i64| -> i64) -> i64 {
+    return operation(value);
+}
+
+let tripled := apply_once(7, |input: i64| -> i64 {
+    return input * 3;
+});
+
+print("tripled = ", tripled, sep = "");

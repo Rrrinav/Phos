@@ -1446,8 +1446,8 @@ Result<ast::Expr*> Parser::primary()
     {
         return mem::Arena::alloc(this->arena_, ast::Expr{
             ast::Literal_expr{
-                .value = Value(std::get<int64_t>(previous().literal)),
-                .type  = types::Type(types::Primitive_kind::I64),
+                .value = previous().literal,
+                .type  = types::Type(numeric_type_of(previous().literal)),
                 .loc   = {previous().line, previous().column},
             }
         });
@@ -1459,8 +1459,8 @@ Result<ast::Expr*> Parser::primary()
     {
         return mem::Arena::alloc(this->arena_, ast::Expr{
             ast::Literal_expr{
-                .value = Value(std::get<double>(previous().literal)),
-                .type  = types::Type(types::Primitive_kind::F64),
+                .value = previous().literal,
+                .type  = types::Type(numeric_type_of(previous().literal)),
                 .loc   = {previous().line, previous().column},
             }
         });

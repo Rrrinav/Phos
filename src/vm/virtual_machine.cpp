@@ -479,7 +479,10 @@ Result<void> Virtual_machine::run()
                 Value array_val = pop();
 
                 auto arr = get_array(array_val);
-                int64_t idx = get_int(index_val);
+                auto maybe_idx = try_get_i64(index_val);
+                if (!maybe_idx)
+                    return std::unexpected(err::msg("Array index must fit into the current i64-backed runtime range."));
+                int64_t idx = *maybe_idx;
 
                 if (idx < 0 || idx >= static_cast<int64_t>(arr->elements.size()))
                     return std::unexpected(err::msg("Array index out of bounds."));
@@ -495,7 +498,10 @@ Result<void> Virtual_machine::run()
                 Value val = peek(0);
 
                 auto arr = get_array(array_val);
-                int64_t idx = get_int(index_val);
+                auto maybe_idx = try_get_i64(index_val);
+                if (!maybe_idx)
+                    return std::unexpected(err::msg("Array assignment index must fit into the current i64-backed runtime range."));
+                int64_t idx = *maybe_idx;
 
                 if (idx < 0 || idx >= static_cast<int64_t>(arr->elements.size()))
                     return std::unexpected(err::msg("Array assignment index out of bounds."));
@@ -602,7 +608,7 @@ Result<void> Virtual_machine::run()
                 {
                     if (i > 0)
                         out << sep_str;
-                    out << value_to_str_debug(values[i]);
+                    out << (is_string(values[i]) ? value_to_string(values[i]) : value_to_str_debug(values[i]));
                 }
                 out << end_str;
                 break;

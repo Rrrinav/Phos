@@ -1,6 +1,5 @@
 #include "value.hpp"
 #include <charconv>
-#include <cmath>
 #include <format>
 #include <limits>
 
@@ -122,7 +121,7 @@ std::optional<Value> cast_numeric_dispatch(Source value, types::Primitive_kind t
         case types::Primitive_kind::U64:
             return cast_numeric_source<std::uint64_t>(value);
         case types::Primitive_kind::F16:
-            return cast_numeric_source<std::float16_t>(value);
+            return cast_numeric_source<numeric::float16_t>(value);
         case types::Primitive_kind::F32:
             return cast_numeric_source<float>(value);
         case types::Primitive_kind::F64:
@@ -160,7 +159,7 @@ std::optional<Value> coerce_literal_dispatch(Source value, types::Primitive_kind
         case types::Primitive_kind::U64:
             return coerce_literal_source<std::uint64_t>(value);
         case types::Primitive_kind::F16:
-            return coerce_literal_source<std::float16_t>(value);
+            return coerce_literal_source<numeric::float16_t>(value);
         case types::Primitive_kind::F32:
             return coerce_literal_source<float>(value);
         case types::Primitive_kind::F64:
@@ -193,7 +192,7 @@ bool is_unsigned_integer(const Value &val)
 }
 bool is_float(const Value &val)
 {
-    return std::holds_alternative<std::float16_t>(val) || std::holds_alternative<float>(val) || std::holds_alternative<double>(val);
+    return std::holds_alternative<numeric::float16_t>(val) || std::holds_alternative<float>(val) || std::holds_alternative<double>(val);
 }
 bool is_numeric(const Value &val) { return is_integer(val) || is_float(val); }
 bool is_string(const Value &val) { return std::holds_alternative<std::string>(val); }
@@ -247,11 +246,37 @@ double get_float(const Value &val)
     [](const auto &value) -> double
     {
         using T = std::decay_t<decltype(value)>;
-        if constexpr (std::is_same_v<T, std::float16_t> || std::is_same_v<T, float> || std::is_same_v<T, double>)
+        if constexpr (std::is_same_v<T, numeric::float16_t> || std::is_same_v<T, float> || std::is_same_v<T, double>)
             return static_cast<double>(value);
         throw std::bad_variant_access();
     },
     val);
+}
+
+std::optional<std::int64_t> try_get_i64(const Value &val)
+{
+    if (is_signed_integer(val))
+        return get_int(val);
+    if (is_unsigned_integer(val))
+    {
+        auto u = get_uint(val);
+        if (u <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+            return static_cast<std::int64_t>(u);
+    }
+    return std::nullopt;
+}
+
+std::optional<std::uint64_t> try_get_u64(const Value &val)
+{
+    if (is_unsigned_integer(val))
+        return get_uint(val);
+    if (is_signed_integer(val))
+    {
+        auto i = get_int(val);
+        if (i >= 0)
+            return static_cast<std::uint64_t>(i);
+    }
+    return std::nullopt;
 }
 std::string get_string(const Value &val) { return std::get<std::string>(val); }
 mem::rc_ptr<Array_value> get_array(const Value &val) { return std::get<mem::rc_ptr<Array_value>>(val); }
@@ -282,7 +307,7 @@ types::Primitive_kind numeric_type_of(const Value &val)
             return types::Primitive_kind::U32;
         else if constexpr (std::is_same_v<T, std::uint64_t>)
             return types::Primitive_kind::U64;
-        else if constexpr (std::is_same_v<T, std::float16_t>)
+        else if constexpr (std::is_same_v<T, numeric::float16_t>)
             return types::Primitive_kind::F16;
         else if constexpr (std::is_same_v<T, float>)
             return types::Primitive_kind::F32;
@@ -377,7 +402,7 @@ std::string value_to_str_debug(const Value &val)
         return value_to_string(val);
 
     if (is_string(val))
-        return std::format("{}", get_string(val));
+        return std::format("\"{}\"", get_string(val));
 
     if (is_closure(val))
         return value_to_string(val);

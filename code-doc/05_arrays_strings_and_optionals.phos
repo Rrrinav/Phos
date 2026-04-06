@@ -1,0 +1,52 @@
+// 05_arrays_strings_and_optionals.phos
+//
+// This file introduces arrays, strings, indexing, and optional values.
+
+// Arrays use [] for both the type suffix and the literal syntax.
+let scores: i64[] = [10, 20, 30];
+let mut names := ["Ada", "Linus"];
+
+// Integer indices can come from any integer type.
+let name_index: u8 = 1u8;
+print("names[name_index] = ", names[name_index], sep = "");
+
+// Arrays are mutable through methods and index assignment.
+names.push("Grace");
+scores[0] = 99;
+
+// pop() returns an optional value because the array might be empty.
+let removed_name := names.pop();
+print("removed_name.has_value() = ", removed_name.has_value(), sep = "");
+print("scores.join(\", \") = ", scores.join(", "), sep = "");
+print("len(scores) = ", len(scores), sep = "");
+
+// Strings are values, and the standard library exposes common helpers as methods.
+let raw_text := "  phos language  ";
+let clean_text := raw_text.trim();
+let loud_text := clean_text.repeat(2);
+let words := clean_text.split(" ");
+
+print("clean_text = " + clean_text);
+print("loud_text = " + loud_text);
+print("starts_with(\"phos\") = ", clean_text.starts_with("phos"), sep = "");
+print("ends_with(\"age\") = ", clean_text.ends_with("age"), sep = "");
+print("index_of(\"lang\") = ", clean_text.index_of("lang"), sep = "");
+print(words);
+
+// Optionals use the "?" suffix. nil is the empty optional value.
+let maybe_port: i64? = "8080".parse_i64();
+let maybe_missing: i64? = "not a number".parse_i64();
+
+print("maybe_port.is_some() = ", maybe_port.is_some(), sep = "");
+print("maybe_missing.is_none() = ", maybe_missing.is_none(), sep = "");
+print("maybe_missing.or(9000) = ", maybe_missing.or(9000), sep = "");
+
+// has_value()/is_some() allow a nil-check before casting away the optional.
+if (maybe_port.has_value()) {
+    let confirmed_port: i64 = maybe_port as i64;
+    print("confirmed_port = ", confirmed_port, sep = "");
+}
+
+// get() is the explicit "panic if nil" extractor.
+let fallback_message: string? = "ready";
+print(fallback_message.get());

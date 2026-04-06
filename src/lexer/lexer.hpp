@@ -303,6 +303,48 @@ private:
     {
         size_t start = current - 1;
 
+        auto consume_numeric_suffix = [&]() -> std::optional<types::Primitive_kind>
+        {
+            std::string_view rest = source.substr(current);
+            auto match = [&](std::string_view suffix, types::Primitive_kind kind) -> std::optional<types::Primitive_kind>
+            {
+                if (rest.starts_with(suffix))
+                {
+                    current += suffix.size();
+                    return kind;
+                }
+                return std::nullopt;
+            };
+
+            if (auto kind = match("i16", types::Primitive_kind::I16)) return kind;
+            if (auto kind = match("i32", types::Primitive_kind::I32)) return kind;
+            if (auto kind = match("i64", types::Primitive_kind::I64)) return kind;
+            if (auto kind = match("i8", types::Primitive_kind::I8)) return kind;
+            if (auto kind = match("u16", types::Primitive_kind::U16)) return kind;
+            if (auto kind = match("u32", types::Primitive_kind::U32)) return kind;
+            if (auto kind = match("u64", types::Primitive_kind::U64)) return kind;
+            if (auto kind = match("u8", types::Primitive_kind::U8)) return kind;
+            if (auto kind = match("f16", types::Primitive_kind::F16)) return kind;
+            if (auto kind = match("f32", types::Primitive_kind::F32)) return kind;
+            if (auto kind = match("f64", types::Primitive_kind::F64)) return kind;
+            return std::nullopt;
+        };
+
+        auto finish_numeric_token = [&](Value default_value, TokenType token_type) -> Token
+        {
+            auto suffix_kind = consume_numeric_suffix();
+            std::string lexeme(source.substr(start, current - start));
+
+            if (!suffix_kind)
+                return Token(token_type, lexeme, default_value, line, start_col);
+
+            auto coerced = coerce_numeric_literal(default_value, *suffix_kind);
+            if (!coerced)
+                return Token(TokenType::Invalid, lexeme, std::string("Invalid numeric literal suffix"), line, start_col);
+
+            return Token(token_type, lexeme, coerced.value(), line, start_col);
+        };
+
         // hex literal: 0x...
         if (source[start] == '0' && (peek() == 'x' || peek() == 'X'))
         {
@@ -310,7 +352,7 @@ private:
             while (std::isxdigit(peek())) advance();
             std::string lexeme(source.substr(start, current - start));
             int64_t val = std::stoll(lexeme, nullptr, 16);
-            return Token(TokenType::Integer64, lexeme, val, line, start_col);
+            return finish_numeric_token(Value(static_cast<std::int64_t>(val)), TokenType::Integer64);
         }
 
         // binary literal: 0b...
@@ -320,7 +362,7 @@ private:
             while (peek() == '0' || peek() == '1') advance();
             std::string lexeme(source.substr(start, current - start));
             int64_t val = std::stoll(lexeme.substr(2), nullptr, 2);
-            return Token(TokenType::Integer64, lexeme, val, line, start_col);
+            return finish_numeric_token(Value(static_cast<std::int64_t>(val)), TokenType::Integer64);
         }
 
         while (std::isdigit(peek())) advance();
@@ -337,12 +379,11 @@ private:
                 if (peek() == '+' || peek() == '-') advance();
                 while (std::isdigit(peek())) advance();
             }
-            std::string lexeme(source.substr(start, current - start));
-            return Token(TokenType::Float64, lexeme, std::stod(lexeme), line, start_col);
+            return finish_numeric_token(Value(std::stod(std::string(source.substr(start, current - start)))), TokenType::Float64);
         }
 
-        std::string lexeme(source.substr(start, current - start));
-        return Token(TokenType::Integer64, lexeme, std::stoll(lexeme), line, start_col);
+        return finish_numeric_token(Value(static_cast<std::int64_t>(std::stoll(std::string(source.substr(start, current - start))))),
+                                    TokenType::Integer64);
     }
 
     //  identifier / keyword scanner

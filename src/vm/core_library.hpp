@@ -227,6 +227,8 @@ inline std::string core_to_str(Value val)
     return value_to_string(val);
 }
 
+[[noreturn]] inline void optional_panic(const std::string &message);
+
 inline std::vector<size_t> utf8_boundaries(const std::string &str)
 {
     std::vector<size_t> boundaries;
@@ -311,7 +313,15 @@ inline Value iterator_item_at(const Iterator_value &iter, int64_t index)
         else if constexpr (std::is_same_v<T, Iterator_value::Interval_state>)
         {
             const int64_t step = state.start <= state.end ? 1 : -1;
-            return Value(state.start + (index * step));
+            Value raw = Value(static_cast<std::int64_t>(state.start + (index * step)));
+            if (types::is_primitive(iter.element_type) &&
+                types::is_integer_primitive(types::get_primitive_kind(iter.element_type)))
+            {
+                auto casted = cast_numeric_value(raw, types::get_primitive_kind(iter.element_type));
+                if (casted)
+                    return casted.value();
+            }
+            return raw;
         }
         else if constexpr (std::is_same_v<T, Iterator_value::Array_state>)
         {
@@ -392,11 +402,32 @@ inline Value iter_get(mem::rc_ptr<Iterator_value> iter)
     return Value(nullptr);
 }
 
-inline bool iter_has_next(mem::rc_ptr<Iterator_value> iter, int64_t steps)
+inline int64_t require_i64(Value value, const std::string &context)
+{
+    auto converted = try_get_i64(value);
+    if (!converted)
+        optional_panic(context + " must fit into the current i64-backed runtime range.");
+    return *converted;
+}
+
+inline types::Primitive_kind promote_integer_kind(types::Primitive_kind left, types::Primitive_kind right)
+{
+    bool same_signedness =
+    (types::is_signed_integer_primitive(left) && types::is_signed_integer_primitive(right)) ||
+    (types::is_unsigned_integer_primitive(left) && types::is_unsigned_integer_primitive(right));
+
+    if (!same_signedness)
+        return types::Primitive_kind::I64;
+
+    return types::primitive_bit_width(left) >= types::primitive_bit_width(right) ? left : right;
+}
+
+inline bool iter_has_next(mem::rc_ptr<Iterator_value> iter, Value steps_value)
 {
     if (!iter)
         return false;
 
+    int64_t steps = require_i64(steps_value, "Iterator step");
     const int64_t len = iterator_length(*iter);
     int64_t cursor = iter->cursor;
 
@@ -422,11 +453,12 @@ inline bool iter_has_next(mem::rc_ptr<Iterator_value> iter, int64_t steps)
     return true;
 }
 
-inline bool iter_has_prev(mem::rc_ptr<Iterator_value> iter, int64_t steps)
+inline bool iter_has_prev(mem::rc_ptr<Iterator_value> iter, Value steps_value)
 {
     if (!iter)
         return false;
 
+    int64_t steps = require_i64(steps_value, "Iterator step");
     const int64_t len = iterator_length(*iter);
     int64_t cursor = iter->cursor;
 
@@ -447,11 +479,12 @@ inline bool iter_has_prev(mem::rc_ptr<Iterator_value> iter, int64_t steps)
     return true;
 }
 
-inline Value iter_next(mem::rc_ptr<Iterator_value> iter, int64_t steps)
+inline Value iter_next(mem::rc_ptr<Iterator_value> iter, Value steps_value)
 {
     if (!iter)
         return Value(nullptr);
 
+    int64_t steps = require_i64(steps_value, "Iterator step");
     if (steps < 0)
         return Value(nullptr);
     if (steps == 0)
@@ -467,11 +500,12 @@ inline Value iter_next(mem::rc_ptr<Iterator_value> iter, int64_t steps)
     return result;
 }
 
-inline Value iter_prev(mem::rc_ptr<Iterator_value> iter, int64_t steps)
+inline Value iter_prev(mem::rc_ptr<Iterator_value> iter, Value steps_value)
 {
     if (!iter)
         return Value(nullptr);
 
+    int64_t steps = require_i64(steps_value, "Iterator step");
     if (steps < 0)
         return Value(nullptr);
     if (steps == 0)
@@ -500,9 +534,10 @@ inline bool iter_contains(mem::rc_ptr<Iterator_value> iter, Value target)
         // 1. O(1) Math check for Ranges (The secret sauce for pattern matching!)
         if constexpr (std::is_same_v<T, Iterator_value::Interval_state>)
         {
-            if (!is_signed_integer(target))
+            auto maybe_target = try_get_i64(target);
+            if (!maybe_target)
                 return false;
-            int64_t val = get_int(target);
+            int64_t val = *maybe_target;
 
             if (state.start <= state.end)
                 if (state.inclusive)
@@ -591,14 +626,20 @@ inline Value iterator_from_value(Value value)
     return make_iterator(runtime_value_type(value), Iterator_value::Singleton_state{value});
 }
 
-inline Value range_exclusive(int64_t start, int64_t end)
+inline Value range_exclusive(Value start_value, Value end_value)
 {
-    return make_iterator(types::Primitive_kind::I64, Iterator_value::Interval_state{start, end, false});
+    int64_t start = require_i64(start_value, "Range start");
+    int64_t end = require_i64(end_value, "Range end");
+    auto element_kind = promote_integer_kind(numeric_type_of(start_value), numeric_type_of(end_value));
+    return make_iterator(element_kind, Iterator_value::Interval_state{start, end, false});
 }
 
-inline Value range_inclusive(int64_t start, int64_t end)
+inline Value range_inclusive(Value start_value, Value end_value)
 {
-    return make_iterator(types::Primitive_kind::I64, Iterator_value::Interval_state{start, end, true});
+    int64_t start = require_i64(start_value, "Range start");
+    int64_t end = require_i64(end_value, "Range end");
+    auto element_kind = promote_integer_kind(numeric_type_of(start_value), numeric_type_of(end_value));
+    return make_iterator(element_kind, Iterator_value::Interval_state{start, end, true});
 }
 
 inline Value deep_clone_value(const Value &value, std::unordered_map<const void *, Value> &seen);
@@ -735,6 +776,8 @@ inline bool optional_is_none(Value value) { return is_nil(value); }
 
 inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
 {
+    constexpr std::string_view integer_types = "i8 | i16 | i32 | i64 | u8 | u16 | u32 | u64";
+
     vm.bind_native<core_is_same>("is_same", {"T", "T"}, "bool", tc);
     // Clock
     vm.bind_native<clock_now>("clock", {}, "f64", tc);
@@ -742,8 +785,16 @@ inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
     vm.bind_native<iterator_from_value>("iter", {"any"}, "any", tc);
     vm.bind_native<core_clone>("clone", {"any"}, "any", tc);
 
-    vm.bind_native<range_exclusive>("__range_exclusive", {"i64", "i64"}, "any", tc);
-    vm.bind_native<range_inclusive>("__range_inclusive", {"i64", "i64"}, "any", tc);
+    vm.bind_native_sig<range_exclusive>("__range_exclusive",
+                                        {{"start", std::string(integer_types), std::nullopt},
+                                         {"end", std::string(integer_types), std::nullopt}},
+                                        "any",
+                                        tc);
+    vm.bind_native_sig<range_inclusive>("__range_inclusive",
+                                        {{"start", std::string(integer_types), std::nullopt},
+                                         {"end", std::string(integer_types), std::nullopt}},
+                                        "any",
+                                        tc);
 
     // len() strictly accepts either ONE string OR ONE array
     // (We use two bind_native calls to register two valid signatures for the same function!)
@@ -756,11 +807,27 @@ inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
     vm.bind_native<array_pop>("Array::pop", {"T[]"}, "T?", tc);
     vm.bind_native_sig<array_join>("Array::join", {{"", "T[]", std::nullopt}, {"separator", "string", std::nullopt}}, "string", tc);
 
-    vm.bind_native_sig<static_cast<Value (*)(mem::rc_ptr<Iterator_value>, int64_t)>(&iter_next)>("Iter::next", {{"", "any", std::nullopt}, {"step", "i64", Value(int64_t(1))}}, "any", tc);
-    vm.bind_native_sig<static_cast<Value (*)(mem::rc_ptr<Iterator_value>, int64_t)>(&iter_prev)>("Iter::prev", {{"", "any", std::nullopt}, {"step", "i64", Value(int64_t(1))}}, "any", tc);
+    vm.bind_native_sig<static_cast<Value (*)(mem::rc_ptr<Iterator_value>, Value)>(&iter_next)>(
+    "Iter::next",
+    {{"", "any", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
+    "any",
+    tc);
+    vm.bind_native_sig<static_cast<Value (*)(mem::rc_ptr<Iterator_value>, Value)>(&iter_prev)>(
+    "Iter::prev",
+    {{"", "any", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
+    "any",
+    tc);
     vm.bind_native_sig<iter_get>("Iter::get", {{"", "any", std::nullopt}}, "any", tc);
-    vm.bind_native_sig<iter_has_next>("Iter::has_next", {{"", "any", std::nullopt}, {"step", "i64", Value(int64_t(1))}}, "bool", tc);
-    vm.bind_native_sig<iter_has_prev>("Iter::has_prev", {{"", "any", std::nullopt}, {"step", "i64", Value(int64_t(1))}}, "bool", tc);
+    vm.bind_native_sig<static_cast<bool (*)(mem::rc_ptr<Iterator_value>, Value)>(&iter_has_next)>(
+    "Iter::has_next",
+    {{"", "any", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
+    "bool",
+    tc);
+    vm.bind_native_sig<static_cast<bool (*)(mem::rc_ptr<Iterator_value>, Value)>(&iter_has_prev)>(
+    "Iter::has_prev",
+    {{"", "any", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
+    "bool",
+    tc);
     vm.bind_native_sig<iter_contains>("Iter::contains", {{"", "any", std::nullopt}, {"target", "any", std::nullopt}}, "bool", tc);
 
     vm.bind_native_sig<optional_get>("Optional::get", {{"", "T?", std::nullopt}, {"message", "string", Value(std::string("Tried to extract a value from nil."))}}, "T", tc);

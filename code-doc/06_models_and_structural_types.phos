@@ -1,0 +1,61 @@
+// 06_models_and_structural_types.phos
+//
+// This file covers user-defined model types, model literals, "bind" blocks,
+// instance methods, static methods, "this", and anonymous structural model types.
+
+// A model declaration currently contains fields.
+model Point {
+    x: i64;
+    y: i64;
+}
+
+// Methods are attached later with a bind block.
+bind Point {
+    fn magnitude_squared() -> i64 {
+        return (this.x * this.x) + (this.y * this.y);
+    }
+
+    fn translated(dx: i64, dy: i64) -> Point {
+        return Point{
+            x: this.x + dx,
+            y: this.y + dy,
+        };
+    }
+
+    static fn origin() -> Point {
+        return Point{0, 0};
+    }
+}
+
+// Model literals can use named fields.
+let start := Point{x: 3, y: 4};
+
+// They can also use positional fields in declaration order.
+let moved := start.translated(10, -2);
+let zero := Point::origin();
+
+print("start.magnitude_squared() = ", start.magnitude_squared(), sep = "");
+print(moved);
+print(zero);
+
+// Anonymous structural model types are written with "model { ... }".
+let inline_user: model {
+    name: string;
+    age: i64;
+} = .{
+    "Ada",
+    37,
+};
+
+print(inline_user);
+
+// Contextual anonymous literals also work with optionals.
+let maybe_profile: model {
+    nickname: string;
+    visits: i64;
+}? = .{
+    "builder",
+    12,
+};
+
+print(maybe_profile);

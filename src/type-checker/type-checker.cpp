@@ -1539,7 +1539,8 @@ void Type_checker::check_stmt_node(ast::Match_stmt &stmt)
                 types::Type pattern_type = pattern_res.value();
 
                 bool is_range_match = std::holds_alternative<ast::Range_expr>(arm.pattern->node) &&
-                                      is_compatible(subject_type, types::Type(types::Primitive_kind::I64));
+                                      types::is_primitive(subject_type) &&
+                                      types::is_integer_primitive(types::get_primitive_kind(subject_type));
 
                 // --- THE CUSTOM PROTOCOL CHECK ---
                 bool has_custom_match = false;
@@ -2257,13 +2258,23 @@ Result<types::Type> Type_checker::check_expr_node(ast::Static_path_expr &expr, s
 
 Result<types::Type> Type_checker::check_expr_node(ast::Enum_member_expr &expr, std::optional<types::Type> context_type)
 {
-    if (!context_type || !is_enum(*context_type))
+    if (!context_type)
     {
         type_error(expr.loc, "Cannot infer enum type for '." + expr.member_name + "'. Context is missing.");
         return expr.type = types::Primitive_kind::Void;
     }
 
-    auto enum_type = types::get_enum_type(*context_type);
+    types::Type expected_type = *context_type;
+    if (is_optional(expected_type))
+        expected_type = types::get_optional_type(expected_type)->base_type;
+
+    if (!is_enum(expected_type))
+    {
+        type_error(expr.loc, "Cannot infer enum type for '." + expr.member_name + "'. Context is missing.");
+        return expr.type = types::Primitive_kind::Void;
+    }
+
+    auto enum_type = types::get_enum_type(expected_type);
 
     if (!enum_type->variants->map.contains(expr.member_name)) // Access via wrapper map
     {
@@ -2271,7 +2282,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Enum_member_expr &expr, s
         return expr.type = types::Primitive_kind::Void;
     }
 
-    return expr.type = types::Type(enum_type);
+    return expr.type = context_type.value();
 }
 
 Result<types::Type> Type_checker::check_expr_node(ast::Field_assignment_expr &expr, std::optional<types::Type> context_type)
@@ -2379,16 +2390,17 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
         {
             if (expr.arguments.size() > 1)
             {
-                type_error(expr.loc, "'" + expr.method_name + "()' accepts at most one i64 step argument.");
+                type_error(expr.loc, "'" + expr.method_name + "()' accepts at most one integer step argument.");
             }
             else if (expr.arguments.size() == 1)
             {
                 if (!expr.arguments[0].name.empty() && expr.arguments[0].name != "step")
                     type_error(expr.arguments[0].loc, "Unknown named argument '" + expr.arguments[0].name + "' for " + expr.method_name + "().");
 
-                auto arg_type = check_expr(*expr.arguments[0].value, types::Type(types::Primitive_kind::I64));
-                if (arg_type && *arg_type != types::Type(types::Primitive_kind::I64))
-                    type_error(ast::get_loc(expr.arguments[0].value->node), "Iterator step must be an i64.");
+                auto arg_type = check_expr(*expr.arguments[0].value);
+                if (arg_type &&
+                    (!types::is_primitive(*arg_type) || !types::is_integer_primitive(types::get_primitive_kind(*arg_type))))
+                    type_error(ast::get_loc(expr.arguments[0].value->node), "Iterator step must be an integer.");
             }
             return expr.type = optional_element;
         }
@@ -2397,16 +2409,17 @@ Result<types::Type> Type_checker::check_expr_node(ast::Method_call_expr &expr, s
         {
             if (expr.arguments.size() > 1)
             {
-                type_error(expr.loc, "'" + expr.method_name + "()' accepts at most one i64 step argument.");
+                type_error(expr.loc, "'" + expr.method_name + "()' accepts at most one integer step argument.");
             }
             else if (expr.arguments.size() == 1)
             {
                 if (!expr.arguments[0].name.empty() && expr.arguments[0].name != "step")
                     type_error(expr.arguments[0].loc, "Unknown named argument '" + expr.arguments[0].name + "' for " + expr.method_name + "().");
 
-                auto arg_type = check_expr(*expr.arguments[0].value, types::Type(types::Primitive_kind::I64));
-                if (arg_type && *arg_type != types::Type(types::Primitive_kind::I64))
-                    type_error(ast::get_loc(expr.arguments[0].value->node), "Iterator step must be an i64.");
+                auto arg_type = check_expr(*expr.arguments[0].value);
+                if (arg_type &&
+                    (!types::is_primitive(*arg_type) || !types::is_integer_primitive(types::get_primitive_kind(*arg_type))))
+                    type_error(ast::get_loc(expr.arguments[0].value->node), "Iterator step must be an integer.");
             }
             return expr.type = types::Primitive_kind::Bool;
         }
@@ -2745,8 +2758,10 @@ Result<types::Type> Type_checker::check_expr_node(ast::Array_access_expr &expr, 
     }
 
     auto index_type_res = check_expr(*expr.index);
-    if (index_type_res && index_type_res.value() != types::Type(types::Primitive_kind::I64))
-        type_error(ast::get_loc(expr.index->node), "Array index must be an i64.");
+    if (index_type_res &&
+        (!types::is_primitive(index_type_res.value()) ||
+         !types::is_integer_primitive(types::get_primitive_kind(index_type_res.value()))))
+        type_error(ast::get_loc(expr.index->node), "Array index must be an integer.");
 
     const auto &array_type = std::get<mem::rc_ptr<types::Array_type>>(array_type_res.value());
     return expr.type = array_type->element_type;
@@ -2765,8 +2780,10 @@ Result<types::Type> Type_checker::check_expr_node(ast::Array_assignment_expr &ex
     }
 
     auto index_type_res = check_expr(*expr.index);
-    if (index_type_res && index_type_res.value() != types::Type(types::Primitive_kind::I64))
-        type_error(ast::get_loc(expr.index->node), "Array index must be an i64.");
+    if (index_type_res &&
+        (!types::is_primitive(index_type_res.value()) ||
+         !types::is_integer_primitive(types::get_primitive_kind(index_type_res.value()))))
+        type_error(ast::get_loc(expr.index->node), "Array index must be an integer.");
 
     const auto &array_type = std::get<mem::rc_ptr<types::Array_type>>(array_type_res.value());
 
@@ -2875,12 +2892,28 @@ Result<types::Type> Type_checker::check_expr_node(ast::Range_expr &expr, std::op
     (void)context_type;
     auto start_res = check_expr(*expr.start);
     auto end_res = check_expr(*expr.end);
-    if (start_res && start_res.value() != types::Type(types::Primitive_kind::I64))
-        type_error(expr.loc, "Range start must be an i64.");
-    if (end_res && end_res.value() != types::Type(types::Primitive_kind::I64))
-        type_error(expr.loc, "Range end must be an i64.");
+    if (start_res &&
+        (!types::is_primitive(start_res.value()) || !types::is_integer_primitive(types::get_primitive_kind(start_res.value()))))
+        type_error(expr.loc, "Range start must be an integer.");
+    if (end_res &&
+        (!types::is_primitive(end_res.value()) || !types::is_integer_primitive(types::get_primitive_kind(end_res.value()))))
+        type_error(expr.loc, "Range end must be an integer.");
 
-    return expr.type = types::Type(mem::make_rc<types::Iterator_type>(types::Type(types::Primitive_kind::I64)));
+    types::Type element_type = types::Primitive_kind::I64;
+    if (start_res && end_res &&
+        types::is_primitive(start_res.value()) && types::is_primitive(end_res.value()) &&
+        types::is_integer_primitive(types::get_primitive_kind(start_res.value())) &&
+        types::is_integer_primitive(types::get_primitive_kind(end_res.value())))
+    {
+        element_type = promote_numeric_type(start_res.value(), end_res.value());
+        if (element_type == types::Type(types::Primitive_kind::Any))
+        {
+            type_error(expr.loc, "Mixed signed and unsigned range bounds require an explicit cast.");
+            element_type = types::Primitive_kind::I64;
+        }
+    }
+
+    return expr.type = types::Type(mem::make_rc<types::Iterator_type>(element_type));
 }
 
 Result<types::Type> Type_checker::check_expr_node(ast::Spawn_expr &expr, std::optional<types::Type> context_type)

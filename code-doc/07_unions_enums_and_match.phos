@@ -1,0 +1,80 @@
+// 07_unions_enums_and_match.phos
+//
+// This file covers unions, enums, match, wildcard arms, payload binding,
+// implicit enum members, and contextual anonymous literals.
+
+// Unions are tagged values with named variants.
+union Reply {
+    Ok: string;
+    Error: string;
+}
+
+// Enums can use the default integer base type...
+enum Mode {
+    Off,
+    On,
+}
+
+// ...or an explicit integer or string base type.
+enum HttpCode: u16 {
+    Ok = 200,
+    Missing = 404,
+}
+
+enum HttpVerb: string {
+    Get = "GET",
+    Post = "POST",
+}
+
+// Union construction through Type::Variant(payload).
+let ok_reply := Reply::Ok("done");
+let error_reply := Reply::Error("try again");
+
+// Contextual anonymous literals work too.
+let contextual_reply: Reply = .{ Ok: "from context" };
+
+// Match can destructure a union payload into a local name.
+match ok_reply {
+    Reply::Ok(message) => {
+        print("ok: " + message);
+    },
+    Reply::Error(problem) => {
+        print("error: " + problem);
+    },
+}
+
+match error_reply {
+    Reply::Ok(message) => {
+        print(message);
+    },
+    Reply::Error(problem) => {
+        print("problem: " + problem);
+    },
+}
+
+// Enum access can be explicit...
+let code_ok := HttpCode::Ok;
+let verb_post := HttpVerb::Post;
+
+// ...or implicit when the surrounding context already says which enum you mean.
+let current_mode: Mode? = .On;
+let recent_modes: Mode?[] = [.Off, nil, .On];
+
+print("code_ok = ", code_ok, sep = "");
+print("verb_post = ", verb_post, sep = "");
+print(current_mode);
+print(recent_modes);
+
+match (Mode::Off) {
+    Mode::On => {
+        print("enabled");
+    },
+    Mode::Off => {
+        print("disabled");
+    },
+    _ => {
+        print("unknown mode");
+    },
+}
+
+print(contextual_reply);

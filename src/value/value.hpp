@@ -8,16 +8,12 @@
 #include <utility>
 #include <optional>
 #include <type_traits>
+#if __has_include(<stdfloat>)
+#include <stdfloat>
+#endif
 
 #include "../memory/ref_counted.hpp"
 #include "type.hpp"
-
-#ifndef __STDCPP_FLOAT16_T__
-namespace std {
-using float16_t = _Float16;
-}
-#endif
-
 
 // --- Forward Declarations ---
 namespace phos::vm
@@ -26,6 +22,29 @@ namespace phos::vm
     class Virtual_machine;
     struct Call_frame;
 }  // namespace phos::vm
+
+namespace phos::numeric
+{
+#if defined(__STDCPP_FLOAT16_T__)
+using float16_t = std::float16_t;
+inline constexpr bool has_native_float16 = true;
+#elif defined(__FLT16_MANT_DIG__)
+using float16_t = _Float16;
+inline constexpr bool has_native_float16 = true;
+#else
+struct float16_t
+{
+    float value = 0.0f;
+
+    constexpr float16_t() = default;
+    constexpr float16_t(float v) : value(v) {}
+    constexpr float16_t(double v) : value(static_cast<float>(v)) {}
+    constexpr operator float() const { return value; }
+    auto operator<=>(const float16_t &) const = default;
+};
+inline constexpr bool has_native_float16 = false;
+#endif
+}
 
 namespace phos
 {
@@ -50,7 +69,7 @@ using Value = std::variant<
     std::uint16_t,
     std::uint32_t,
     std::uint64_t,
-    std::float16_t,
+    numeric::float16_t,
     float,
     double,
     bool,
@@ -213,6 +232,8 @@ bool get_bool(const Value &val);
 std::int64_t get_int(const Value &val);
 std::uint64_t get_uint(const Value &val);
 double get_float(const Value &val);
+std::optional<std::int64_t> try_get_i64(const Value &val);
+std::optional<std::uint64_t> try_get_u64(const Value &val);
 std::string get_string(const Value &val);
 mem::rc_ptr<Array_value> get_array(const Value &val);
 mem::rc_ptr<Model_value> get_model(const Value &val);
@@ -228,7 +249,7 @@ template <typename T>
 inline constexpr bool is_numeric_cpp_v =
 std::is_same_v<T, std::int8_t> || std::is_same_v<T, std::int16_t> || std::is_same_v<T, std::int32_t> || std::is_same_v<T, std::int64_t> ||
 std::is_same_v<T, std::uint8_t> || std::is_same_v<T, std::uint16_t> || std::is_same_v<T, std::uint32_t> || std::is_same_v<T, std::uint64_t> ||
-std::is_same_v<T, std::float16_t> || std::is_same_v<T, float> || std::is_same_v<T, double>;
+std::is_same_v<T, numeric::float16_t> || std::is_same_v<T, float> || std::is_same_v<T, double>;
 
 template <typename T>
 inline constexpr bool is_integer_cpp_v =
@@ -244,7 +265,22 @@ inline constexpr bool is_unsigned_integer_cpp_v =
 std::is_same_v<T, std::uint8_t> || std::is_same_v<T, std::uint16_t> || std::is_same_v<T, std::uint32_t> || std::is_same_v<T, std::uint64_t>;
 
 template <typename T>
-inline constexpr bool is_float_cpp_v = std::is_same_v<T, std::float16_t> || std::is_same_v<T, float> || std::is_same_v<T, double>;
+inline constexpr bool is_float_cpp_v = std::is_same_v<T, numeric::float16_t> || std::is_same_v<T, float> || std::is_same_v<T, double>;
+
+template <typename T>
+inline constexpr types::Primitive_kind primitive_kind_for_cpp_numeric_v =
+std::is_same_v<T, std::int8_t>    ? types::Primitive_kind::I8  :
+std::is_same_v<T, std::int16_t>   ? types::Primitive_kind::I16 :
+std::is_same_v<T, std::int32_t>   ? types::Primitive_kind::I32 :
+std::is_same_v<T, std::int64_t>   ? types::Primitive_kind::I64 :
+std::is_same_v<T, std::uint8_t>   ? types::Primitive_kind::U8  :
+std::is_same_v<T, std::uint16_t>  ? types::Primitive_kind::U16 :
+std::is_same_v<T, std::uint32_t>  ? types::Primitive_kind::U32 :
+std::is_same_v<T, std::uint64_t>  ? types::Primitive_kind::U64 :
+std::is_same_v<T, numeric::float16_t> ? types::Primitive_kind::F16 :
+std::is_same_v<T, float>          ? types::Primitive_kind::F32 :
+std::is_same_v<T, double>         ? types::Primitive_kind::F64 :
+types::Primitive_kind::Any;
 
 // ============================================================================
 // Utility

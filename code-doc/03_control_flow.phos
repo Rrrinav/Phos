@@ -1,0 +1,41 @@
+// 03_control_flow.phos
+//
+// This file shows the statement-level control-flow forms that are available
+// today: blocks, if/else, while, C-style for, and for-in.
+
+let weather := "sunny";
+
+if (weather == "sunny") {
+    print("go outside");
+} else if (weather == "rainy") {
+    print("bring an umbrella");
+} else {
+    print("check again later");
+}
+
+// while loops are useful when you control the loop with a mutable variable.
+let mut countdown: i64 = 3;
+while (countdown > 0) {
+    print("countdown = ", countdown, sep = "");
+    countdown = countdown - 1;
+}
+
+// C-style for loops have initializer; condition; increment.
+let mut running_total: i64 = 0;
+for (let mut i: i64 = 1; i <= 5; i = i + 1) {
+    running_total = running_total + i;
+}
+print("running_total = ", running_total, sep = "");
+
+// for-in loops iterate over iterable values.
+let letters := ["P", "h", "o", "s"];
+for letter in letters {
+    print(letter, end = " ");
+}
+print();
+
+// Braces create a block scope.
+{
+    let scoped_message := "this name only exists inside the block";
+    print(scoped_message);
+}

@@ -1,0 +1,64 @@
+// 02_numbers_and_operators.phos
+//
+// This file focuses on numeric types, numeric literal suffixes, operators,
+// comparisons, bitwise operations, and explicit numeric casts.
+
+// Phos now has real numeric types all the way through the language:
+let a_i8: i8 = 12;
+let b_i16: i16 = 300;
+let c_i32: i32 = 90000;
+let d_i64: i64 = 9000000;
+
+let a_u8: u8 = 7;
+let b_u16: u16 = 1024;
+let c_u32: u32 = 65535;
+let d_u64: u64 = 4000000;
+
+let a_f16: f16 = 1.5f16;
+let b_f32: f32 = 2.25f32;
+let c_f64: f64 = 3.75f64;
+
+// Literal suffixes let you pin the exact numeric kind at the source site.
+let one_byte := 1i8;
+let port := 8080u16;
+let temperature := 21.5f32;
+let precise := 0.125f64;
+
+// Arithmetic keeps the real type. Cast when widths differ.
+let sum_i16: i16 = (a_i8 as i16) + b_i16;
+let product_i32: i32 = 12i32 * 8i32;
+let quotient_f64: f64 = 7.0f64 / 2.0f64;
+let remainder_i64: i64 = 17i64 % 5i64;
+
+// Unary operators: numeric negation, logical not, and bitwise not.
+let negated: i32 = -12i32;
+let truthy := !false;
+let inverted_bits: u8 = ~0u8;
+
+// Comparison operators produce bool.
+let is_equal := 4i32 == 4i32;
+let is_less := 3i32 < 10i32;
+let is_greater_or_equal := 8u16 >= 8u16;
+
+// Logical operators work on bool.
+let all_good := (is_equal && truthy) || false;
+
+// Bitwise operators work on integer types.
+let bit_and: u8 = 0b1111u8 & 0b0101u8;
+let bit_or: u8 = 0b1000u8 | 0b0011u8;
+let bit_xor: u8 = 0b1111u8 ^ 0b0011u8;
+let shifted_left: u16 = 1u16 << 3u16;
+let shifted_right: u16 = 16u16 >> 2u16;
+
+// Mixed signed and unsigned arithmetic is not silently invented for you.
+// Use an explicit cast when you want to cross signedness or width boundaries.
+let mixed_ok: i16 = (a_u8 as i16) + 5i16;
+
+print("sum_i16 = ", sum_i16, sep = "");
+print("product_i32 = ", product_i32, sep = "");
+print("quotient_f64 = ", quotient_f64, sep = "");
+print("remainder_i64 = ", remainder_i64, sep = "");
+print("all_good = ", all_good, sep = "");
+print("bit_and = ", bit_and, " bit_or = ", bit_or, " bit_xor = ", bit_xor, sep = "");
+print("shifted_left = ", shifted_left, " shifted_right = ", shifted_right, sep = "");
+print("f16/f32/f64 samples = ", a_f16, ", ", b_f32, ", ", c_f64, sep = "");

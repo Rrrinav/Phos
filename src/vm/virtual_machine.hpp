@@ -87,15 +87,17 @@ namespace ffi
 // Stack Extraction Traits (For the VM Execution)
 template <typename T>
 struct extract;
-template <>
-struct extract<int64_t>
+template <typename T>
+    requires phos::is_numeric_cpp_v<T>
+struct extract<T>
 {
-    static int64_t get(const Value &v) { return phos::get_int(v); }
-};
-template <>
-struct extract<double>
-{
-    static double get(const Value &v) { return phos::get_float(v); }
+    static T get(const Value &v)
+    {
+        auto casted = phos::cast_numeric_value(v, phos::primitive_kind_for_cpp_numeric_v<T>);
+        if (!casted)
+            throw std::bad_variant_access();
+        return std::get<T>(casted.value());
+    }
 };
 template <>
 struct extract<std::string>
