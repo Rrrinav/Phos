@@ -1,20 +1,19 @@
 #pragma once
 
-#include <string>
-#include <vector>
-#include <unordered_map>
-#include <unordered_set>
-#include <optional>
-#include <utility>
-
-#include "../parser/ast.hpp"
 #include "../error/err.hpp"
 #include "../error/result.hpp"
+#include "../parser/ast.hpp"
 #include "../value/type.hpp"
 #include "../value/value.hpp"
 
-namespace phos
-{
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
+namespace phos {
 
 class Type_checker;
 
@@ -22,7 +21,8 @@ class Type_checker;
 class TypeResolver
 {
 public:
-    TypeResolver(Type_checker &checker) : checker(checker) {}
+    TypeResolver(Type_checker &checker) : checker(checker)
+    {}
     void resolve(std::vector<ast::Stmt *> &statements);
 
 private:
@@ -33,8 +33,7 @@ private:
 
     template <typename T>
     void visit(T &node)
-    {
-    }  // Default visitor
+    {} // Default visitor
     void visit(ast::Function_stmt &stmt);
     void visit(ast::Model_stmt &stmt);
     void visit(ast::Union_stmt &stmt);
@@ -84,8 +83,8 @@ public:
     // --- FFI SIGNATURE REGISTRY ---
     struct Native_param
     {
-        std::string          name;
-        std::string          type;
+        std::string name;
+        std::string type;
         std::optional<Value> default_value;
     };
 
@@ -110,7 +109,10 @@ public:
         native_signatures[name].push_back({params, ret});
     }
 
-    void type_error(const ast::Source_location &loc, const std::string &message) { errors.push_back({message, this->phase, loc.l, loc.c}); }
+    void type_error(const ast::Source_location &loc, const std::string &message)
+    {
+        errors.push_back({message, this->phase, loc.l, loc.c});
+    }
 
     std::vector<err::msg> check(std::vector<ast::Stmt *> &statements);
 
@@ -190,14 +192,16 @@ public:
         bool ok = false;
     };
 
-    Bound_call_arguments bind_call_arguments(const std::vector<ast::Function_param> &parameters,
-                                             const std::vector<ast::Call_argument> &arguments,
-                                             const ast::Source_location &call_loc,
-                                             const std::string &call_kind,
-                                             const std::string &call_name);
-    Bound_native_arguments try_bind_native_arguments(const std::vector<Native_param> &parameters,
-                                                     const std::vector<ast::Call_argument> &arguments,
-                                                     std::optional<types::Type> receiver_type = std::nullopt);
+    Bound_call_arguments bind_call_arguments(
+        const std::vector<ast::Function_param> &parameters,
+        const std::vector<ast::Call_argument> &arguments,
+        const ast::Source_location &call_loc,
+        const std::string &call_kind,
+        const std::string &call_name);
+    Bound_native_arguments try_bind_native_arguments(
+        const std::vector<Native_param> &parameters,
+        const std::vector<ast::Call_argument> &arguments,
+        std::optional<types::Type> receiver_type = std::nullopt);
     bool is_optional(const types::Type &type) const;
     bool is_iterator_protocol_type(const types::Type &type) const;
     types::Type iterator_element_type(const types::Type &type) const;
@@ -248,4 +252,4 @@ public:
     Result<types::Type> check_expr_node(ast::Fstring_expr &expr, std::optional<types::Type> context_type);
     Result<types::Type> check_expr_node(ast::Anon_model_literal_expr &expr, std::optional<types::Type> context_type);
 };
-}  // namespace phos
+} // namespace phos

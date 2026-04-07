@@ -1,8 +1,8 @@
-#include <unordered_map>
 #include "utility.hpp"
 
-namespace phos::util
-{
+#include <unordered_map>
+
+namespace phos::util {
 
 std::string operator_token_to_string(phos::lex::TokenType type)
 {
@@ -20,11 +20,8 @@ std::string operator_token_to_string(phos::lex::TokenType type)
         {phos::lex::TokenType::GreaterEqual, ">="},
         {phos::lex::TokenType::LogicalAnd, "&&"},
         {phos::lex::TokenType::LogicalOr, "||"},
-        {phos::lex::TokenType::LogicalNot, "!"}
-    };
+        {phos::lex::TokenType::LogicalNot, "!"}};
     auto it = token_names.find(type);
     return it != token_names.end() ? it->second : "unknown_operator";
 }
 } // namespace phos::util
-
-

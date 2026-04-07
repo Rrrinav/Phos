@@ -1,15 +1,15 @@
 #pragma once
 
-#include <vector>
-#include <string>
-#include "../parser/ast.hpp"
-#include "chunk.hpp"
 #include "../error/result.hpp"
-#include "../value/value.hpp"
+#include "../parser/ast.hpp"
 #include "../type-checker/type-checker.hpp"
+#include "../value/value.hpp"
+#include "chunk.hpp"
 
-namespace phos::vm
-{
+#include <string>
+#include <vector>
+
+namespace phos::vm {
 
 struct Local
 {
@@ -35,7 +35,8 @@ struct Compiler_state
 class Compiler
 {
 public:
-    explicit Compiler(const phos::Type_checker *checker = nullptr) : type_checker(checker) {}
+    explicit Compiler(const phos::Type_checker *checker = nullptr) : type_checker(checker)
+    {}
 
     // The compiler now returns a fully constructed Script function!
     Result<mem::rc_ptr<Closure_value>> compile(const std::vector<ast::Stmt *> &statements);
@@ -43,8 +44,14 @@ public:
     const phos::Type_checker *type_checker = nullptr;
 
     // --- State Accessors ---
-    Compiler_state *current() { return &states.back(); }
-    Chunk *current_chunk() { return current()->closure->chunk.get(); }
+    Compiler_state *current()
+    {
+        return &states.back();
+    }
+    Chunk *current_chunk()
+    {
+        return current()->closure->chunk.get();
+    }
 
     // --- Scoping & Locals ---
     void begin_scope();
@@ -104,9 +111,9 @@ public:
     void patch_jump(size_t offset, phos::ast::Source_location loc);
     void emit_loop(size_t loop_start, phos::ast::Source_location loc);
 
-    int resolve_local_in_state(Compiler_state* state, const std::string &name);
-    int resolve_upvalue(Compiler_state* state, const std::string &name);
-    int add_upvalue(Compiler_state* state, uint8_t index, bool is_local);
+    int resolve_local_in_state(Compiler_state *state, const std::string &name);
+    int resolve_upvalue(Compiler_state *state, const std::string &name);
+    int add_upvalue(Compiler_state *state, uint8_t index, bool is_local);
 };
 
-}  // namespace phos::vm
+} // namespace phos::vm

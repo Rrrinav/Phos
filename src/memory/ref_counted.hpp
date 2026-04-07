@@ -1,11 +1,10 @@
 #pragma once
 
+#include <cassert>
 #include <cstddef>
 #include <utility>
-#include <cassert>
 
-namespace phos::mem
-{
+namespace phos::mem {
 
 template <typename T>
 class rc_ptr
@@ -14,10 +13,12 @@ class rc_ptr
     {
         T *ptr;
         std::size_t ref_count;
-        void (*deleter)(T*);   // function pointer to delete logic
+        void (*deleter)(T *); // function pointer to delete logic
 
-        explicit __control_block_t__(T *p) : __control_block_t__(p, [](T *q) { delete q; }) {}
-        explicit __control_block_t__(T *p, void (*d)(T *)) : ptr(p), ref_count(1), deleter(d) {}
+        explicit __control_block_t__(T *p) : __control_block_t__(p, [](T *q) { delete q; })
+        {}
+        explicit __control_block_t__(T *p, void (*d)(T *)) : ptr(p), ref_count(1), deleter(d)
+        {}
 
         ~__control_block_t__()
         {
@@ -30,9 +31,12 @@ class rc_ptr
 
 public:
     // Constructors
-    rc_ptr() : ctrl(nullptr) {}
-    explicit rc_ptr(T* raw) : ctrl(raw ? new __control_block_t__(raw, [](T* p){ delete p; }) : nullptr) {}
-    rc_ptr(std::nullptr_t) noexcept : ctrl(nullptr) {}
+    rc_ptr() : ctrl(nullptr)
+    {}
+    explicit rc_ptr(T *raw) : ctrl(raw ? new __control_block_t__(raw, [](T *p) { delete p; }) : nullptr)
+    {}
+    rc_ptr(std::nullptr_t) noexcept : ctrl(nullptr)
+    {}
 
     rc_ptr(const rc_ptr &other) noexcept : ctrl(other.ctrl)
     {
@@ -40,13 +44,15 @@ public:
             ++ctrl->ref_count;
     }
 
-    rc_ptr(rc_ptr &&other) noexcept : ctrl(other.ctrl) { other.ctrl = nullptr; }
+    rc_ptr(rc_ptr &&other) noexcept : ctrl(other.ctrl)
+    {
+        other.ctrl = nullptr;
+    }
 
     // Assignment
     rc_ptr &operator=(const rc_ptr &other) noexcept
     {
-        if (this != &other)
-        {
+        if (this != &other) {
             release();
             ctrl = other.ctrl;
             if (ctrl)
@@ -57,8 +63,7 @@ public:
 
     rc_ptr &operator=(rc_ptr &&other) noexcept
     {
-        if (this != &other)
-        {
+        if (this != &other) {
             release();
             ctrl = other.ctrl;
             other.ctrl = nullptr;
@@ -67,10 +72,16 @@ public:
     }
 
     // Destructor
-    ~rc_ptr() { release(); }
+    ~rc_ptr()
+    {
+        release();
+    }
 
     // Access
-    T *get() const noexcept { return ctrl ? ctrl->ptr : nullptr; }
+    T *get() const noexcept
+    {
+        return ctrl ? ctrl->ptr : nullptr;
+    }
     T &operator*() const noexcept
     {
         assert(get());
@@ -81,20 +92,30 @@ public:
         assert(get());
         return get();
     }
-    auto operator<=>(const rc_ptr&) const = default;
+    auto operator<=>(const rc_ptr &) const = default;
 
     // Utility
-    std::size_t use_count() const noexcept { return ctrl ? ctrl->ref_count : 0; }
-    bool unique() const noexcept { return use_count() == 1; }
-    explicit operator bool() const noexcept { return get() != nullptr; }
-    bool operator==(std::nullptr_t) const noexcept { return get() == nullptr; }
+    std::size_t use_count() const noexcept
+    {
+        return ctrl ? ctrl->ref_count : 0;
+    }
+    bool unique() const noexcept
+    {
+        return use_count() == 1;
+    }
+    explicit operator bool() const noexcept
+    {
+        return get() != nullptr;
+    }
+    bool operator==(std::nullptr_t) const noexcept
+    {
+        return get() == nullptr;
+    }
 
     void reset(T *new_ptr = nullptr)
     {
-        if (ctrl)
-        {
-            if (--ctrl->ref_count == 0)
-            {
+        if (ctrl) {
+            if (--ctrl->ref_count == 0) {
                 ctrl->deleter(ctrl->ptr);
                 delete ctrl;
             }
@@ -108,8 +129,7 @@ public:
 private:
     void release()
     {
-        if (ctrl && --ctrl->ref_count == 0)
-        {
+        if (ctrl && --ctrl->ref_count == 0) {
             delete ctrl;
             ctrl = nullptr;
         }
@@ -121,13 +141,13 @@ class rc_ptr<T[]>
 {
     struct _control_block_
     {
-        T* ptr;
+        T *ptr;
         std::size_t ref_count;
         std::size_t sz;
-        void (*deleter)(T*);
+        void (*deleter)(T *);
 
-        explicit _control_block_(T* p, std::size_t n)
-            : ptr(p), ref_count(1), sz(n), deleter([](T* q){ delete[] q; }) {}
+        explicit _control_block_(T *p, std::size_t n) : ptr(p), ref_count(1), sz(n), deleter([](T *q) { delete[] q; })
+        {}
 
         ~_control_block_()
         {
@@ -136,37 +156,41 @@ class rc_ptr<T[]>
         }
     };
 
-    _control_block_* ctrl;
+    _control_block_ *ctrl;
 
 public:
     // Constructors
-    rc_ptr() : ctrl(nullptr) {}
-    rc_ptr(T* raw, std::size_t n) 
-        : ctrl(raw ? new _control_block_(raw, n) : nullptr) {}
+    rc_ptr() : ctrl(nullptr)
+    {}
+    rc_ptr(T *raw, std::size_t n) : ctrl(raw ? new _control_block_(raw, n) : nullptr)
+    {}
 
-    rc_ptr(const rc_ptr& other) noexcept : ctrl(other.ctrl)
+    rc_ptr(const rc_ptr &other) noexcept : ctrl(other.ctrl)
     {
-        if (ctrl) ++ctrl->ref_count;
+        if (ctrl)
+            ++ctrl->ref_count;
     }
 
-    rc_ptr(rc_ptr&& other) noexcept : ctrl(other.ctrl) { other.ctrl = nullptr; }
+    rc_ptr(rc_ptr &&other) noexcept : ctrl(other.ctrl)
+    {
+        other.ctrl = nullptr;
+    }
 
     // Assignment
-    rc_ptr& operator=(const rc_ptr& other) noexcept
+    rc_ptr &operator=(const rc_ptr &other) noexcept
     {
-        if (this != &other)
-        {
+        if (this != &other) {
             release();
             ctrl = other.ctrl;
-            if (ctrl) ++ctrl->ref_count;
+            if (ctrl)
+                ++ctrl->ref_count;
         }
         return *this;
     }
 
-    rc_ptr& operator=(rc_ptr&& other) noexcept
+    rc_ptr &operator=(rc_ptr &&other) noexcept
     {
-        if (this != &other)
-        {
+        if (this != &other) {
             release();
             ctrl = other.ctrl;
             other.ctrl = nullptr;
@@ -175,27 +199,44 @@ public:
     }
 
     // Destructor
-    ~rc_ptr() { release(); }
+    ~rc_ptr()
+    {
+        release();
+    }
 
     // Access
-    T* get() const noexcept { return ctrl ? ctrl->ptr : nullptr; }
-    T& operator[](std::size_t i) const
+    T *get() const noexcept
+    {
+        return ctrl ? ctrl->ptr : nullptr;
+    }
+    T &operator[](std::size_t i) const
     {
         assert(ctrl && i < ctrl->sz && "Out of bounds");
         return ctrl->ptr[i];
     }
 
-    std::size_t size() const noexcept { return ctrl ? ctrl->sz : 0; }
+    std::size_t size() const noexcept
+    {
+        return ctrl ? ctrl->sz : 0;
+    }
 
-    std::size_t use_count() const noexcept { return ctrl ? ctrl->ref_count : 0; }
-    bool unique() const noexcept { return use_count() == 1; }
-    explicit operator bool() const noexcept { return get() != nullptr; }
+    std::size_t use_count() const noexcept
+    {
+        return ctrl ? ctrl->ref_count : 0;
+    }
+    bool unique() const noexcept
+    {
+        return use_count() == 1;
+    }
+    explicit operator bool() const noexcept
+    {
+        return get() != nullptr;
+    }
 
 private:
     void release()
     {
-        if (ctrl && --ctrl->ref_count == 0)
-        {
+        if (ctrl && --ctrl->ref_count == 0) {
             delete ctrl;
             ctrl = nullptr;
         }
@@ -203,16 +244,18 @@ private:
 };
 
 template <typename T, typename... Args>
-requires (!std::is_array_v<T>)
-rc_ptr<T> make_rc(Args&&... args) {
+    requires(!std::is_array_v<T>)
+rc_ptr<T> make_rc(Args &&...args)
+{
     return rc_ptr<T>(new T(std::forward<Args>(args)...));
 }
 
 template <typename T>
-requires std::is_array_v<T>
-rc_ptr<T> make_rc(std::size_t n) {
+    requires std::is_array_v<T>
+rc_ptr<T> make_rc(std::size_t n)
+{
     using Element = std::remove_extent_t<T>;
     return rc_ptr<T>(new Element[n], n);
 }
 
-}  // namespace phos::mem
+} // namespace phos::mem

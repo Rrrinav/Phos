@@ -24,6 +24,12 @@ let port := 8080u16;
 let temperature := 21.5f32;
 let precise := 0.125f64;
 
+// Numeric prefixes and separators are supported too.
+let mask := 0xffu16;
+let bits := 0b1010_0101u16;
+let permissions := 0o755u16;
+let scientific := 1_234.5_6e+2;
+
 // Arithmetic keeps the real type. Cast when widths differ.
 let sum_i16: i16 = (a_i8 as i16) + b_i16;
 let product_i32: i32 = 12i32 * 8i32;
@@ -61,4 +67,6 @@ print("remainder_i64 = ", remainder_i64, sep = "");
 print("all_good = ", all_good, sep = "");
 print("bit_and = ", bit_and, " bit_or = ", bit_or, " bit_xor = ", bit_xor, sep = "");
 print("shifted_left = ", shifted_left, " shifted_right = ", shifted_right, sep = "");
+print("mask = ", mask, " bits = ", bits, " permissions = ", permissions, sep = "");
+print("scientific = ", scientific, sep = "");
 print("f16/f32/f64 samples = ", a_f16, ", ", b_f32, ", ", c_f64, sep = "");

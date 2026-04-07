@@ -1,15 +1,15 @@
 #pragma once
 
-#include <cstdint>
-#include <vector>
-#include <string>
-#include <iostream>
-#include "opcodes.hpp"
-#include "../value/value.hpp"
 #include "../parser/ast.hpp"
+#include "../value/value.hpp"
+#include "opcodes.hpp"
 
-namespace phos::vm
-{
+#include <cstdint>
+#include <iostream>
+#include <string>
+#include <vector>
+
+namespace phos::vm {
 
 struct Chunk
 {
@@ -29,7 +29,10 @@ struct Chunk
         locs.push_back(loc);
     }
 
-    void write(Op_code op, phos::ast::Source_location loc) { write(static_cast<uint8_t>(op), loc); }
+    void write(Op_code op, phos::ast::Source_location loc)
+    {
+        write(static_cast<uint8_t>(op), loc);
+    }
 
     size_t add_constant(Value value)
     {
@@ -50,4 +53,4 @@ private:
     size_t local_instruction(std::ostream &out, const std::string &name, size_t offset);
 };
 
-}  // namespace phos::vm
+} // namespace phos::vm

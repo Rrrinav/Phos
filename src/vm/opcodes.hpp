@@ -7,43 +7,85 @@ namespace phos::vm {
 
 enum class Op_code : uint8_t {
     // --- Constants & Basics ---
-    Constant, Nil, True, False, Pop,
+    Constant,
+    Nil,
+    True,
+    False,
+    Pop,
 
     // --- Locals & Globals ---
-    Get_local, Set_local, Get_global, Set_global, Define_global,
+    Get_local,
+    Set_local,
+    Get_global,
+    Set_global,
+    Define_global,
 
     // --- Upvalues (Closure Captures) ---
-    Get_upvalue, Set_upvalue,
+    Get_upvalue,
+    Set_upvalue,
 
     // --- Control Flow ---
-    Jump, Jump_if_false, Jump_if_true, Loop,
+    Jump,
+    Jump_if_false,
+    Jump_if_true,
+    Loop,
 
     // --- Optionals ---
-    Jump_if_nil, Unwrap,
+    Jump_if_nil,
+    Unwrap,
 
     // --- Arithmetic & Logic ---
-    Add, Subtract, Multiply, Divide, Modulo, Not, Negate, Equal, Not_equal,
-    Greater, Greater_equal, Less, Less_equal,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Modulo,
+    Not,
+    Negate,
+    Equal,
+    Not_equal,
+    Greater,
+    Greater_equal,
+    Less,
+    Less_equal,
 
     // --- Bitwise ---
-    BitAnd, BitOr, BitXor, BitNot, BitLShift, BitRShift,
+    BitAnd,
+    BitOr,
+    BitXor,
+    BitNot,
+    BitLShift,
+    BitRShift,
 
     // --- Arrays & Models ---
-    Create_array, Get_index, Set_index,
-    Get_field, Set_field, Unpack, Construct_model, Cast,
+    Create_array,
+    Get_index,
+    Set_index,
+    Get_field,
+    Set_field,
+    Unpack,
+    Construct_model,
+    Cast,
 
     // --- Unions ---
     Construct_union,
     Match_variant,
 
     // --- Functions & Closures ---
-    Call, Tail_call, Return, Make_closure,
+    Call,
+    Tail_call,
+    Return,
+    Make_closure,
 
     // --- Green Threads ---
-    Spawn, Yield, Await,
+    Spawn,
+    Yield,
+    Await,
 
     // --- System ---
-    Print, Print_err, Halt
+    Print,
+    Print_err,
+    Halt
 };
 
 std::string op_code_to_string(Op_code code);

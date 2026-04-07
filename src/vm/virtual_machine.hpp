@@ -1,19 +1,18 @@
 #pragma once
 
-#include <string>
-#include <unordered_map>
-#include <iostream>
-#include <optional>
-#include <vector>
-#include <type_traits>
-
-#include "../value/value.hpp"
 #include "../error/result.hpp"
 #include "../parser/ast.hpp"
 #include "../type-checker/type-checker.hpp"
+#include "../value/value.hpp"
 
-namespace phos::vm
-{
+#include <iostream>
+#include <optional>
+#include <string>
+#include <type_traits>
+#include <unordered_map>
+#include <vector>
+
+namespace phos::vm {
 
 struct Call_frame
 {
@@ -33,11 +32,15 @@ class Virtual_machine
 public:
     std::string err{};
 
-    Virtual_machine(Vm_config config = {}) : config_(config) {}
+    Virtual_machine(Vm_config config = {}) : config_(config)
+    {}
 
     Result<void> interpret(mem::rc_ptr<Closure_value> script_closure);
 
-    void set_global(const std::string &name, Value val) { globals[name] = std::move(val); }
+    void set_global(const std::string &name, Value val)
+    {
+        globals[name] = std::move(val);
+    }
     std::optional<Value> get_global(const std::string &name) const
     {
         if (auto it = globals.find(name); it != globals.end())
@@ -51,7 +54,11 @@ public:
     template <auto Func>
     void bind_native(const std::string &name, const std::vector<std::string> &params, const std::string &ret, phos::Type_checker &tc);
     template <auto Func>
-    void bind_native_sig(const std::string &name, const std::vector<phos::Type_checker::Native_param> &params, const std::string &ret, phos::Type_checker &tc);
+    void bind_native_sig(
+        const std::string &name,
+        const std::vector<phos::Type_checker::Native_param> &params,
+        const std::string &ret,
+        phos::Type_checker &tc);
 
     Vm_config config_;
 
@@ -82,8 +89,7 @@ public:
 // ============================================================================
 // ZERO-OVERHEAD FFI ENGINE
 // ============================================================================
-namespace ffi
-{
+namespace ffi {
 // Stack Extraction Traits (For the VM Execution)
 template <typename T>
 struct extract;
@@ -102,32 +108,50 @@ struct extract<T>
 template <>
 struct extract<std::string>
 {
-    static std::string get(const Value &v) { return phos::get_string(v); }
+    static std::string get(const Value &v)
+    {
+        return phos::get_string(v);
+    }
 };
 template <>
 struct extract<bool>
 {
-    static bool get(const Value &v) { return phos::get_bool(v); }
+    static bool get(const Value &v)
+    {
+        return phos::get_bool(v);
+    }
 };
 template <>
 struct extract<mem::rc_ptr<Array_value>>
 {
-    static mem::rc_ptr<Array_value> get(const Value &v) { return phos::get_array(v); }
+    static mem::rc_ptr<Array_value> get(const Value &v)
+    {
+        return phos::get_array(v);
+    }
 };
 template <>
 struct extract<mem::rc_ptr<Model_value>>
 {
-    static mem::rc_ptr<Model_value> get(const Value &v) { return phos::get_model(v); }
+    static mem::rc_ptr<Model_value> get(const Value &v)
+    {
+        return phos::get_model(v);
+    }
 };
 template <>
 struct extract<mem::rc_ptr<Iterator_value>>
 {
-    static mem::rc_ptr<Iterator_value> get(const Value &v) { return phos::get_iterator(v); }
+    static mem::rc_ptr<Iterator_value> get(const Value &v)
+    {
+        return phos::get_iterator(v);
+    }
 };
 template <>
 struct extract<Value>
 {
-    static Value get(const Value &v) { return v; }
+    static Value get(const Value &v)
+    {
+        return v;
+    }
 };
 
 // The Compile-Time Thunk Generator
@@ -139,54 +163,48 @@ struct Thunk<Func>
 {
     static constexpr uint8_t arity = sizeof...(Args);
 
-    static Value call(Virtual_machine *vm, uint8_t arg_count) { return call_impl(vm, std::make_index_sequence<arity>{}); }
+    static Value call(Virtual_machine *vm, uint8_t arg_count)
+    {
+        return call_impl(vm, std::make_index_sequence<arity>{});
+    }
 
 private:
     template <size_t... Is>
     static Value call_impl(Virtual_machine *vm, std::index_sequence<Is...>)
     {
-        if constexpr (std::is_void_v<R>)
-        {
+        if constexpr (std::is_void_v<R>) {
             Func(extract<std::decay_t<Args>>::get(vm->peek(arity - 1 - Is))...);
             return Value(nullptr);
-        }
-        else
-        {
+        } else {
             return Value(Func(extract<std::decay_t<Args>>::get(vm->peek(arity - 1 - Is))...));
         }
     }
 };
-}  // namespace ffi
+} // namespace ffi
 
 template <auto Func>
-inline void Virtual_machine::bind_native(const std::string &name,
-                                         const std::vector<std::string> &params,
-                                         const std::string &ret,
-                                         phos::Type_checker &tc)
+inline void Virtual_machine::bind_native(
+    const std::string &name, const std::vector<std::string> &params, const std::string &ret, phos::Type_checker &tc)
 {
     // 1. Tell the Type Checker about the strict String Signatures!
     tc.define_native(name, params, ret);
 
     // 2. Tell the VM to run the C++ function!
     // We only need to define the runtime closure once, even if there are overloads.
-    if (!get_global(name))
-    {
-        types::Function_type dummy_sig;  // The VM doesn't care about static types at runtime!
+    if (!get_global(name)) {
+        types::Function_type dummy_sig; // The VM doesn't care about static types at runtime!
         auto native_closure = mem::make_rc<Closure_value>(name, ffi::Thunk<Func>::arity, dummy_sig, ffi::Thunk<Func>::call);
         set_global(name, Value(native_closure));
     }
 }
 
 template <auto Func>
-inline void Virtual_machine::bind_native_sig(const std::string &name,
-                                             const std::vector<phos::Type_checker::Native_param> &params,
-                                             const std::string &ret,
-                                             phos::Type_checker &tc)
+inline void Virtual_machine::bind_native_sig(
+    const std::string &name, const std::vector<phos::Type_checker::Native_param> &params, const std::string &ret, phos::Type_checker &tc)
 {
     tc.define_native(name, params, ret);
 
-    if (!get_global(name))
-    {
+    if (!get_global(name)) {
         types::Function_type dummy_sig;
         auto native_closure = mem::make_rc<Closure_value>(name, ffi::Thunk<Func>::arity, dummy_sig, ffi::Thunk<Func>::call);
         set_global(name, Value(native_closure));
@@ -216,4 +234,4 @@ Result<void> Virtual_machine::execute_unary_op(Op &&op, Call_frame *frame, uint8
     return {};
 }
 
-}  // namespace phos::vm
+} // namespace phos::vm

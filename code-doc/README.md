@@ -19,11 +19,11 @@ Suggested reading order:
 Coverage in this folder:
 
 - Variables, mutability, constants, and type annotations
-- Real numeric types: `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f16`, `f32`, `f64`
-- Operators, casts, arrays, strings, and optionals
+- Real numeric types: `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f16`, `f32`, `f64`, plus prefixed literals like `0xff`, `0b1010`, and `0o755`
+- Operators, casts, arrays, strings, optionals, and `u8[]` byte conversions via `as u8[]` / `bytes(...)`
 - `if`, `while`, C-style `for`, `for in`, and `match`
 - Functions, default arguments, named arguments, and closures
-- Models, `bind`, methods, static methods, `this`, and anonymous structural model types
-- Unions, enums, implicit enum members like `.Variant`, and contextual anonymous literals like `.{ ... }`
+- Models, defaulted members, `bind`, methods, static methods, `this`, and anonymous structural model types
+- Unions, enums, union literals like `Result{ Ok: "..." }`, contextual union match patterns like `.Ok(value)`, implicit enum members like `.Variant`, and contextual anonymous literals like `.{ Ok: "..." }`
 - Ranges, iterators, and core helpers such as `len`, `iter`, `clone`, `is_same`, `clock`, `sqrt`, `pow`, and `abs`
 - `print`, `print_err`, string interpolation, and the current experimental concurrency surface

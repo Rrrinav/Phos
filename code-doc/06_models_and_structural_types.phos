@@ -9,6 +9,13 @@ model Point {
     y: i64;
 }
 
+model Color {
+    r: u8 = 0xff;
+    g: u8 = 0xff;
+    b: u8 = 0xff;
+    a: u8 = 0xff;
+}
+
 // Methods are attached later with a bind block.
 bind Point {
     fn magnitude_squared() -> i64 {
@@ -29,6 +36,8 @@ bind Point {
 
 // Model literals can use named fields.
 let start := Point{x: 3, y: 4};
+let white := Color{};
+let accent := Color{r: 0x20, b: 0x80,};
 
 // They can also use positional fields in declaration order.
 let moved := start.translated(10, -2);
@@ -37,6 +46,8 @@ let zero := Point::origin();
 print("start.magnitude_squared() = ", start.magnitude_squared(), sep = "");
 print(moved);
 print(zero);
+print(white);
+print(accent);
 
 // Anonymous structural model types are written with "model { ... }".
 let inline_user: model {

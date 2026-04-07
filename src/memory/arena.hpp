@@ -1,11 +1,10 @@
 #ifndef ARENA_HPP_
 #define ARENA_HPP_
 #include <algorithm>
-#include <vector>
 #include <cstddef>
+#include <vector>
 
-namespace phos::mem
-{
+namespace phos::mem {
 class Arena
 {
     static constexpr std::size_t DEF_BLOCK_SIZE = 6 * 1024;
@@ -16,9 +15,15 @@ class Arena
         std::size_t size;
         std::size_t capacity;
 
-        _block(std::size_t sz) : size(0), capacity(sz) { data = new char[sz]; }
+        _block(std::size_t sz) : size(0), capacity(sz)
+        {
+            data = new char[sz];
+        }
 
-        ~_block() { delete[] data; }
+        ~_block()
+        {
+            delete[] data;
+        }
     };
 
     std::vector<_block *> blocks_;
@@ -32,22 +37,29 @@ class Arena
 public:
     ~Arena()
     {
-        for (auto &block : blocks_) delete block;
+        for (auto &block : blocks_)
+            delete block;
         blocks_.clear();
     }
 
-    Arena() { add_block(this->DEF_BLOCK_SIZE); }
+    Arena()
+    {
+        add_block(this->DEF_BLOCK_SIZE);
+    }
 
     Arena(const Arena &) = delete;
     Arena &operator=(const Arena &) = delete;
 
-    Arena(Arena &&other) noexcept : blocks_(std::move(other.blocks_)) { other.blocks_.clear(); }
+    Arena(Arena &&other) noexcept : blocks_(std::move(other.blocks_))
+    {
+        other.blocks_.clear();
+    }
 
     Arena &operator=(Arena &&other) noexcept
     {
-        if (this != &other)
-        {
-            for (auto *b : blocks_) delete b;
+        if (this != &other) {
+            for (auto *b : blocks_)
+                delete b;
             blocks_ = std::move(other.blocks_);
             other.blocks_.clear();
         }
@@ -61,8 +73,7 @@ public:
         std::size_t aligned = (bytes + alignof(T) - 1) & ~(alignof(T) - 1);
 
         _block *back = this->blocks_.back();
-        if (back->size + aligned > back->capacity)
-        {
+        if (back->size + aligned > back->capacity) {
             add_block(aligned);
             back = this->blocks_.back();
         }
@@ -81,7 +92,8 @@ public:
 
     void reset()
     {
-        for (auto *b : blocks_) b->size = 0;
+        for (auto *b : blocks_)
+            b->size = 0;
     }
 
     // Static method for creating objects with constructor arguments
@@ -93,7 +105,7 @@ public:
 
     // Static method for move/copy constructing from an existing object
     template <typename T>
-    static T *alloc(Arena &arena, T&& obj)
+    static T *alloc(Arena &arena, T &&obj)
     {
         T *mem = arena.allocate<T>();
         return new (mem) T(std::forward<T>(obj));
@@ -108,5 +120,5 @@ public:
     }
 };
 
-}  // namespace phos::mem
-#endif  // ARENA_HPP_
+} // namespace phos::mem
+#endif // ARENA_HPP_

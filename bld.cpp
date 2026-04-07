@@ -1,15 +1,15 @@
+#include <atomic>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <format>
-#include <print>
-#include <vector>
-#include <tuple>
-#include <string>
-#include <sstream>
-#include <atomic>
 #include <mutex>
+#include <print>
+#include <sstream>
+#include <string>
 #include <thread>
+#include <tuple>
+#include <vector>
 
 #define B_LDR_IMPLEMENTATION
 #define BLD_USE_CONFIG
@@ -76,12 +76,10 @@ static std::string string_diff(const std::string &got, const std::string &expect
     auto e = bld::str::chop_by_delimiter(expected, "\n");
     std::ostringstream out;
     size_t n = std::max(g.size(), e.size());
-    for (size_t i = 0; i < n; ++i)
-    {
+    for (size_t i = 0; i < n; ++i) {
         std::string gl = (i < g.size() ? g[i] : "<missing>");
         std::string el = (i < e.size() ? e[i] : "<missing>");
-        if (gl != el)
-        {
+        if (gl != el) {
             out << "  expected: " << el << "\n";
             out << "  got     : " << gl << "\n";
         }
@@ -91,11 +89,14 @@ static std::string string_diff(const std::string &got, const std::string &expect
 
 static void add_mode_flags(bld::Command &cmd, bool release)
 {
-    for (auto &f : COMMON_FLAGS) cmd.add_parts(f);
+    for (auto &f : COMMON_FLAGS)
+        cmd.add_parts(f);
     if (release)
-        for (auto &f : RELEASE_FLAGS) cmd.add_parts(f);
+        for (auto &f : RELEASE_FLAGS)
+            cmd.add_parts(f);
     else
-        for (auto &f : DEBUG_FLAGS) cmd.add_parts(f);
+        for (auto &f : DEBUG_FLAGS)
+            cmd.add_parts(f);
 }
 
 void build_interpreter(bool release = false, bool force = false)
@@ -110,36 +111,29 @@ void build_interpreter(bool release = false, bool force = false)
     std::vector<std::string> objs;
     std::vector<std::string> files_to_build;
 
-    for (auto &f : cpp_files)
-    {
+    for (auto &f : cpp_files) {
 
         std::string out_p = bld::fs::get_stem(bld::str::replace(f, SRC, BIN), true) + ".o";
         objs.push_back(out_p);
 
         bld::fs::create_dir_if_not_exists(path(out_p).parent_path().string());
 
-        if (force)
-        {
+        if (force) {
             files_to_build.push_back(f);
             continue;
         }
 
         bool needs = bld::is_executable_outdated(f, out_p);
 
-        if (!needs)
-        {
+        if (!needs) {
             // main.cpp: check all headers; others: check paired header only
-            if (f.find("main.cpp") != std::string::npos)
-            {
+            if (f.find("main.cpp") != std::string::npos) {
                 for (auto &h : hpp_files)
-                    if (bld::is_executable_outdated(h, out_p))
-                    {
+                    if (bld::is_executable_outdated(h, out_p)) {
                         needs = true;
                         break;
                     }
-            }
-            else
-            {
+            } else {
                 std::string hdr = bld::str::replace(f, ".cpp", ".hpp");
                 if (exists(hdr) && bld::is_executable_outdated(hdr, out_p))
                     needs = true;
@@ -150,12 +144,9 @@ void build_interpreter(bool release = false, bool force = false)
             files_to_build.push_back(f);
     }
 
-    if (files_to_build.empty())
-    {
+    if (files_to_build.empty()) {
         bld::log(bld::Log_type::INFO, "Nothing to rebuild.");
-    }
-    else
-    {
+    } else {
         bld::log(bld::Log_type::INFO, std::format("Compiling {} file(s) [{}] ...", files_to_build.size(), release ? "release" : "debug"));
 
         progress.init(files_to_build.size());
@@ -165,34 +156,28 @@ void build_interpreter(bool release = false, bool force = false)
         procs.reserve(files_to_build.size());
         labels.reserve(files_to_build.size());
 
-        for (auto &f : files_to_build)
-        {
+        for (auto &f : files_to_build) {
             std::string out_p = bld::fs::get_stem(bld::str::replace(f, SRC, BIN), true) + ".o";
 
             bld::Command cmd = {"g++", "-c", f, "-o", out_p};
             add_mode_flags(cmd, release);
 
             auto p = bld::execute_async(cmd);
-            if (p)
-            {
+            if (p) {
                 procs.push_back(p);
                 labels.push_back(bld::fs::get_file_name(f));
-            }
-            else
+            } else
                 bld::log(bld::Log_type::ERR, "Failed to start: " + f);
         }
 
         std::vector<bool> done(procs.size(), false);
         size_t remaining = procs.size();
-        while (remaining > 0)
-        {
-            for (size_t i = 0; i < procs.size(); ++i)
-            {
+        while (remaining > 0) {
+            for (size_t i = 0; i < procs.size(); ++i) {
                 if (done[i])
                     continue;
                 auto ws = bld::try_wait_nb(procs[i]);
-                if (ws.exited)
-                {
+                if (ws.exited) {
                     done[i] = true;
                     --remaining;
                     progress.tick(labels[i]);
@@ -208,11 +193,11 @@ void build_interpreter(bool release = false, bool force = false)
 
     bld::log(bld::Log_type::INFO, "Linking -> " + TARGET);
     bld::Command link_cmd = {"g++", "-o", TARGET};
-    for (auto &o : objs) link_cmd.add_parts(o);
+    for (auto &o : objs)
+        link_cmd.add_parts(o);
     add_mode_flags(link_cmd, release);
 
-    if (!bld::execute(link_cmd))
-    {
+    if (!bld::execute(link_cmd)) {
         bld::log(bld::Log_type::ERR, "Linking failed.");
         std::exit(EXIT_FAILURE);
     }
@@ -227,8 +212,7 @@ void build_custom_interpreter(bool release = false, bool force = false)
     bld::fs::create_dir_if_not_exists(BIN);
 
     std::string objs_val = cfg["objs"];
-    if (objs_val.empty())
-    {
+    if (objs_val.empty()) {
         bld::log(bld::Log_type::ERR, "No 'objs' list provided. Use -objs=file1.cpp,file2.cpp");
         std::exit(EXIT_FAILURE);
     }
@@ -239,9 +223,8 @@ void build_custom_interpreter(bool release = false, bool force = false)
     std::vector<bld::Proc> procs;
     std::vector<std::string> labels;
 
-    for (auto req : requested)
-    {
-        req = bld::str::trim(req);  // trim the local copy
+    for (auto req : requested) {
+        req = bld::str::trim(req); // trim the local copy
         std::string src_file = SRC + req;
         std::string out_p = bld::fs::get_stem(bld::str::replace(src_file, SRC, BIN), true) + ".o";
 
@@ -249,42 +232,35 @@ void build_custom_interpreter(bool release = false, bool force = false)
         objs_to_link.push_back(out_p);
 
         bool needs = force || bld::is_executable_outdated(src_file, out_p);
-        if (!needs)
-        {
+        if (!needs) {
             std::string hdr = bld::str::replace(src_file, ".cpp", ".hpp");
             if (exists(hdr) && bld::is_executable_outdated(hdr, out_p))
                 needs = true;
         }
 
-        if (needs)
-        {
+        if (needs) {
             bld::Command cmd = {"g++", "-c", src_file, "-o", out_p};
             add_mode_flags(cmd, release);
             auto p = bld::execute_async(cmd);
-            if (p)
-            {
+            if (p) {
                 procs.push_back(p);
                 labels.push_back(req);
             }
         }
     }
 
-    if (!procs.empty())
-    {
+    if (!procs.empty()) {
         bld::log(bld::Log_type::INFO, std::format("Compiling {} file(s) [custom, {}] ...", procs.size(), release ? "release" : "debug"));
         progress.init(procs.size());
 
         std::vector<bool> done(procs.size(), false);
         size_t remaining = procs.size();
-        while (remaining > 0)
-        {
-            for (size_t i = 0; i < procs.size(); ++i)
-            {
+        while (remaining > 0) {
+            for (size_t i = 0; i < procs.size(); ++i) {
                 if (done[i])
                     continue;
                 auto ws = bld::try_wait_nb(procs[i]);
-                if (ws.exited)
-                {
+                if (ws.exited) {
                     done[i] = true;
                     --remaining;
                     progress.tick(labels[i]);
@@ -300,11 +276,11 @@ void build_custom_interpreter(bool release = false, bool force = false)
 
     bld::log(bld::Log_type::INFO, "Linking -> " + TARGET);
     bld::Command link_cmd = {"g++", "-o", TARGET};
-    for (auto &o : objs_to_link) link_cmd.add_parts(o);
+    for (auto &o : objs_to_link)
+        link_cmd.add_parts(o);
     add_mode_flags(link_cmd, release);
 
-    if (!bld::execute(link_cmd))
-    {
+    if (!bld::execute(link_cmd)) {
         bld::log(bld::Log_type::ERR, "Custom linking failed.");
         std::exit(EXIT_FAILURE);
     }
@@ -316,8 +292,7 @@ std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::str
 {
     // cfg["test"] holds the directory value (e.g. -test=./tests)
     std::string dir = cfg["test"];
-    if (dir.empty())
-    {
+    if (dir.empty()) {
         bld::log(bld::Log_type::ERR, "Provide test directory with -test=<dir>");
         std::exit(EXIT_FAILURE);
     }
@@ -327,8 +302,7 @@ std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::str
 
     auto files = bld::fs::get_all_files_with_extensions(dir, {"phos"});
 
-    if (files.empty())
-    {
+    if (files.empty()) {
         bld::log(bld::Log_type::WARNING, "No .phos test files found in: " + dir);
         return {{}, {}};
     }
@@ -339,20 +313,17 @@ std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::str
     std::vector<std::pair<std::string, std::string>> failed;
     std::vector<std::string> passed;
 
-    for (auto &f : files)
-    {
+    for (auto &f : files) {
         std::string output{};
         bld::Command run_cmd = {TARGET, f};
-        if (!bld::read_process_output(run_cmd, output))
-        {
+        if (!bld::read_process_output(run_cmd, output)) {
             bld::log(bld::Log_type::ERR, "Failed to run interpreter on: " + f);
             std::exit(EXIT_FAILURE);
         }
 
         std::string expected_file = bld::fs::get_stem(f, true) + ".expected";
         std::string expected{};
-        if (!bld::fs::read_file(expected_file, expected))
-        {
+        if (!bld::fs::read_file(expected_file, expected)) {
             bld::log(bld::Log_type::ERR, "Missing expected output: " + expected_file);
             std::exit(EXIT_FAILURE);
         }
@@ -378,18 +349,22 @@ auto compile_custom(std::string ip, std::string op = "./new")
     bld::Command cmd;
     cmd.add_parts("g++", "-o", op, ip, "-Wall", "--std=c++23", "-lm", "-pthread", "-ggdb", "-O0");
 
-    bld::fs::walk_directory(BIN, [ip, op, &cmd] (bld::fs::Walk_fn_opt& opt) -> bool {
-        if (stdfs::is_directory(opt.path)) return true;
-        if (stdfs::equivalent(opt.path, "./bin/main.o")) return true;
-        if (stdfs::equivalent(opt.path, "./bin/phos")) return true;
-        if (stdfs::equivalent(opt.path, "./bin/new")) return true;
-        if (stdfs::equivalent(opt.path, op)) return true;
+    bld::fs::walk_directory(BIN, [ip, op, &cmd](bld::fs::Walk_fn_opt &opt) -> bool {
+        if (stdfs::is_directory(opt.path))
+            return true;
+        if (stdfs::equivalent(opt.path, "./bin/main.o"))
+            return true;
+        if (stdfs::equivalent(opt.path, "./bin/phos"))
+            return true;
+        if (stdfs::equivalent(opt.path, "./bin/new"))
+            return true;
+        if (stdfs::equivalent(opt.path, op))
+            return true;
         cmd.add_parts(opt.path.string());
         return true;
     });
 
-    if (!bld::execute(cmd))
-    {
+    if (!bld::execute(cmd)) {
         bld::fs::remove(op);
         return false;
     }
@@ -409,28 +384,22 @@ int main(int argc, char *argv[])
 
     bool release = static_cast<bool>(cfg["rel"]);
     bool force = static_cast<bool>(cfg["force"]);
-    if (cfg["clean"])
-    {
+    if (cfg["clean"]) {
         bld::log(bld::Log_type::INFO, "Cleaning " + BIN);
         bld::fs::remove_dir(BIN);
         bld::log(bld::Log_type::INFO, "Done.");
-    }
-    else if (!std::string(cfg["objs"]).empty())
-    {
+    } else if (!std::string(cfg["objs"]).empty()) {
         build_custom_interpreter(release, force);
-    }
-    else
-    {
+    } else {
         build_interpreter(release, force);
     }
 
-    if (cfg["compile"])
-    {
+    if (cfg["compile"]) {
         std::string file{""};
         if (cfg["o"])
             file = std::string(cfg["o"]);
         else
-            file =  "./bin/new";
+            file = "./bin/new";
 
         compile_custom(cfg["compile"], file);
         bld::log(bld::Log_type::INFO, "Build complete -> " + file);

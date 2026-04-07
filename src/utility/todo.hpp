@@ -1,13 +1,13 @@
 #pragma once
 
+#include <cstdlib>
+#include <format>
 #include <iostream>
+#include <ranges>
+#include <source_location>
 #include <string>
 #include <string_view>
 #include <vector>
-#include <format>
-#include <source_location>
-#include <ranges>
-#include <cstdlib>
 
 struct TodoEntry
 {
@@ -16,7 +16,10 @@ struct TodoEntry
     std::string function;
     int line;
 
-    std::string format() const { return std::format("[{}:{} in {}]\n    {}\n", file, line, function, message); }
+    std::string format() const
+    {
+        return std::format("[{}:{} in {}]\n    {}\n", file, line, function, message);
+    }
 };
 
 class TodoManager
@@ -30,15 +33,15 @@ public:
         std::source_location loc;
         bool fatal;
 
-        Proxy(TodoManager &m, bool f, std::source_location l = std::source_location::current()) : manager(m), loc(l), fatal(f) {}
+        Proxy(TodoManager &m, bool f, std::source_location l = std::source_location::current()) : manager(m), loc(l), fatal(f)
+        {}
 
         Proxy &operator<<(std::string_view msg)
         {
             TodoEntry entry{std::string(msg), loc.file_name(), loc.function_name(), static_cast<int>(loc.line())};
             manager.entries.push_back(entry);
 
-            if (fatal)
-            {
+            if (fatal) {
                 std::cerr << "TODO FATAL!\n" << entry.format();
                 std::abort();
             }
@@ -47,18 +50,21 @@ public:
         }
     };
 
-    Proxy operator()(bool fatal = false, std::source_location loc = std::source_location::current()) { return Proxy(*this, fatal, loc); }
+    Proxy operator()(bool fatal = false, std::source_location loc = std::source_location::current())
+    {
+        return Proxy(*this, fatal, loc);
+    }
 
     void report(std::ostream &os) const
     {
-        if (entries.empty())
-        {
+        if (entries.empty()) {
             os << "✅ No TODOs found!\n";
             return;
         }
         os << "📋 TODO Report (" << entries.size() << " items)\n";
         os << "---------------------------------\n";
-        for (auto const &e : entries | std::views::transform(&TodoEntry::format)) os << e;
+        for (auto const &e : entries | std::views::transform(&TodoEntry::format))
+            os << e;
     }
 };
 

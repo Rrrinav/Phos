@@ -1,8 +1,8 @@
 #pragma once
 
-#include <expected>
-
 #include "./err.hpp"
+
+#include <expected>
 
 namespace phos {
 

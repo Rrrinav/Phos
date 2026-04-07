@@ -1,12 +1,17 @@
 // 07_unions_enums_and_match.phos
 //
 // This file covers unions, enums, match, wildcard arms, payload binding,
-// implicit enum members, and contextual anonymous literals.
+// union literals, implicit enum members, and contextual anonymous literals.
 
 // Unions are tagged values with named variants.
 union Reply {
     Ok: string;
     Error: string;
+}
+
+union Greeting {
+    Casual: string = "hey";
+    Formal: string;
 }
 
 // Enums can use the default integer base type...
@@ -26,28 +31,30 @@ enum HttpVerb: string {
     Post = "POST",
 }
 
-// Union construction through Type::Variant(payload).
-let ok_reply := Reply::Ok("done");
-let error_reply := Reply::Error("try again");
+// Union construction prefers literal syntax.
+let ok_reply := Reply{ Ok: "done" };
+let error_reply := Reply{ Error: "try again" };
+let casual_greeting := Greeting{ Casual };
 
 // Contextual anonymous literals work too.
 let contextual_reply: Reply = .{ Ok: "from context" };
+let contextual_greeting: Greeting = .{ Casual };
 
-// Match can destructure a union payload into a local name.
+// Match can use contextual shorthand for union payload destructuring too.
 match ok_reply {
-    Reply::Ok(message) => {
+    .Ok(message) => {
         print("ok: " + message);
     },
-    Reply::Error(problem) => {
+    .Error(problem) => {
         print("error: " + problem);
     },
 }
 
 match error_reply {
-    Reply::Ok(message) => {
+    .Ok(message) => {
         print(message);
     },
-    Reply::Error(problem) => {
+    .Error(problem) => {
         print("problem: " + problem);
     },
 }
@@ -78,3 +85,5 @@ match (Mode::Off) {
 }
 
 print(contextual_reply);
+print(casual_greeting);
+print(contextual_greeting);

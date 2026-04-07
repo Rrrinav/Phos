@@ -1,18 +1,17 @@
 #pragma once
 
-#include <cstdlib>
+#include "../type-checker/type-checker.hpp"
+#include "virtual_machine.hpp"
+
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <print>
 #include <unordered_map>
 #include <utility>
 
-#include "virtual_machine.hpp"
-#include "../type-checker/type-checker.hpp"
-
-namespace phos::vm::core
-{
+namespace phos::vm::core {
 
 // --- Identity / Reference Equality ---
 inline bool core_is_same(Value a, Value b)
@@ -62,7 +61,7 @@ inline int64_t core_len(Value val)
         return static_cast<int64_t>(get_array(val)->elements.size());
     if (is_string(val))
         return static_cast<int64_t>(get_string(val).length());
-    return 0;  // Fallback for unsupported types
+    return 0; // Fallback for unsupported types
 }
 
 // --- Mutations (Methods) ---
@@ -86,7 +85,10 @@ inline bool string_starts_with(std::string str, std::string prefix)
     return str.starts_with(prefix);
 }
 
-inline bool string_ends_with(std::string str, std::string suffix) { return str.ends_with(suffix); }
+inline bool string_ends_with(std::string str, std::string suffix)
+{
+    return str.ends_with(suffix);
+}
 
 inline int64_t string_index_of(std::string str, std::string search)
 {
@@ -100,19 +102,17 @@ inline std::string string_repeat(std::string str, int64_t count)
         return "";
     std::string result;
     result.reserve(str.length() * count);
-    for (int64_t i = 0; i < count; ++i) result += str;
+    for (int64_t i = 0; i < count; ++i)
+        result += str;
     return result;
 }
 
 // Safely parse a string into an integer. Returns 'nil' if it fails!
 inline Value string_parse_int(std::string str)
 {
-    try
-    {
+    try {
         return Value(static_cast<int64_t>(std::stoll(str)));
-    }
-    catch (...)
-    {
+    } catch (...) {
         return Value(nullptr);
     }
 }
@@ -120,12 +120,9 @@ inline Value string_parse_int(std::string str)
 // Safely parse a string into a float. Returns 'nil' if it fails!
 inline Value string_parse_float(std::string str)
 {
-    try
-    {
+    try {
         return Value(std::stod(str));
-    }
-    catch (...)
-    {
+    } catch (...) {
         return Value(nullptr);
     }
 }
@@ -134,8 +131,7 @@ inline Value string_parse_float(std::string str)
 inline std::string array_join(mem::rc_ptr<Array_value> arr, std::string delimiter)
 {
     std::string result;
-    for (size_t i = 0; i < arr->elements.size(); ++i)
-    {
+    for (size_t i = 0; i < arr->elements.size(); ++i) {
         result += value_to_string(arr->elements[i]);
         if (i < arr->elements.size() - 1)
             result += delimiter;
@@ -147,16 +143,13 @@ inline Value string_split(std::string str, std::string delimiter)
 {
     std::vector<Value> elements;
 
-    if (delimiter.empty())
-    {
+    if (delimiter.empty()) {
         // Split into individual characters if delimiter is empty
-        for (char c : str) elements.push_back(Value(std::string(1, c)));
-    }
-    else
-    {
+        for (char c : str)
+            elements.push_back(Value(std::string(1, c)));
+    } else {
         size_t pos = 0;
-        while ((pos = str.find(delimiter)) != std::string::npos)
-        {
+        while ((pos = str.find(delimiter)) != std::string::npos) {
             elements.push_back(Value(str.substr(0, pos)));
             str.erase(0, pos + delimiter.length());
         }
@@ -172,10 +165,12 @@ inline Value string_split(std::string str, std::string delimiter)
 inline std::string string_trim(std::string str)
 {
     size_t start = 0;
-    while (start < str.size() && std::isspace(static_cast<unsigned char>(str[start]))) ++start;
+    while (start < str.size() && std::isspace(static_cast<unsigned char>(str[start])))
+        ++start;
 
     size_t end = str.size();
-    while (end > start && std::isspace(static_cast<unsigned char>(str[end - 1]))) --end;
+    while (end > start && std::isspace(static_cast<unsigned char>(str[end - 1])))
+        --end;
 
     return str.substr(start, end - start);
 }
@@ -183,7 +178,8 @@ inline std::string string_trim(std::string str)
 inline std::string string_trim_left(std::string str)
 {
     size_t start = 0;
-    while (start < str.size() && std::isspace(static_cast<unsigned char>(str[start]))) ++start;
+    while (start < str.size() && std::isspace(static_cast<unsigned char>(str[start])))
+        ++start;
 
     return str.substr(start);
 }
@@ -191,14 +187,24 @@ inline std::string string_trim_left(std::string str)
 inline std::string string_trim_right(std::string str)
 {
     size_t end = str.size();
-    while (end > 0 && std::isspace(static_cast<unsigned char>(str[end - 1]))) --end;
+    while (end > 0 && std::isspace(static_cast<unsigned char>(str[end - 1])))
+        --end;
 
     return str.substr(0, end);
 }
 
-inline double math_sqrt(double x) { return std::sqrt(x); }
-inline double math_pow(double base, double exp) { return std::pow(base, exp); }
-inline double math_abs(double x) { return std::abs(x); }
+inline double math_sqrt(double x)
+{
+    return std::sqrt(x);
+}
+inline double math_pow(double base, double exp)
+{
+    return std::pow(base, exp);
+}
+inline double math_abs(double x)
+{
+    return std::abs(x);
+}
 
 inline Value core_to_i64(std::string str)
 {
@@ -208,7 +214,7 @@ inline Value core_to_i64(std::string str)
     if (ec == std::errc())
         return Value(result);
 
-    return Value(nullptr);  // Return Phos 'nil' if parsing fails!
+    return Value(nullptr); // Return Phos 'nil' if parsing fails!
 }
 
 inline Value core_to_f64(std::string str)
@@ -238,8 +244,7 @@ inline Value core_bytes(Value value)
     auto byte_array_type = types::Type(mem::make_rc<types::Array_type>(types::Primitive_kind::U8));
     std::vector<Value> elements;
 
-    if (is_string(value))
-    {
+    if (is_string(value)) {
         const auto &str = get_string(value);
         elements.reserve(str.size());
         for (unsigned char c : str)
@@ -247,15 +252,12 @@ inline Value core_bytes(Value value)
         return Value(mem::make_rc<Array_value>(byte_array_type, std::move(elements)));
     }
 
-    if (is_array(value))
-    {
+    if (is_array(value)) {
         auto arr = get_array(value);
         elements.reserve(arr->elements.size());
 
-        for (const auto &elem : arr->elements)
-        {
-            if (is_bool(elem))
-            {
+        for (const auto &elem : arr->elements) {
+            if (is_bool(elem)) {
                 elements.push_back(Value(static_cast<std::uint8_t>(get_bool(elem) ? 1 : 0)));
                 continue;
             }
@@ -281,8 +283,7 @@ inline std::vector<size_t> utf8_boundaries(const std::string &str)
     boundaries.push_back(0);
 
     size_t i = 0;
-    while (i < str.size())
-    {
+    while (i < str.size()) {
         unsigned char byte = static_cast<unsigned char>(str[i]);
         size_t width = 1;
 
@@ -308,84 +309,62 @@ inline std::vector<size_t> utf8_boundaries(const std::string &str)
 inline int64_t iterator_length(const Iterator_value &iter)
 {
     return std::visit(
-    [](const auto &state) -> int64_t
-    {
-        using T = std::decay_t<decltype(state)>;
-        if constexpr (std::is_same_v<T, Iterator_value::Empty_state>)
-        {
+        [](const auto &state) -> int64_t {
+            using T = std::decay_t<decltype(state)>;
+            if constexpr (std::is_same_v<T, Iterator_value::Empty_state>) {
+                return 0;
+            } else if constexpr (std::is_same_v<T, Iterator_value::Singleton_state>) {
+                return 1;
+            } else if constexpr (std::is_same_v<T, Iterator_value::Interval_state>) {
+                if (state.start == state.end)
+                    return state.inclusive ? 1 : 0;
+
+                if (state.start < state.end)
+                    return state.inclusive ? (state.end - state.start + 1) : (state.end - state.start);
+
+                return state.inclusive ? (state.start - state.end + 1) : (state.start - state.end);
+            } else if constexpr (std::is_same_v<T, Iterator_value::Array_state>) {
+                return static_cast<int64_t>(state.array ? state.array->elements.size() : 0);
+            } else if constexpr (std::is_same_v<T, Iterator_value::String_state>) {
+                return state.boundaries.empty() ? 0 : static_cast<int64_t>(state.boundaries.size() - 1);
+            }
             return 0;
-        }
-        else if constexpr (std::is_same_v<T, Iterator_value::Singleton_state>)
-        {
-            return 1;
-        }
-        else if constexpr (std::is_same_v<T, Iterator_value::Interval_state>)
-        {
-            if (state.start == state.end)
-                return state.inclusive ? 1 : 0;
-
-            if (state.start < state.end)
-                return state.inclusive ? (state.end - state.start + 1) : (state.end - state.start);
-
-            return state.inclusive ? (state.start - state.end + 1) : (state.start - state.end);
-        }
-        else if constexpr (std::is_same_v<T, Iterator_value::Array_state>)
-        {
-            return static_cast<int64_t>(state.array ? state.array->elements.size() : 0);
-        }
-        else if constexpr (std::is_same_v<T, Iterator_value::String_state>)
-        {
-            return state.boundaries.empty() ? 0 : static_cast<int64_t>(state.boundaries.size() - 1);
-        }
-        return 0;
-    },
-    iter.source);
+        },
+        iter.source);
 }
 
 inline Value iterator_item_at(const Iterator_value &iter, int64_t index)
 {
     return std::visit(
-    [&](const auto &state) -> Value
-    {
-        using T = std::decay_t<decltype(state)>;
-        if constexpr (std::is_same_v<T, Iterator_value::Empty_state>)
-        {
-            return Value(nullptr);
-        }
-        else if constexpr (std::is_same_v<T, Iterator_value::Singleton_state>)
-        {
-            return index == 0 ? state.value : Value(nullptr);
-        }
-        else if constexpr (std::is_same_v<T, Iterator_value::Interval_state>)
-        {
-            const int64_t step = state.start <= state.end ? 1 : -1;
-            Value raw = Value(static_cast<std::int64_t>(state.start + (index * step)));
-            if (types::is_primitive(iter.element_type) &&
-                types::is_integer_primitive(types::get_primitive_kind(iter.element_type)))
-            {
-                auto casted = cast_numeric_value(raw, types::get_primitive_kind(iter.element_type));
-                if (casted)
-                    return casted.value();
+        [&](const auto &state) -> Value {
+            using T = std::decay_t<decltype(state)>;
+            if constexpr (std::is_same_v<T, Iterator_value::Empty_state>) {
+                return Value(nullptr);
+            } else if constexpr (std::is_same_v<T, Iterator_value::Singleton_state>) {
+                return index == 0 ? state.value : Value(nullptr);
+            } else if constexpr (std::is_same_v<T, Iterator_value::Interval_state>) {
+                const int64_t step = state.start <= state.end ? 1 : -1;
+                Value raw = Value(static_cast<std::int64_t>(state.start + (index * step)));
+                if (types::is_primitive(iter.element_type) && types::is_integer_primitive(types::get_primitive_kind(iter.element_type))) {
+                    auto casted = cast_numeric_value(raw, types::get_primitive_kind(iter.element_type));
+                    if (casted)
+                        return casted.value();
+                }
+                return raw;
+            } else if constexpr (std::is_same_v<T, Iterator_value::Array_state>) {
+                if (!state.array || index < 0 || index >= static_cast<int64_t>(state.array->elements.size()))
+                    return Value(nullptr);
+                return state.array->elements[static_cast<size_t>(index)];
+            } else if constexpr (std::is_same_v<T, Iterator_value::String_state>) {
+                if (index < 0 || index + 1 >= static_cast<int64_t>(state.boundaries.size()))
+                    return Value(nullptr);
+                size_t start = state.boundaries[static_cast<size_t>(index)];
+                size_t end = state.boundaries[static_cast<size_t>(index + 1)];
+                return Value(state.source.substr(start, end - start));
             }
-            return raw;
-        }
-        else if constexpr (std::is_same_v<T, Iterator_value::Array_state>)
-        {
-            if (!state.array || index < 0 || index >= static_cast<int64_t>(state.array->elements.size()))
-                return Value(nullptr);
-            return state.array->elements[static_cast<size_t>(index)];
-        }
-        else if constexpr (std::is_same_v<T, Iterator_value::String_state>)
-        {
-            if (index < 0 || index + 1 >= static_cast<int64_t>(state.boundaries.size()))
-                return Value(nullptr);
-            size_t start = state.boundaries[static_cast<size_t>(index)];
-            size_t end = state.boundaries[static_cast<size_t>(index + 1)];
-            return Value(state.source.substr(start, end - start));
-        }
-        return Value(nullptr);
-    },
-    iter.source);
+            return Value(nullptr);
+        },
+        iter.source);
 }
 
 inline Value iter_next(mem::rc_ptr<Iterator_value> iter)
@@ -394,10 +373,8 @@ inline Value iter_next(mem::rc_ptr<Iterator_value> iter)
         return Value(nullptr);
 
     const int64_t len = iterator_length(*iter);
-    if (iter->cursor < 0)
-    {
-        if (len > 0)
-        {
+    if (iter->cursor < 0) {
+        if (len > 0) {
             iter->cursor = 0;
             return iterator_item_at(*iter, iter->cursor);
         }
@@ -406,8 +383,7 @@ inline Value iter_next(mem::rc_ptr<Iterator_value> iter)
         return Value(nullptr);
     }
 
-    if (iter->cursor < len - 1)
-    {
+    if (iter->cursor < len - 1) {
         ++iter->cursor;
         return iterator_item_at(*iter, iter->cursor);
     }
@@ -422,14 +398,12 @@ inline Value iter_prev(mem::rc_ptr<Iterator_value> iter)
         return Value(nullptr);
 
     const int64_t len = iterator_length(*iter);
-    if (iter->cursor == len && len > 0)
-    {
+    if (iter->cursor == len && len > 0) {
         --iter->cursor;
         return iterator_item_at(*iter, iter->cursor);
     }
 
-    if (iter->cursor > 0)
-    {
+    if (iter->cursor > 0) {
         --iter->cursor;
         return iterator_item_at(*iter, iter->cursor);
     }
@@ -458,9 +432,8 @@ inline int64_t require_i64(Value value, const std::string &context)
 
 inline types::Primitive_kind promote_integer_kind(types::Primitive_kind left, types::Primitive_kind right)
 {
-    bool same_signedness =
-    (types::is_signed_integer_primitive(left) && types::is_signed_integer_primitive(right)) ||
-    (types::is_unsigned_integer_primitive(left) && types::is_unsigned_integer_primitive(right));
+    bool same_signedness = (types::is_signed_integer_primitive(left) && types::is_signed_integer_primitive(right))
+        || (types::is_unsigned_integer_primitive(left) && types::is_unsigned_integer_primitive(right));
 
     if (!same_signedness)
         return types::Primitive_kind::I64;
@@ -482,16 +455,13 @@ inline bool iter_has_next(mem::rc_ptr<Iterator_value> iter, Value steps_value)
     if (steps == 0)
         return cursor >= 0 && cursor < len;
 
-    for (int64_t i = 0; i < steps; ++i)
-    {
-        if (cursor < 0)
-        {
+    for (int64_t i = 0; i < steps; ++i) {
+        if (cursor < 0) {
             if (len > 0)
                 cursor = 0;
             else
                 return false;
-        }
-        else if (cursor < len - 1)
+        } else if (cursor < len - 1)
             ++cursor;
         else
             return false;
@@ -513,8 +483,7 @@ inline bool iter_has_prev(mem::rc_ptr<Iterator_value> iter, Value steps_value)
     if (steps == 0)
         return cursor >= 0 && cursor < len;
 
-    for (int64_t i = 0; i < steps; ++i)
-    {
+    for (int64_t i = 0; i < steps; ++i) {
         if (cursor > 0)
             --cursor;
         else if (cursor == len && len > 0)
@@ -533,8 +502,7 @@ inline Value iter_next(mem::rc_ptr<Iterator_value> iter, Value steps_value)
     int64_t steps = require_i64(steps_value, "Iterator step");
     if (steps < 0)
         return Value(nullptr);
-    if (steps == 0)
-    {
+    if (steps == 0) {
         if (iter->cursor >= 0 && iter->cursor < iterator_length(*iter))
             return iterator_item_at(*iter, iter->cursor);
         return Value(nullptr);
@@ -554,8 +522,7 @@ inline Value iter_prev(mem::rc_ptr<Iterator_value> iter, Value steps_value)
     int64_t steps = require_i64(steps_value, "Iterator step");
     if (steps < 0)
         return Value(nullptr);
-    if (steps == 0)
-    {
+    if (steps == 0) {
         if (iter->cursor >= 0 && iter->cursor < iterator_length(*iter))
             return iterator_item_at(*iter, iter->cursor);
         return Value(nullptr);
@@ -573,55 +540,50 @@ inline bool iter_contains(mem::rc_ptr<Iterator_value> iter, Value target)
         return false;
 
     return std::visit(
-    [&](const auto &state) -> bool
-    {
-        using T = std::decay_t<decltype(state)>;
+        [&](const auto &state) -> bool {
+            using T = std::decay_t<decltype(state)>;
 
-        // 1. O(1) Math check for Ranges (The secret sauce for pattern matching!)
-        if constexpr (std::is_same_v<T, Iterator_value::Interval_state>)
-        {
-            auto maybe_target = try_get_i64(target);
-            if (!maybe_target)
-                return false;
-            int64_t val = *maybe_target;
+            // 1. O(1) Math check for Ranges (The secret sauce for pattern matching!)
+            if constexpr (std::is_same_v<T, Iterator_value::Interval_state>) {
+                auto maybe_target = try_get_i64(target);
+                if (!maybe_target)
+                    return false;
+                int64_t val = *maybe_target;
 
-            if (state.start <= state.end)
-                if (state.inclusive)
-                    return val >= state.start && val <= state.end;
+                if (state.start <= state.end)
+                    if (state.inclusive)
+                        return val >= state.start && val <= state.end;
+                    else
+                        return val >= state.start && val < state.end;
+                else if (state.inclusive)
+                    return val <= state.start && val >= state.end;
                 else
-                    return val >= state.start && val < state.end;
-            else if (state.inclusive)
-                return val <= state.start && val >= state.end;
-            else
-                return val <= state.start && val > state.end;
-        }
-        // 2. O(N) Linear scan for Arrays
-        else if constexpr (std::is_same_v<T, Iterator_value::Array_state>)
-        {
-            if (!state.array)
+                    return val <= state.start && val > state.end;
+            }
+            // 2. O(N) Linear scan for Arrays
+            else if constexpr (std::is_same_v<T, Iterator_value::Array_state>) {
+                if (!state.array)
+                    return false;
+                for (const auto &elem : state.array->elements)
+                    if (core_is_same(elem, target))
+                        return true;
                 return false;
-            for (const auto &elem : state.array->elements)
-                if (core_is_same(elem, target))
-                    return true;
-            return false;
-        }
-        // 3. Substring check for Strings
-        else if constexpr (std::is_same_v<T, Iterator_value::String_state>)
-        {
-            if (!is_string(target))
-                return false;
-            return state.source.find(get_string(target)) != std::string::npos;
-        }
-        // 4. Exact match for Singletons
-        else if constexpr (std::is_same_v<T, Iterator_value::Singleton_state>)
-        {
-            return core_is_same(state.value, target);
-        }
+            }
+            // 3. Substring check for Strings
+            else if constexpr (std::is_same_v<T, Iterator_value::String_state>) {
+                if (!is_string(target))
+                    return false;
+                return state.source.find(get_string(target)) != std::string::npos;
+            }
+            // 4. Exact match for Singletons
+            else if constexpr (std::is_same_v<T, Iterator_value::Singleton_state>) {
+                return core_is_same(state.value, target);
+            }
 
-        // Empty state
-        return false;
-    },
-    iter->source);
+            // Empty state
+            return false;
+        },
+        iter->source);
 }
 
 inline Value make_iterator(types::Type element_type, Iterator_value::Source source)
@@ -639,8 +601,7 @@ inline types::Type runtime_value_type(const Value &value)
         return types::Primitive_kind::Bool;
     if (is_string(value))
         return types::Primitive_kind::String;
-    if (is_array(value))
-    {
+    if (is_array(value)) {
         auto array = get_array(value);
         if (types::is_array(array->type))
             return types::get_array_type(array->type)->element_type;
@@ -663,8 +624,7 @@ inline Value iterator_from_value(Value value)
         return make_iterator(types::Primitive_kind::Any, Iterator_value::Empty_state{});
     if (is_array(value))
         return make_iterator(runtime_value_type(value), Iterator_value::Array_state{get_array(value)});
-    if (is_string(value))
-    {
+    if (is_string(value)) {
         auto str = get_string(value);
         return make_iterator(types::Primitive_kind::String, Iterator_value::String_state{str, utf8_boundaries(str)});
     }
@@ -698,33 +658,23 @@ inline Value clone_iterator(mem::rc_ptr<Iterator_value> iter, std::unordered_map
         return it->second;
 
     Iterator_value::Source source = std::visit(
-    [&](const auto &state) -> Iterator_value::Source
-    {
-        using T = std::decay_t<decltype(state)>;
-        if constexpr (std::is_same_v<T, Iterator_value::Empty_state>)
-        {
-            return state;
-        }
-        else if constexpr (std::is_same_v<T, Iterator_value::Singleton_state>)
-        {
-            return Iterator_value::Singleton_state{deep_clone_value(state.value, seen)};
-        }
-        else if constexpr (std::is_same_v<T, Iterator_value::Interval_state>)
-        {
-            return state;
-        }
-        else if constexpr (std::is_same_v<T, Iterator_value::Array_state>)
-        {
-            auto cloned = deep_clone_value(Value(state.array), seen);
-            return Iterator_value::Array_state{get_array(cloned)};
-        }
-        else if constexpr (std::is_same_v<T, Iterator_value::String_state>)
-        {
-            return state;
-        }
-        return Iterator_value::Empty_state{};
-    },
-    iter->source);
+        [&](const auto &state) -> Iterator_value::Source {
+            using T = std::decay_t<decltype(state)>;
+            if constexpr (std::is_same_v<T, Iterator_value::Empty_state>) {
+                return state;
+            } else if constexpr (std::is_same_v<T, Iterator_value::Singleton_state>) {
+                return Iterator_value::Singleton_state{deep_clone_value(state.value, seen)};
+            } else if constexpr (std::is_same_v<T, Iterator_value::Interval_state>) {
+                return state;
+            } else if constexpr (std::is_same_v<T, Iterator_value::Array_state>) {
+                auto cloned = deep_clone_value(Value(state.array), seen);
+                return Iterator_value::Array_state{get_array(cloned)};
+            } else if constexpr (std::is_same_v<T, Iterator_value::String_state>) {
+                return state;
+            }
+            return Iterator_value::Empty_state{};
+        },
+        iter->source);
 
     auto cloned_iter = mem::make_rc<Iterator_value>(iter->element_type, std::move(source));
     cloned_iter->cursor = iter->cursor;
@@ -738,8 +688,7 @@ inline Value deep_clone_value(const Value &value, std::unordered_map<const void 
     if (is_nil(value) || is_bool(value) || is_numeric(value) || is_string(value) || is_closure(value))
         return value;
 
-    if (is_array(value))
-    {
+    if (is_array(value)) {
         auto arr = get_array(value);
         if (auto it = seen.find(arr.get()); it != seen.end())
             return it->second;
@@ -754,8 +703,7 @@ inline Value deep_clone_value(const Value &value, std::unordered_map<const void 
         return result;
     }
 
-    if (is_model(value))
-    {
+    if (is_model(value)) {
         auto model = get_model(value);
         if (auto it = seen.find(model.get()); it != seen.end())
             return it->second;
@@ -770,8 +718,7 @@ inline Value deep_clone_value(const Value &value, std::unordered_map<const void 
         return result;
     }
 
-    if (is_union(value))
-    {
+    if (is_union(value)) {
         auto uni = get_union(value);
         if (auto it = seen.find(uni.get()); it != seen.end())
             return it->second;
@@ -816,9 +763,18 @@ inline Value optional_or(Value value, Value fallback)
     return value;
 }
 
-inline bool optional_has_value(Value value) { return !is_nil(value); }
-inline bool optional_is_some(Value value) { return !is_nil(value); }
-inline bool optional_is_none(Value value) { return is_nil(value); }
+inline bool optional_has_value(Value value)
+{
+    return !is_nil(value);
+}
+inline bool optional_is_some(Value value)
+{
+    return !is_nil(value);
+}
+inline bool optional_is_none(Value value)
+{
+    return is_nil(value);
+}
 
 inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
 {
@@ -831,21 +787,22 @@ inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
     vm.bind_native<iterator_from_value>("iter", {"any"}, "any", tc);
     vm.bind_native<core_clone>("clone", {"any"}, "any", tc);
     vm.bind_native<core_to_str>("to_str", {"any"}, "string", tc);
-    vm.bind_native_sig<core_bytes>("bytes",
-                                   {{"value", "string | bool[] | i8[] | i16[] | i32[] | i64[] | u8[] | u16[] | u32[] | u64[]", std::nullopt}},
-                                   "u8[]",
-                                   tc);
+    vm.bind_native_sig<core_bytes>(
+        "bytes",
+        {{"value", "string | bool[] | i8[] | i16[] | i32[] | i64[] | u8[] | u16[] | u32[] | u64[]", std::nullopt}},
+        "u8[]",
+        tc);
 
-    vm.bind_native_sig<range_exclusive>("__range_exclusive",
-                                        {{"start", std::string(integer_types), std::nullopt},
-                                         {"end", std::string(integer_types), std::nullopt}},
-                                        "any",
-                                        tc);
-    vm.bind_native_sig<range_inclusive>("__range_inclusive",
-                                        {{"start", std::string(integer_types), std::nullopt},
-                                         {"end", std::string(integer_types), std::nullopt}},
-                                        "any",
-                                        tc);
+    vm.bind_native_sig<range_exclusive>(
+        "__range_exclusive",
+        {{"start", std::string(integer_types), std::nullopt}, {"end", std::string(integer_types), std::nullopt}},
+        "any",
+        tc);
+    vm.bind_native_sig<range_inclusive>(
+        "__range_inclusive",
+        {{"start", std::string(integer_types), std::nullopt}, {"end", std::string(integer_types), std::nullopt}},
+        "any",
+        tc);
 
     // len() strictly accepts either ONE string OR ONE array
     // (We use two bind_native calls to register two valid signatures for the same function!)
@@ -859,29 +816,33 @@ inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
     vm.bind_native_sig<array_join>("Array::join", {{"", "T[]", std::nullopt}, {"separator", "string", std::nullopt}}, "string", tc);
 
     vm.bind_native_sig<static_cast<Value (*)(mem::rc_ptr<Iterator_value>, Value)>(&iter_next)>(
-    "Iter::next",
-    {{"", "any", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
-    "any",
-    tc);
+        "Iter::next",
+        {{"", "any", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
+        "any",
+        tc);
     vm.bind_native_sig<static_cast<Value (*)(mem::rc_ptr<Iterator_value>, Value)>(&iter_prev)>(
-    "Iter::prev",
-    {{"", "any", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
-    "any",
-    tc);
+        "Iter::prev",
+        {{"", "any", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
+        "any",
+        tc);
     vm.bind_native_sig<iter_get>("Iter::get", {{"", "any", std::nullopt}}, "any", tc);
     vm.bind_native_sig<static_cast<bool (*)(mem::rc_ptr<Iterator_value>, Value)>(&iter_has_next)>(
-    "Iter::has_next",
-    {{"", "any", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
-    "bool",
-    tc);
+        "Iter::has_next",
+        {{"", "any", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
+        "bool",
+        tc);
     vm.bind_native_sig<static_cast<bool (*)(mem::rc_ptr<Iterator_value>, Value)>(&iter_has_prev)>(
-    "Iter::has_prev",
-    {{"", "any", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
-    "bool",
-    tc);
+        "Iter::has_prev",
+        {{"", "any", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
+        "bool",
+        tc);
     vm.bind_native_sig<iter_contains>("Iter::contains", {{"", "any", std::nullopt}, {"target", "any", std::nullopt}}, "bool", tc);
 
-    vm.bind_native_sig<optional_get>("Optional::get", {{"", "T?", std::nullopt}, {"message", "string", Value(std::string("Tried to extract a value from nil."))}}, "T", tc);
+    vm.bind_native_sig<optional_get>(
+        "Optional::get",
+        {{"", "T?", std::nullopt}, {"message", "string", Value(std::string("Tried to extract a value from nil."))}},
+        "T",
+        tc);
     vm.bind_native_sig<optional_or>("Optional::or", {{"", "T?", std::nullopt}, {"default", "T", std::nullopt}}, "T", tc);
     vm.bind_native_sig<optional_has_value>("Optional::has_value", {{"", "T?", std::nullopt}}, "bool", tc);
     vm.bind_native_sig<optional_is_some>("Optional::is_some", {{"", "T?", std::nullopt}}, "bool", tc);
@@ -892,11 +853,23 @@ inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
     vm.bind_native_sig<math_pow>("pow", {{"base", "f64", std::nullopt}, {"exponent", "f64", std::nullopt}}, "f64", tc);
     vm.bind_native<math_abs>("abs", {"f64"}, "f64", tc);
     // Advanced String Bindings
-    vm.bind_native_sig<string_starts_with>("string::starts_with", {{"", "string", std::nullopt}, {"prefix", "string", std::nullopt}}, "bool", tc);
-    vm.bind_native_sig<string_ends_with>("string::ends_with", {{"", "string", std::nullopt}, {"suffix", "string", std::nullopt}}, "bool", tc);
+    vm.bind_native_sig<string_starts_with>(
+        "string::starts_with",
+        {{"", "string", std::nullopt}, {"prefix", "string", std::nullopt}},
+        "bool",
+        tc);
+    vm.bind_native_sig<string_ends_with>(
+        "string::ends_with",
+        {{"", "string", std::nullopt}, {"suffix", "string", std::nullopt}},
+        "bool",
+        tc);
     vm.bind_native_sig<string_index_of>("string::index_of", {{"", "string", std::nullopt}, {"search", "string", std::nullopt}}, "i64", tc);
     vm.bind_native_sig<string_repeat>("string::repeat", {{"", "string", std::nullopt}, {"count", "i64", std::nullopt}}, "string", tc);
-    vm.bind_native_sig<string_split>("string::split", {{"", "string", std::nullopt}, {"separator", "string", std::nullopt}}, "string[]", tc);
+    vm.bind_native_sig<string_split>(
+        "string::split",
+        {{"", "string", std::nullopt}, {"separator", "string", std::nullopt}},
+        "string[]",
+        tc);
     vm.bind_native<string_trim>("string::trim", {"string"}, "string", tc);
     vm.bind_native<string_trim_left>("string::trim_left", {"string"}, "string", tc);
     vm.bind_native<string_trim_right>("string::trim_right", {"string"}, "string", tc);
@@ -907,4 +880,4 @@ inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
     vm.bind_native_sig<string_parse_float>("parse_f64", {{"text", "string", std::nullopt}}, "f64?", tc);
 }
 
-}  // namespace phos::vm::core
+} // namespace phos::vm::core

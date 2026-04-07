@@ -1,5 +1,11 @@
 #pragma once
 
+#include "../error/err.hpp"
+#include "../error/result.hpp"
+#include "../lexer/token.hpp"
+#include "../memory/arena.hpp"
+#include "ast.hpp"
+
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -7,19 +13,13 @@
 #include <utility>
 #include <vector>
 
-#include "../error/err.hpp"
-#include "../error/result.hpp"
-#include "../lexer/token.hpp"
-#include "../memory/arena.hpp"
-#include "ast.hpp"
-
-namespace phos
-{
+namespace phos {
 
 class Parser
 {
 public:
-    explicit Parser(std::vector<lex::Token> tokens, mem::Arena &arena) : arena_(arena), tokens_(std::move(tokens)) {}
+    explicit Parser(std::vector<lex::Token> tokens, mem::Arena &arena) : arena_(arena), tokens_(std::move(tokens))
+    {}
 
     Result<std::vector<ast::Stmt *>> parse();
 
@@ -48,9 +48,15 @@ private:
     const lex::Token &previous() const;
     lex::Token advance();
     bool match(std::initializer_list<lex::TokenType> types);
-    bool check(lex::TokenType type) const { return peek().type == type; }
+    bool check(lex::TokenType type) const
+    {
+        return peek().type == type;
+    }
     bool check_next(lex::TokenType type) const;
-    bool is_at_end() const { return peek().type == lex::TokenType::Eof; }
+    bool is_at_end() const
+    {
+        return peek().type == lex::TokenType::Eof;
+    }
     Result<lex::Token> consume(lex::TokenType type, const std::string &message);
     err::msg create_error(const lex::Token &token, const std::string &message);
     void synchronize();
@@ -64,7 +70,7 @@ private:
     Result<ast::Stmt *> model_declaration();
     Result<ast::Stmt *> parse_bind_statement();
     Result<ast::Stmt *> union_declaration();
-    Result<ast::Stmt*> enum_declaration();
+    Result<ast::Stmt *> enum_declaration();
     Result<ast::Stmt *> var_declaration();
     Result<ast::Typed_member_decl> parse_model_field();
     Result<ast::Function_stmt> parse_model_method();
@@ -108,4 +114,4 @@ private:
     Result<ast::Expr *> parse_fstring(const lex::Token &tok);
 };
 
-}  // namespace phos
+} // namespace phos

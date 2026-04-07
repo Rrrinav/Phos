@@ -1,12 +1,11 @@
 #pragma once
 
-#include <vector>
-#include <string>
-
 #include "ast.hpp"
 
-namespace phos::ast
-{
+#include <string>
+#include <vector>
+
+namespace phos::ast {
 
 // =============================================================================
 // AST Printer (Tree representation)
@@ -143,4 +142,4 @@ private:
     std::string print_node(const Enum_stmt &node);
 };
 
-}  // namespace phos::ast
+} // namespace phos::ast

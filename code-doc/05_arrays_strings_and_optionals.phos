@@ -25,6 +25,9 @@ let raw_text := "  phos language  ";
 let clean_text := raw_text.trim();
 let loud_text := clean_text.repeat(2);
 let words := clean_text.split(" ");
+let ascii_bytes: u8[] = clean_text as u8[];
+let flag_bytes: u8[] = [true, false, true] as u8[];
+let header := bytes("OK");
 
 print("clean_text = " + clean_text);
 print("loud_text = " + loud_text);
@@ -32,6 +35,9 @@ print("starts_with(\"phos\") = ", clean_text.starts_with("phos"), sep = "");
 print("ends_with(\"age\") = ", clean_text.ends_with("age"), sep = "");
 print("index_of(\"lang\") = ", clean_text.index_of("lang"), sep = "");
 print(words);
+print(ascii_bytes);
+print(flag_bytes);
+print(header);
 
 // Optionals use the "?" suffix. nil is the empty optional value.
 let maybe_port: i64? = "8080".parse_i64();

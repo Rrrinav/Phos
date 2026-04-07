@@ -1,21 +1,20 @@
 #include "assembler.hpp"
+
 #include "chunk.hpp"
 
-#include <iostream>
-#include <sstream>
 #include <algorithm>
 #include <cctype>
 #include <format>
+#include <iostream>
 #include <map>
+#include <sstream>
 
-namespace phos::vm
-{
+namespace phos::vm {
 
 std::unordered_map<std::string, Op_code> Assembler::get_opcode_map()
 {
     std::unordered_map<std::string, Op_code> map;
-    for (int i = 0; i <= static_cast<int>(Op_code::Halt); ++i)
-    {
+    for (int i = 0; i <= static_cast<int>(Op_code::Halt); ++i) {
         Op_code op = static_cast<Op_code>(i);
         std::string mnemonic = op_code_to_string(op);
         std::transform(mnemonic.begin(), mnemonic.end(), mnemonic.begin(), ::toupper);
@@ -27,8 +26,7 @@ std::unordered_map<std::string, Op_code> Assembler::get_opcode_map()
 std::unordered_map<Op_code, std::string> Assembler::get_mnemonic_map()
 {
     std::unordered_map<Op_code, std::string> map;
-    for (int i = 0; i <= static_cast<int>(Op_code::Halt); ++i)
-    {
+    for (int i = 0; i <= static_cast<int>(Op_code::Halt); ++i) {
         Op_code op = static_cast<Op_code>(i);
         std::string mnemonic = op_code_to_string(op);
         std::transform(mnemonic.begin(), mnemonic.end(), mnemonic.begin(), ::toupper);
@@ -50,8 +48,7 @@ std::string Assembler::serialize(mem::rc_ptr<Closure_value> main_closure)
     closures.push_back(main_closure);
     closure_ids[main_closure.get()] = 0;
 
-    for (size_t i = 0; i < closures.size(); ++i)
-    {
+    for (size_t i = 0; i < closures.size(); ++i) {
         auto closure = closures[i];
         int id = closure_ids[closure.get()];
         std::string name = closure->name.empty() ? "anon" : closure->name;
@@ -65,8 +62,7 @@ std::string Assembler::serialize(mem::rc_ptr<Closure_value> main_closure)
         auto chunk = closure->chunk;
 
         ss << "  .constants:\n";
-        for (size_t j = 0; j < chunk->constants.size(); ++j)
-        {
+        for (size_t j = 0; j < chunk->constants.size(); ++j) {
             const auto &val = chunk->constants[j];
             ss << "      @" << j << " = ";
             if (is_signed_integer(val))
@@ -79,11 +75,9 @@ std::string Assembler::serialize(mem::rc_ptr<Closure_value> main_closure)
                 ss << "bool " << (get_bool(val) ? "true" : "false") << "\n";
             else if (is_string(val))
                 ss << "string \"" << get_string(val) << "\"\n";
-            else if (is_closure(val))
-            {
+            else if (is_closure(val)) {
                 auto child = get_closure(val);
-                if (!closure_ids.count(child.get()))
-                {
+                if (!closure_ids.count(child.get())) {
                     closure_ids[child.get()] = closures.size();
                     closures.push_back(child);
                 }
@@ -94,44 +88,34 @@ std::string Assembler::serialize(mem::rc_ptr<Closure_value> main_closure)
         // PRE-PASS: Find all jump targets and assign labels
         std::map<size_t, std::string> labels;
         int label_counter = 0;
-        for (size_t offset = 0; offset < chunk->code.size();)
-        {
+        for (size_t offset = 0; offset < chunk->code.size();) {
             Op_code op = static_cast<Op_code>(chunk->code[offset]);
-            if (op == Op_code::Jump || op == Op_code::Jump_if_false || op == Op_code::Jump_if_true || op == Op_code::Loop)
-            {
+            if (op == Op_code::Jump || op == Op_code::Jump_if_false || op == Op_code::Jump_if_true || op == Op_code::Loop) {
                 uint16_t jump = static_cast<uint16_t>(chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
                 size_t target = (op == Op_code::Loop) ? (offset + 3 - jump) : (offset + 3 + jump);
                 if (!labels.count(target))
                     labels[target] = ".L" + std::to_string(label_counter++);
                 offset += 3;
-            }
-            else if (op == Op_code::Constant || op == Op_code::Define_global || op == Op_code::Get_global || op == Op_code::Set_global ||
-                     op == Op_code::Match_variant || op == Op_code::Get_local || op == Op_code::Set_local || op == Op_code::Get_upvalue ||
-                     op == Op_code::Set_upvalue || op == Op_code::Call || op == Op_code::Create_array || op == Op_code::Get_field ||
-                     op == Op_code::Set_field || op == Op_code::Cast)
-            {
+            } else if (
+                op == Op_code::Constant || op == Op_code::Define_global || op == Op_code::Get_global || op == Op_code::Set_global
+                || op == Op_code::Match_variant || op == Op_code::Get_local || op == Op_code::Set_local || op == Op_code::Get_upvalue
+                || op == Op_code::Set_upvalue || op == Op_code::Call || op == Op_code::Create_array || op == Op_code::Get_field
+                || op == Op_code::Set_field || op == Op_code::Cast) {
                 offset += 2;
-            }
-            else if (op == Op_code::Construct_union || op == Op_code::Construct_model)
-            {
+            } else if (op == Op_code::Construct_union || op == Op_code::Construct_model) {
                 offset += 3;
-            }
-            else if (op == Op_code::Make_closure)
-            {
+            } else if (op == Op_code::Make_closure) {
                 uint8_t const_idx = chunk->code[offset + 1];
                 auto child = get_closure(chunk->constants[const_idx]);
                 offset += 2 + (child->upvalue_count * 2);
-            }
-            else
-            {
+            } else {
                 offset += 1;
             }
         }
 
         // MAIN PASS: Generate Code
         ss << "\n  .code:\n";
-        for (size_t offset = 0; offset < chunk->code.size();)
-        {
+        for (size_t offset = 0; offset < chunk->code.size();) {
             if (labels.count(offset))
                 ss << "    " << labels[offset] << ":\n";
 
@@ -140,85 +124,76 @@ std::string Assembler::serialize(mem::rc_ptr<Closure_value> main_closure)
             std::string args = "";
             std::string comment = "";
 
-            switch (op)
-            {
-                case Op_code::Constant:
-                case Op_code::Define_global:
-                case Op_code::Get_global:
-                case Op_code::Set_global:
-                case Op_code::Match_variant:
-                {
+            switch (op) {
+            case Op_code::Constant:
+            case Op_code::Define_global:
+            case Op_code::Get_global:
+            case Op_code::Set_global:
+            case Op_code::Match_variant: {
+                uint8_t idx = chunk->code[offset + 1];
+                args = "@" + std::to_string(idx);
+                comment = value_to_string(chunk->constants[idx]);
+                offset += 2;
+                break;
+            }
+            case Op_code::Get_local:
+            case Op_code::Set_local:
+            case Op_code::Get_field:
+            case Op_code::Set_field: {
+                args = "%" + std::to_string(chunk->code[offset + 1]);
+                offset += 2;
+                break;
+            }
+            case Op_code::Get_upvalue:
+            case Op_code::Set_upvalue: {
+                args = "^" + std::to_string(chunk->code[offset + 1]);
+                offset += 2;
+                break;
+            }
+            case Op_code::Call:
+            case Op_code::Create_array: {
+                args = "#" + std::to_string(chunk->code[offset + 1]);
+                offset += 2;
+                break;
+            }
+            case Op_code::Jump:
+            case Op_code::Jump_if_false:
+            case Op_code::Jump_if_true:
+            case Op_code::Loop: {
+                uint16_t jump = static_cast<uint16_t>(chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
+                size_t target = (op == Op_code::Loop) ? (offset + 3 - jump) : (offset + 3 + jump);
+                args = labels[target];
+                offset += 3;
+                break;
+            }
+            case Op_code::Construct_model:
+            case Op_code::Construct_union: {
+                uint8_t arg1 = chunk->code[offset + 1];
+                uint8_t arg2 = chunk->code[offset + 2];
+                args = "@" + std::to_string(arg1) + " @" + std::to_string(arg2);
+                comment = value_to_string(chunk->constants[arg1]) + "::" + value_to_string(chunk->constants[arg2]);
+                offset += 3;
+                break;
+            }
+            case Op_code::Make_closure: {
+                uint8_t const_idx = chunk->code[offset + 1];
+                args = "@" + std::to_string(const_idx);
+                auto child_closure = get_closure(chunk->constants[const_idx]);
+                comment = child_closure->name;
+                offset += 2;
+                ss << std::format("      {:<20} {:<15} ; {}\n", mnemonic, args, comment);
+                for (size_t j = 0; j < child_closure->upvalue_count; j++) {
+                    uint8_t is_local = chunk->code[offset];
                     uint8_t idx = chunk->code[offset + 1];
-                    args = "@" + std::to_string(idx);
-                    comment = value_to_string(chunk->constants[idx]);
+                    std::string route_arg = (is_local ? "%" : "^") + std::to_string(idx);
+                    ss << std::format("        {:<18} {:<15} ; {}\n", ".route", route_arg, is_local ? "capture local" : "pass upvalue");
                     offset += 2;
-                    break;
                 }
-                case Op_code::Get_local:
-                case Op_code::Set_local:
-                case Op_code::Get_field:
-                case Op_code::Set_field:
-                {
-                    args = "%" + std::to_string(chunk->code[offset + 1]);
-                    offset += 2;
-                    break;
-                }
-                case Op_code::Get_upvalue:
-                case Op_code::Set_upvalue:
-                {
-                    args = "^" + std::to_string(chunk->code[offset + 1]);
-                    offset += 2;
-                    break;
-                }
-                case Op_code::Call:
-                case Op_code::Create_array:
-                {
-                    args = "#" + std::to_string(chunk->code[offset + 1]);
-                    offset += 2;
-                    break;
-                }
-                case Op_code::Jump:
-                case Op_code::Jump_if_false:
-                case Op_code::Jump_if_true:
-                case Op_code::Loop:
-                {
-                    uint16_t jump = static_cast<uint16_t>(chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
-                    size_t target = (op == Op_code::Loop) ? (offset + 3 - jump) : (offset + 3 + jump);
-                    args = labels[target];
-                    offset += 3;
-                    break;
-                }
-                case Op_code::Construct_model:
-                case Op_code::Construct_union:
-                {
-                    uint8_t arg1 = chunk->code[offset + 1];
-                    uint8_t arg2 = chunk->code[offset + 2];
-                    args = "@" + std::to_string(arg1) + " @" + std::to_string(arg2);
-                    comment = value_to_string(chunk->constants[arg1]) + "::" + value_to_string(chunk->constants[arg2]);
-                    offset += 3;
-                    break;
-                }
-                case Op_code::Make_closure:
-                {
-                    uint8_t const_idx = chunk->code[offset + 1];
-                    args = "@" + std::to_string(const_idx);
-                    auto child_closure = get_closure(chunk->constants[const_idx]);
-                    comment = child_closure->name;
-                    offset += 2;
-                    ss << std::format("      {:<20} {:<15} ; {}\n", mnemonic, args, comment);
-                    for (size_t j = 0; j < child_closure->upvalue_count; j++)
-                    {
-                        uint8_t is_local = chunk->code[offset];
-                        uint8_t idx = chunk->code[offset + 1];
-                        std::string route_arg = (is_local ? "%" : "^") + std::to_string(idx);
-                        ss << std::format("        {:<18} {:<15} ; {}\n", ".route", route_arg, is_local ? "capture local" : "pass upvalue");
-                        offset += 2;
-                    }
-                    continue;
-                }
-                default:
-                    offset += 1;
-                    break;
+                continue;
+            }
+            default:
+                offset += 1;
+                break;
             }
 
             // Zero-Cost Formatting (No trailing whitespaces on 1-byte instructions)
@@ -264,13 +239,11 @@ mem::rc_ptr<Closure_value> Assembler::assemble(const std::string &ir_source)
     std::vector<UnresolvedJump> current_jumps;
 
     // Pass 1: Allocate closures
-    while (std::getline(ss, line))
-    {
+    while (std::getline(ss, line)) {
         std::stringstream ls(line);
         std::string tok;
         ls >> tok;
-        if (tok == ".fn")
-        {
+        if (tok == ".fn") {
             int id, arity, upvals;
             std::string name;
             ls >> id >> name >> arity >> upvals;
@@ -285,8 +258,7 @@ mem::rc_ptr<Closure_value> Assembler::assemble(const std::string &ir_source)
     // Pass 2: Populate chunks
     ss.clear();
     ss.seekg(0);
-    while (std::getline(ss, line))
-    {
+    while (std::getline(ss, line)) {
         line.erase(0, line.find_first_not_of(" \t"));
         if (line.empty() || line[0] == ';')
             continue;
@@ -295,24 +267,19 @@ mem::rc_ptr<Closure_value> Assembler::assemble(const std::string &ir_source)
         std::string tok;
         ls >> tok;
 
-        if (tok == ".fn")
-        {
+        if (tok == ".fn") {
             int id;
             ls >> id;
             current_closure = closures[id];
             in_code = false;
-        }
-        else if (tok == ".constants:")
+        } else if (tok == ".constants:")
             continue;
         else if (tok == ".code:")
             in_code = true;
-        else if (tok == ".endfn")
-        {
+        else if (tok == ".endfn") {
             // Resolve all Jumps for this closure perfectly!
-            for (const auto &jump : current_jumps)
-            {
-                if (!current_labels.count(jump.label))
-                {
+            for (const auto &jump : current_jumps) {
+                if (!current_labels.count(jump.label)) {
                     std::cerr << "Assembler Error: Undefined label '" << jump.label << "'\n";
                     exit(1);
                 }
@@ -329,9 +296,7 @@ mem::rc_ptr<Closure_value> Assembler::assemble(const std::string &ir_source)
             current_labels.clear();
             current_jumps.clear();
             current_closure = nullptr;
-        }
-        else if (tok.starts_with("@") && tok.find('=') == std::string::npos)
-        {
+        } else if (tok.starts_with("@") && tok.find('=') == std::string::npos) {
             std::string eq, type, val;
             ls >> eq >> type;
             std::getline(ls, val);
@@ -347,28 +312,23 @@ mem::rc_ptr<Closure_value> Assembler::assemble(const std::string &ir_source)
                 current_closure->chunk->add_constant(Value(val == "true"));
             else if (type == "fn")
                 current_closure->chunk->add_constant(Value(closures[std::stoi(val)]));
-            else if (type == "string")
-            {
+            else if (type == "string") {
                 val = val.substr(1, val.length() - 2);
                 current_closure->chunk->add_constant(Value(val));
             }
-        }
-        else if (in_code)
-        {
-            if (tok.ends_with(":"))
-            {
+        } else if (in_code) {
+            if (tok.ends_with(":")) {
                 std::string label_name = tok.substr(0, tok.length() - 1);
                 current_labels[label_name] = current_closure->chunk->code.size();
                 continue;
             }
 
-            if (tok == ".route")
-            {
+            if (tok == ".route") {
                 std::string arg;
                 ls >> arg;
                 bool is_local = arg.starts_with("%");
                 uint8_t idx = static_cast<uint8_t>(std::stoi(arg.substr(1)));
-                current_closure->chunk->write(static_cast<uint8_t>(is_local), {0, 0});  // 0 cost location tracking
+                current_closure->chunk->write(static_cast<uint8_t>(is_local), {0, 0}); // 0 cost location tracking
                 current_closure->chunk->write(idx, {0, 0});
                 continue;
             }
@@ -380,22 +340,17 @@ mem::rc_ptr<Closure_value> Assembler::assemble(const std::string &ir_source)
             current_closure->chunk->write(op, {0, 0});
 
             std::string arg1, arg2;
-            if (op == Op_code::Constant || op == Op_code::Define_global || op == Op_code::Get_global || op == Op_code::Match_variant ||
-                op == Op_code::Get_local || op == Op_code::Set_local || op == Op_code::Get_upvalue || op == Op_code::Set_upvalue ||
-                op == Op_code::Call || op == Op_code::Make_closure || op == Op_code::Get_field || op == Op_code::Set_field ||
-                op == Op_code::Create_array || op == Op_code::Cast)
-            {
+            if (op == Op_code::Constant || op == Op_code::Define_global || op == Op_code::Get_global || op == Op_code::Match_variant
+                || op == Op_code::Get_local || op == Op_code::Set_local || op == Op_code::Get_upvalue || op == Op_code::Set_upvalue
+                || op == Op_code::Call || op == Op_code::Make_closure || op == Op_code::Get_field || op == Op_code::Set_field
+                || op == Op_code::Create_array || op == Op_code::Cast) {
                 ls >> arg1;
                 current_closure->chunk->write(static_cast<uint8_t>(std::stoi(arg1.substr(1))), {0, 0});
-            }
-            else if (op == Op_code::Construct_union || op == Op_code::Construct_model)
-            {
+            } else if (op == Op_code::Construct_union || op == Op_code::Construct_model) {
                 ls >> arg1 >> arg2;
                 current_closure->chunk->write(static_cast<uint8_t>(std::stoi(arg1.substr(1))), {0, 0});
                 current_closure->chunk->write(static_cast<uint8_t>(std::stoi(arg2.substr(1))), {0, 0});
-            }
-            else if (op == Op_code::Jump || op == Op_code::Jump_if_false || op == Op_code::Loop || op == Op_code::Jump_if_true)
-            {
+            } else if (op == Op_code::Jump || op == Op_code::Jump_if_false || op == Op_code::Loop || op == Op_code::Jump_if_true) {
                 ls >> arg1;
                 size_t inst_offset = current_closure->chunk->code.size() - 1;
                 size_t patch_offset = current_closure->chunk->code.size();
@@ -409,4 +364,4 @@ mem::rc_ptr<Closure_value> Assembler::assemble(const std::string &ir_source)
     return closures[0];
 }
 
-}  // namespace phos::vm
+} // namespace phos::vm

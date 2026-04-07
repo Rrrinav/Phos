@@ -3,11 +3,18 @@
 // This file mixes one stable feature with a few syntax forms that are still
 // experimental.
 
-// f-strings are real today. The parser expands them into string concatenation.
+// f-strings are real today.
 let package_name := "Phos";
-let version_label := 1.0;
+let major_version: i32 = 1;
+let minor_version: i32 = 0;
+let ready := true;
+let values := [1, 2, 3];
+let nothing := nil;
 
-print(f"{package_name} v{version_label}");
+// Interpolations accept any runtime value.
+print(f"{package_name} v{major_version}.{minor_version}");
+print(f"ready={ready} values={values} nothing={nothing}");
+print(f"ready={ready} values={values} nothing={nothing}");
 
 // ---------------------------------------------------------------------------
 // Experimental surface

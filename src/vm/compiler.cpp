@@ -1,10 +1,11 @@
 #include "compiler.hpp"
-#include <algorithm>
-#include <print>
+
 #include "opcodes.hpp"
 
-namespace phos::vm
-{
+#include <algorithm>
+#include <print>
+
+namespace phos::vm {
 
 static const types::Function_type *find_model_method_signature(const types::Type &type, const std::string &name)
 {
@@ -76,13 +77,15 @@ Result<mem::rc_ptr<Closure_value>> Compiler::compile(const std::vector<ast::Stmt
 
 // Scoping & Locals
 
-void Compiler::begin_scope() { current()->scope_depth++; }
+void Compiler::begin_scope()
+{
+    current()->scope_depth++;
+}
 
 void Compiler::end_scope(phos::ast::Source_location loc)
 {
     current()->scope_depth--;
-    while (!current()->locals.empty() && current()->locals.back().depth > current()->scope_depth)
-    {
+    while (!current()->locals.empty() && current()->locals.back().depth > current()->scope_depth) {
         emit_op(Op_code::Pop, loc);
         current()->locals.pop_back();
     }
@@ -186,7 +189,8 @@ void Compiler::visit_function_stmt(const ast::Function_stmt &stmt)
 {
     // 1. Build the Signature
     types::Function_type sig;
-    for (const auto &p : stmt.parameters) sig.parameter_types.push_back(p.type);
+    for (const auto &p : stmt.parameters)
+        sig.parameter_types.push_back(p.type);
     sig.return_type = stmt.return_type;
 
     // 2. Setup isolated Chunk and State
@@ -199,7 +203,8 @@ void Compiler::visit_function_stmt(const ast::Function_stmt &stmt)
     current()->locals.push_back(Local{stmt.name, 0});
 
     // 4. Define parameters as standard local variables (Slots 1, 2, 3...)
-    for (const auto &p : stmt.parameters) current()->locals.push_back(Local{p.name, 0});
+    for (const auto &p : stmt.parameters)
+        current()->locals.push_back(Local{p.name, 0});
 
     // 5. Compile the body
     compile_stmt(stmt.body);
@@ -210,7 +215,7 @@ void Compiler::visit_function_stmt(const ast::Function_stmt &stmt)
 
     // 7. Pop the finished compiler state AND grab upvalues
     auto finished_closure = current()->closure;
-    auto upvalues = current()->upvalues;  // <--- Grab before pop!
+    auto upvalues = current()->upvalues; // <--- Grab before pop!
     states.pop_back();
 
     // 8. Emit the new function as a Closure
@@ -219,21 +224,17 @@ void Compiler::visit_function_stmt(const ast::Function_stmt &stmt)
     emit_byte(static_cast<uint8_t>(idx), stmt.loc);
 
     // Loop through upvalues and emit their routing instructions
-    for (const auto &uv : upvalues)
-    {
+    for (const auto &uv : upvalues) {
         emit_byte(uv.is_local ? 1 : 0, stmt.loc);
         emit_byte(uv.index, stmt.loc);
     }
 
     // 9. Bind it to the variable name!
-    if (current()->scope_depth == 0)
-    {
+    if (current()->scope_depth == 0) {
         uint8_t name_idx = identifier_constant(stmt.name, stmt.loc);
         emit_op(Op_code::Define_global, stmt.loc);
         emit_byte(name_idx, stmt.loc);
-    }
-    else
-    {
+    } else {
         current()->locals.push_back(Local{stmt.name, current()->scope_depth});
     }
 }
@@ -241,7 +242,8 @@ void Compiler::visit_function_stmt(const ast::Function_stmt &stmt)
 void Compiler::visit_closure_expr(const ast::Closure_expr &expr)
 {
     types::Function_type sig;
-    for (const auto &p : expr.parameters) sig.parameter_types.push_back(p.type);
+    for (const auto &p : expr.parameters)
+        sig.parameter_types.push_back(p.type);
     sig.return_type = expr.return_type;
 
     auto chunk = mem::make_rc<Chunk>();
@@ -250,7 +252,8 @@ void Compiler::visit_closure_expr(const ast::Closure_expr &expr)
     states.push_back({closure, {}, {}, 0});
 
     current()->locals.push_back(Local{"<closure>", 0});
-    for (const auto &p : expr.parameters) current()->locals.push_back(Local{p.name, 0});
+    for (const auto &p : expr.parameters)
+        current()->locals.push_back(Local{p.name, 0});
 
     compile_stmt(expr.body);
 
@@ -258,7 +261,7 @@ void Compiler::visit_closure_expr(const ast::Closure_expr &expr)
     emit_op(Op_code::Return, expr.loc);
 
     auto finished_closure = current()->closure;
-    auto upvalues = current()->upvalues;  // <--- Grab before pop!
+    auto upvalues = current()->upvalues; // <--- Grab before pop!
     states.pop_back();
 
     // Emit Make_closure and routing bytes
@@ -266,8 +269,7 @@ void Compiler::visit_closure_expr(const ast::Closure_expr &expr)
     emit_op(Op_code::Make_closure, expr.loc);
     emit_byte(static_cast<uint8_t>(idx), expr.loc);
 
-    for (const auto &uv : upvalues)
-    {
+    for (const auto &uv : upvalues) {
         emit_byte(uv.is_local ? 1 : 0, expr.loc);
         emit_byte(uv.index, expr.loc);
     }
@@ -275,20 +277,16 @@ void Compiler::visit_closure_expr(const ast::Closure_expr &expr)
 
 void Compiler::visit_call_expr(const ast::Call_expr &expr)
 {
-    if (auto *var_callee = std::get_if<ast::Variable_expr>(&expr.callee->node))
-    {
-        if (var_callee->name == "iter" && expr.arguments.size() == 1)
-        {
+    if (auto *var_callee = std::get_if<ast::Variable_expr>(&expr.callee->node)) {
+        if (var_callee->name == "iter" && expr.arguments.size() == 1) {
             auto arg_type = ast::get_type(expr.arguments[0].value->node);
 
-            if (is_iterator_protocol_type(arg_type))
-            {
+            if (is_iterator_protocol_type(arg_type)) {
                 compile_expr(expr.arguments[0].value);
                 return;
             }
 
-            if (has_iter_method(arg_type))
-            {
+            if (has_iter_method(arg_type)) {
                 ast::Method_call_expr method_expr{
                     .object = expr.arguments[0].value,
                     .method_name = "iter",
@@ -305,12 +303,9 @@ void Compiler::visit_call_expr(const ast::Call_expr &expr)
     // First, push the function object
     compile_expr(expr.callee);
 
-    if (auto *var_callee = std::get_if<ast::Variable_expr>(&expr.callee->node))
-    {
-        if (auto *native_sig = find_native_signature(*this, var_callee->name, expr.native_signature_index))
-        {
-            for (size_t i = 0; i < expr.arguments.size(); ++i)
-            {
+    if (auto *var_callee = std::get_if<ast::Variable_expr>(&expr.callee->node)) {
+        if (auto *native_sig = find_native_signature(*this, var_callee->name, expr.native_signature_index)) {
+            for (size_t i = 0; i < expr.arguments.size(); ++i) {
                 if (expr.arguments[i].value)
                     compile_expr(expr.arguments[i].value);
                 else
@@ -324,7 +319,8 @@ void Compiler::visit_call_expr(const ast::Call_expr &expr)
     }
 
     // Then, push all the arguments in order
-    for (const auto &arg : expr.arguments) compile_expr(arg.value);
+    for (const auto &arg : expr.arguments)
+        compile_expr(arg.value);
 
     // Emit the magical Call opcode with the arity!
     emit_op(Op_code::Call, expr.loc);
@@ -336,7 +332,7 @@ void Compiler::visit_return_stmt(const ast::Return_stmt &stmt)
     if (stmt.expression)
         compile_expr(stmt.expression);
     else
-        emit_op(Op_code::Nil, stmt.loc);  // Return nil if empty
+        emit_op(Op_code::Nil, stmt.loc); // Return nil if empty
 
     emit_op(Op_code::Return, stmt.loc);
 }
@@ -347,7 +343,8 @@ void Compiler::visit_return_stmt(const ast::Return_stmt &stmt)
 
 void Compiler::visit_print_stmt(const ast::Print_stmt &stmt)
 {
-    for (auto *expr : stmt.expressions) compile_expr(expr);
+    for (auto *expr : stmt.expressions)
+        compile_expr(expr);
 
     emit_constant(Value(stmt.sep), stmt.loc);
     emit_constant(Value(stmt.end), stmt.loc);
@@ -365,7 +362,10 @@ void Compiler::visit_expr_stmt(const ast::Expr_stmt &stmt)
     compile_expr(stmt.expression);
     emit_op(Op_code::Pop, stmt.loc);
 }
-void Compiler::visit_literal_expr(const ast::Literal_expr &expr) { emit_constant(expr.value, expr.loc); }
+void Compiler::visit_literal_expr(const ast::Literal_expr &expr)
+{
+    emit_constant(expr.value, expr.loc);
+}
 
 void Compiler::visit_var_stmt(const ast::Var_stmt &stmt)
 {
@@ -374,14 +374,11 @@ void Compiler::visit_var_stmt(const ast::Var_stmt &stmt)
     else
         emit_op(Op_code::Nil, stmt.loc);
 
-    if (current()->scope_depth == 0)
-    {
+    if (current()->scope_depth == 0) {
         uint8_t name_idx = identifier_constant(stmt.name, stmt.loc);
         emit_op(Op_code::Define_global, stmt.loc);
         emit_byte(name_idx, stmt.loc);
-    }
-    else
-    {
+    } else {
         current()->locals.push_back(Local{stmt.name, current()->scope_depth});
     }
 }
@@ -389,7 +386,8 @@ void Compiler::visit_var_stmt(const ast::Var_stmt &stmt)
 void Compiler::visit_block_stmt(const ast::Block_stmt &stmt)
 {
     begin_scope();
-    for (auto *s : stmt.statements) compile_stmt(s);
+    for (auto *s : stmt.statements)
+        compile_stmt(s);
     end_scope(stmt.loc);
 }
 
@@ -426,22 +424,19 @@ void Compiler::visit_for_stmt(const ast::For_stmt &stmt)
         compile_stmt(stmt.initializer);
     size_t loop_start = current_chunk()->code.size();
     size_t exit_jump = -1;
-    if (stmt.condition)
-    {
+    if (stmt.condition) {
         compile_expr(stmt.condition);
         exit_jump = emit_jump(Op_code::Jump_if_false, stmt.loc);
         emit_op(Op_code::Pop, stmt.loc);
     }
     if (stmt.body)
         compile_stmt(stmt.body);
-    if (stmt.increment)
-    {
+    if (stmt.increment) {
         compile_expr(stmt.increment);
         emit_op(Op_code::Pop, stmt.loc);
     }
     emit_loop(loop_start, stmt.loc);
-    if (stmt.condition)
-    {
+    if (stmt.condition) {
         patch_jump(exit_jump, stmt.loc);
         emit_op(Op_code::Pop, stmt.loc);
     }
@@ -454,13 +449,10 @@ void Compiler::visit_for_in_stmt(const ast::For_in_stmt &stmt)
 
     auto iterable_type = ast::get_type(stmt.iterable->node);
 
-    // Normalize any rangeable value into an iterator once, then loop over it.
-    if (is_iterator_protocol_type(iterable_type))
-    {
+    // 1. Normalize the iterable onto the stack
+    if (is_iterator_protocol_type(iterable_type)) {
         compile_expr(stmt.iterable);
-    }
-    else if (has_iter_method(iterable_type))
-    {
+    } else if (has_iter_method(iterable_type)) {
         ast::Method_call_expr iter_method{
             .object = stmt.iterable,
             .method_name = "iter",
@@ -469,9 +461,7 @@ void Compiler::visit_for_in_stmt(const ast::For_in_stmt &stmt)
             .loc = stmt.loc,
         };
         visit_method_call_expr(iter_method);
-    }
-    else
-    {
+    } else {
         uint8_t iter_name_idx = identifier_constant("iter", stmt.loc);
         emit_op(Op_code::Get_global, stmt.loc);
         emit_byte(iter_name_idx, stmt.loc);
@@ -483,76 +473,71 @@ void Compiler::visit_for_in_stmt(const ast::For_in_stmt &stmt)
     current()->locals.push_back(Local{"<iter>", current()->scope_depth});
     int iter_slot = static_cast<int>(current()->locals.size()) - 1;
 
-    size_t loop_start = current_chunk()->code.size();
-
     auto iter_type = has_iter_method(iterable_type)
-                   ? find_model_method_signature(iterable_type, "iter")->return_type
-                   : (is_iterator_protocol_type(iterable_type) ? iterable_type : types::Type(mem::make_rc<types::Iterator_type>(types::Primitive_kind::Any)));
+        ? find_model_method_signature(iterable_type, "iter")->return_type
+        : (is_iterator_protocol_type(iterable_type) ? iterable_type
+                                                    : types::Type(mem::make_rc<types::Iterator_type>(types::Primitive_kind::Any)));
 
     bool builtin_iter = std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(iter_type);
 
-    if (builtin_iter)
-    {
-        uint8_t get_name_idx = identifier_constant("Iter::get", stmt.loc);
-        emit_op(Op_code::Get_global, stmt.loc);
-        emit_byte(get_name_idx, stmt.loc);
-        emit_op(Op_code::Get_local, stmt.loc);
-        emit_byte(static_cast<uint8_t>(iter_slot), stmt.loc);
-        emit_op(Op_code::Call, stmt.loc);
-        emit_byte(1, stmt.loc);
-    }
-    else
-    {
-        std::string next_global = std::get<mem::rc_ptr<types::Model_type>>(iter_type)->name + "::next";
-        uint8_t next_name_idx = identifier_constant(next_global, stmt.loc);
-        emit_op(Op_code::Get_global, stmt.loc);
-        emit_byte(next_name_idx, stmt.loc);
-        emit_op(Op_code::Get_local, stmt.loc);
-        emit_byte(static_cast<uint8_t>(iter_slot), stmt.loc);
-        emit_op(Op_code::Call, stmt.loc);
-        emit_byte(1, stmt.loc);
-    }
+    std::string has_next_name = builtin_iter ? "Iter::has_next" : std::get<mem::rc_ptr<types::Model_type>>(iter_type)->name + "::has_next";
+    std::string next_name = builtin_iter ? "Iter::next" : std::get<mem::rc_ptr<types::Model_type>>(iter_type)->name + "::next";
+    std::string get_name = builtin_iter ? "Iter::get" : std::get<mem::rc_ptr<types::Model_type>>(iter_type)->name + "::get";
 
+    // 2. Pre-allocate the loop variable slot BEFORE the loop
     begin_scope();
     current()->locals.push_back(Local{stmt.var_name, current()->scope_depth});
     int loop_var_slot = static_cast<int>(current()->locals.size()) - 1;
+    emit_op(Op_code::Nil, stmt.loc);
 
+    size_t loop_start = current_chunk()->code.size();
+
+    // Condition: has_next(1) — checks if there is a next item
+    emit_op(Op_code::Get_global, stmt.loc);
+    emit_byte(identifier_constant(has_next_name, stmt.loc), stmt.loc);
     emit_op(Op_code::Get_local, stmt.loc);
-    emit_byte(static_cast<uint8_t>(loop_var_slot), stmt.loc);
-    size_t exit_jump = emit_jump(Op_code::Jump_if_nil, stmt.loc);
+    emit_byte(static_cast<uint8_t>(iter_slot), stmt.loc);
+    emit_constant(Value(int64_t(1)), stmt.loc);
+    emit_op(Op_code::Call, stmt.loc);
+    emit_byte(2, stmt.loc);
+
+    size_t exit_jump = emit_jump(Op_code::Jump_if_false, stmt.loc);
     emit_op(Op_code::Pop, stmt.loc);
 
+    // Advance and fetch: next(1)
+    emit_op(Op_code::Get_global, stmt.loc);
+    emit_byte(identifier_constant(next_name, stmt.loc), stmt.loc);
+    emit_op(Op_code::Get_local, stmt.loc);
+    emit_byte(static_cast<uint8_t>(iter_slot), stmt.loc);
+    emit_constant(Value(int64_t(1)), stmt.loc);
+    emit_op(Op_code::Call, stmt.loc);
+    emit_byte(2, stmt.loc);
+
+    // Store in loop variable
+    emit_op(Op_code::Set_local, stmt.loc);
+    emit_byte(static_cast<uint8_t>(loop_var_slot), stmt.loc);
+    emit_op(Op_code::Pop, stmt.loc);
+
+    // Execute body
     if (stmt.body)
         compile_stmt(stmt.body);
-    end_scope(stmt.loc);
-
-    if (builtin_iter)
-    {
-        uint8_t next_name_idx = identifier_constant("Iter::next", stmt.loc);
-        emit_op(Op_code::Get_global, stmt.loc);
-        emit_byte(next_name_idx, stmt.loc);
-        emit_op(Op_code::Get_local, stmt.loc);
-        emit_byte(static_cast<uint8_t>(iter_slot), stmt.loc);
-        emit_constant(Value(int64_t(1)), stmt.loc);
-        emit_op(Op_code::Call, stmt.loc);
-        emit_byte(2, stmt.loc);
-        emit_op(Op_code::Pop, stmt.loc);
-    }
 
     emit_loop(loop_start, stmt.loc);
     patch_jump(exit_jump, stmt.loc);
     emit_op(Op_code::Pop, stmt.loc);
 
-    end_scope(stmt.loc);
+    // 3. Clean up
+    end_scope(stmt.loc); // cleans up the loop variable
+    end_scope(stmt.loc); // cleans up the <iter> wrapper
 }
 
 void Compiler::visit_model_stmt(const ast::Model_stmt &stmt)
 {
     // Compile every method bound to this model
-    for (const auto *method : stmt.methods)
-    {
+    for (const auto *method : stmt.methods) {
         types::Function_type sig;
-        for (const auto &p : method->parameters) sig.parameter_types.push_back(p.type);
+        for (const auto &p : method->parameters)
+            sig.parameter_types.push_back(p.type);
         sig.return_type = method->return_type;
 
         auto chunk = mem::make_rc<Chunk>();
@@ -571,7 +556,8 @@ void Compiler::visit_model_stmt(const ast::Model_stmt &stmt)
         if (!method->is_static)
             current()->locals.push_back(Local{"this", 0});
 
-        for (const auto &p : method->parameters) current()->locals.push_back(Local{p.name, 0});
+        for (const auto &p : method->parameters)
+            current()->locals.push_back(Local{p.name, 0});
 
         compile_stmt(method->body);
 
@@ -579,7 +565,7 @@ void Compiler::visit_model_stmt(const ast::Model_stmt &stmt)
         emit_op(Op_code::Return, method->loc);
 
         auto finished_closure = current()->closure;
-        auto upvalues = current()->upvalues;  // <--- Grab before pop!
+        auto upvalues = current()->upvalues; // <--- Grab before pop!
         states.pop_back();
 
         // Emit Make_closure and routing bytes
@@ -587,8 +573,7 @@ void Compiler::visit_model_stmt(const ast::Model_stmt &stmt)
         emit_op(Op_code::Make_closure, method->loc);
         emit_byte(static_cast<uint8_t>(idx), method->loc);
 
-        for (const auto &uv : upvalues)
-        {
+        for (const auto &uv : upvalues) {
             emit_byte(uv.is_local ? 1 : 0, method->loc);
             emit_byte(uv.index, method->loc);
         }
@@ -626,21 +611,15 @@ void Compiler::visit_match_stmt(const ast::Match_stmt &stmt)
     current()->locals.push_back(Local{"<match_subject>", current()->scope_depth});
     std::vector<size_t> end_jumps;
 
-    for (const auto &arm : stmt.arms)
-    {
-        if (arm.is_wildcard)
-        {
+    for (const auto &arm : stmt.arms) {
+        if (arm.is_wildcard) {
             emit_op(Op_code::True, stmt.loc);
-        }
-        else if (auto *literal = std::get_if<ast::Literal_expr>(&arm.pattern->node))
-        {
+        } else if (auto *literal = std::get_if<ast::Literal_expr>(&arm.pattern->node)) {
             emit_op(Op_code::Get_local, stmt.loc);
             emit_byte(static_cast<uint8_t>(current()->locals.size() - 1), stmt.loc);
             compile_expr(arm.pattern);
             emit_op(Op_code::Equal, stmt.loc);
-        }
-        else if (auto *range = std::get_if<ast::Range_expr>(&arm.pattern->node))
-        {
+        } else if (auto *range = std::get_if<ast::Range_expr>(&arm.pattern->node)) {
             uint8_t contains_idx = identifier_constant("Iter::contains", stmt.loc);
             emit_op(Op_code::Get_global, stmt.loc);
             emit_byte(contains_idx, stmt.loc);
@@ -659,54 +638,44 @@ void Compiler::visit_match_stmt(const ast::Match_stmt &stmt)
 
             emit_op(Op_code::Call, stmt.loc);
             emit_byte(2, stmt.loc);
-        }
-        else if (auto *static_path = std::get_if<ast::Static_path_expr>(&arm.pattern->node))
-        {
+        } else if (auto *static_path = std::get_if<ast::Static_path_expr>(&arm.pattern->node)) {
             // 2. Safely emit Match_variant ONLY if the subject is actually a Union!
-            if (is_union_subject)
-            {
+            if (is_union_subject) {
                 emit_op(Op_code::Match_variant, stmt.loc);
                 emit_byte(identifier_constant(static_path->member.lexeme, stmt.loc), stmt.loc);
-            }
-            else
-            {
+            } else {
                 // Otherwise, treat it as a standard Enum value check
                 emit_op(Op_code::Get_local, stmt.loc);
                 emit_byte(static_cast<uint8_t>(current()->locals.size() - 1), stmt.loc);
                 compile_expr(arm.pattern);
                 emit_op(Op_code::Equal, stmt.loc);
             }
-        }
-        else if (auto *member = std::get_if<ast::Enum_member_expr>(&arm.pattern->node))
-        {
-            if (is_union_subject)
-            {
+        } else if (auto *member = std::get_if<ast::Enum_member_expr>(&arm.pattern->node)) {
+            if (is_union_subject) {
                 emit_op(Op_code::Match_variant, stmt.loc);
                 emit_byte(identifier_constant(member->member_name, stmt.loc), stmt.loc);
-            }
-            else
-            {
+            } else {
                 emit_op(Op_code::Get_local, stmt.loc);
                 emit_byte(static_cast<uint8_t>(current()->locals.size() - 1), stmt.loc);
                 compile_expr(arm.pattern);
                 emit_op(Op_code::Equal, stmt.loc);
             }
-        }
-        else
-        {
+        } else {
             // --- NEW: THE CUSTOM PROTOCOL EXECUTION ---
             types::Type pattern_type = ast::get_type(arm.pattern->node);
             bool uses_custom_protocol = false;
 
-            if (auto *model_t = std::get_if<mem::rc_ptr<types::Model_type>>(&pattern_type))
-            {
-                auto& methods = (*model_t)->methods;
-                if (auto it = std::find_if(methods.begin(), methods.end(), [] (std::pair<std::string, types::Function_type>& x) { return x.first == "__match__"; }); it != methods.end())
+            if (auto *model_t = std::get_if<mem::rc_ptr<types::Model_type>>(&pattern_type)) {
+                auto &methods = (*model_t)->methods;
+                if (auto it = std::find_if(
+                        methods.begin(),
+                        methods.end(),
+                        [](std::pair<std::string, types::Function_type> &x) { return x.first == "__match__"; });
+                    it != methods.end())
                     uses_custom_protocol = true;
             }
 
-            if (uses_custom_protocol)
-            {
+            if (uses_custom_protocol) {
                 auto model_type = types::get_model_type(pattern_type);
                 std::string global_method_name = model_type->name + "::__match__";
 
@@ -724,19 +693,15 @@ void Compiler::visit_match_stmt(const ast::Match_stmt &stmt)
                 // 4. Call the method! (Arity 2: 'this' + 'subject') -> leaves a bool on stack
                 emit_op(Op_code::Call, stmt.loc);
                 emit_byte(2, stmt.loc);
-            }
-            else if (std::holds_alternative<ast::Anon_model_literal_expr>(arm.pattern->node) ||
-                     std::holds_alternative<ast::Model_literal_expr>(arm.pattern->node))
-            {
+            } else if (
+                std::holds_alternative<ast::Anon_model_literal_expr>(arm.pattern->node)
+                || std::holds_alternative<ast::Model_literal_expr>(arm.pattern->node)) {
                 // Structural field-by-field match
                 // The subject is already on the stack as a local — fetch its model type
                 auto *model_t = std::get_if<mem::rc_ptr<types::Model_type>>(&pattern_type);
-                if (!model_t)
-                {
+                if (!model_t) {
                     emit_op(Op_code::False, stmt.loc);
-                }
-                else
-                {
+                } else {
                     auto &fields = (*model_t)->fields;
                     // Collect the pattern's field values
                     // We'll emit: (subj.f0 == pat.f0) && (subj.f1 == pat.f1) && ...
@@ -745,22 +710,17 @@ void Compiler::visit_match_stmt(const ast::Match_stmt &stmt)
                     // Helper: get the pattern fields in signature order
                     std::vector<ast::Expr *> pattern_field_exprs(fields.size(), nullptr);
 
-                    if (auto *anon = std::get_if<ast::Anon_model_literal_expr>(&arm.pattern->node))
-                    {
+                    if (auto *anon = std::get_if<ast::Anon_model_literal_expr>(&arm.pattern->node)) {
                         for (size_t i = 0; i < fields.size(); ++i)
                             for (auto &[name, val_expr] : anon->fields)
-                                if (name == fields[i].first)
-                                {
+                                if (name == fields[i].first) {
                                     pattern_field_exprs[i] = val_expr;
                                     break;
                                 }
-                    }
-                    else if (auto *named = std::get_if<ast::Model_literal_expr>(&arm.pattern->node))
-                    {
+                    } else if (auto *named = std::get_if<ast::Model_literal_expr>(&arm.pattern->node)) {
                         for (size_t i = 0; i < fields.size(); ++i)
                             for (auto &[name, val_expr] : named->fields)
-                                if (name == fields[i].first)
-                                {
+                                if (name == fields[i].first) {
                                     pattern_field_exprs[i] = val_expr;
                                     break;
                                 }
@@ -777,8 +737,7 @@ void Compiler::visit_match_stmt(const ast::Match_stmt &stmt)
                     emit_op(Op_code::Equal, stmt.loc);
 
                     // AND in each subsequent field
-                    for (size_t i = 1; i < fields.size(); ++i)
-                    {
+                    for (size_t i = 1; i < fields.size(); ++i) {
                         size_t short_circuit = emit_jump(Op_code::Jump_if_false, stmt.loc);
                         emit_op(Op_code::Pop, stmt.loc);
 
@@ -800,12 +759,11 @@ void Compiler::visit_match_stmt(const ast::Match_stmt &stmt)
 
         begin_scope();
 
-        bool is_union_match = !arm.is_wildcard && is_union_subject &&
-                              (std::holds_alternative<ast::Static_path_expr>(arm.pattern->node) ||
-                               std::holds_alternative<ast::Enum_member_expr>(arm.pattern->node));
+        bool is_union_match = !arm.is_wildcard && is_union_subject
+            && (std::holds_alternative<ast::Static_path_expr>(arm.pattern->node)
+                || std::holds_alternative<ast::Enum_member_expr>(arm.pattern->node));
 
-        if (is_union_match)
-        {
+        if (is_union_match) {
             if (!arm.bind_name.empty())
                 current()->locals.push_back(Local{arm.bind_name, current()->scope_depth});
             else
@@ -828,7 +786,8 @@ void Compiler::visit_match_stmt(const ast::Match_stmt &stmt)
 
     // Patch the jumps to land exactly ON the Pop instruction!
     // This ensures successful branches clean up the match subject before continuing.
-    for (size_t j : end_jumps) patch_jump(j, stmt.loc);
+    for (size_t j : end_jumps)
+        patch_jump(j, stmt.loc);
 
     emit_op(Op_code::Pop, stmt.loc);
     current()->locals.pop_back();
@@ -837,18 +796,13 @@ void Compiler::visit_match_stmt(const ast::Match_stmt &stmt)
 void Compiler::visit_variable_expr(const ast::Variable_expr &expr)
 {
     int arg = resolve_local(expr.name);
-    if (arg != -1)
-    {
+    if (arg != -1) {
         emit_op(Op_code::Get_local, expr.loc);
         emit_byte(static_cast<uint8_t>(arg), expr.loc);
-    }
-    else if (int upval = resolve_upvalue(current(), expr.name); upval != -1)
-    {
+    } else if (int upval = resolve_upvalue(current(), expr.name); upval != -1) {
         emit_op(Op_code::Get_upvalue, expr.loc);
         emit_byte(static_cast<uint8_t>(upval), expr.loc);
-    }
-    else
-    {
+    } else {
         uint8_t name_idx = identifier_constant(expr.name, expr.loc);
         emit_op(Op_code::Get_global, expr.loc);
         emit_byte(name_idx, expr.loc);
@@ -859,18 +813,13 @@ void Compiler::visit_assignment_expr(const ast::Assignment_expr &expr)
 {
     compile_expr(expr.value);
     int arg = resolve_local(expr.name);
-    if (arg != -1)
-    {
+    if (arg != -1) {
         emit_op(Op_code::Set_local, expr.loc);
         emit_byte(static_cast<uint8_t>(arg), expr.loc);
-    }
-    else if (int upval = resolve_upvalue(current(), expr.name); upval != -1)
-    {
+    } else if (int upval = resolve_upvalue(current(), expr.name); upval != -1) {
         emit_op(Op_code::Set_upvalue, expr.loc);
         emit_byte(static_cast<uint8_t>(upval), expr.loc);
-    }
-    else
-    {
+    } else {
         uint8_t name_idx = identifier_constant(expr.name, expr.loc);
         emit_op(Op_code::Set_global, expr.loc);
         emit_byte(name_idx, expr.loc);
@@ -879,17 +828,14 @@ void Compiler::visit_assignment_expr(const ast::Assignment_expr &expr)
 
 void Compiler::visit_binary_expr(const ast::Binary_expr &expr)
 {
-    if (expr.op == lex::TokenType::LogicalAnd)
-    {
+    if (expr.op == lex::TokenType::LogicalAnd) {
         compile_expr(expr.left);
         size_t end_jump = emit_jump(Op_code::Jump_if_false, expr.loc);
         emit_op(Op_code::Pop, expr.loc);
         compile_expr(expr.right);
         patch_jump(end_jump, expr.loc);
         return;
-    }
-    else if (expr.op == lex::TokenType::LogicalOr)
-    {
+    } else if (expr.op == lex::TokenType::LogicalOr) {
         compile_expr(expr.left);
         size_t end_jump = emit_jump(Op_code::Jump_if_true, expr.loc);
         emit_op(Op_code::Pop, expr.loc);
@@ -900,77 +846,75 @@ void Compiler::visit_binary_expr(const ast::Binary_expr &expr)
 
     compile_expr(expr.left);
     compile_expr(expr.right);
-    switch (expr.op)
-    {
-        case lex::TokenType::Plus:
-            emit_op(Op_code::Add, expr.loc);
-            break;
-        case lex::TokenType::Minus:
-            emit_op(Op_code::Subtract, expr.loc);
-            break;
-        case lex::TokenType::Star:
-            emit_op(Op_code::Multiply, expr.loc);
-            break;
-        case lex::TokenType::Slash:
-            emit_op(Op_code::Divide, expr.loc);
-            break;
-        case lex::TokenType::Percent:
-            emit_op(Op_code::Modulo, expr.loc);
-            break;
-        case lex::TokenType::Equal:
-            emit_op(Op_code::Equal, expr.loc);
-            break;
-        case lex::TokenType::NotEqual:
-            emit_op(Op_code::Not_equal, expr.loc);
-            break;
-        case lex::TokenType::Less:
-            emit_op(Op_code::Less, expr.loc);
-            break;
-        case lex::TokenType::LessEqual:
-            emit_op(Op_code::Less_equal, expr.loc);
-            break;
-        case lex::TokenType::Greater:
-            emit_op(Op_code::Greater, expr.loc);
-            break;
-        case lex::TokenType::GreaterEqual:
-            emit_op(Op_code::Greater_equal, expr.loc);
-            break;
-        case lex::TokenType::BitAnd:
-            emit_op(Op_code::BitAnd, expr.loc);
-            break;
-        case lex::TokenType::Pipe:
-            emit_op(Op_code::BitOr, expr.loc);
-            break;
-        case lex::TokenType::BitXor:
-            emit_op(Op_code::BitXor, expr.loc);
-            break;
-        case lex::TokenType::BitRshift:
-            emit_op(Op_code::BitRShift, expr.loc);
-            break;
-        case lex::TokenType::BitLShift:
-            emit_op(Op_code::BitLShift, expr.loc);
-            break;
-        default:
-            break;
+    switch (expr.op) {
+    case lex::TokenType::Plus:
+        emit_op(Op_code::Add, expr.loc);
+        break;
+    case lex::TokenType::Minus:
+        emit_op(Op_code::Subtract, expr.loc);
+        break;
+    case lex::TokenType::Star:
+        emit_op(Op_code::Multiply, expr.loc);
+        break;
+    case lex::TokenType::Slash:
+        emit_op(Op_code::Divide, expr.loc);
+        break;
+    case lex::TokenType::Percent:
+        emit_op(Op_code::Modulo, expr.loc);
+        break;
+    case lex::TokenType::Equal:
+        emit_op(Op_code::Equal, expr.loc);
+        break;
+    case lex::TokenType::NotEqual:
+        emit_op(Op_code::Not_equal, expr.loc);
+        break;
+    case lex::TokenType::Less:
+        emit_op(Op_code::Less, expr.loc);
+        break;
+    case lex::TokenType::LessEqual:
+        emit_op(Op_code::Less_equal, expr.loc);
+        break;
+    case lex::TokenType::Greater:
+        emit_op(Op_code::Greater, expr.loc);
+        break;
+    case lex::TokenType::GreaterEqual:
+        emit_op(Op_code::Greater_equal, expr.loc);
+        break;
+    case lex::TokenType::BitAnd:
+        emit_op(Op_code::BitAnd, expr.loc);
+        break;
+    case lex::TokenType::Pipe:
+        emit_op(Op_code::BitOr, expr.loc);
+        break;
+    case lex::TokenType::BitXor:
+        emit_op(Op_code::BitXor, expr.loc);
+        break;
+    case lex::TokenType::BitRshift:
+        emit_op(Op_code::BitRShift, expr.loc);
+        break;
+    case lex::TokenType::BitLShift:
+        emit_op(Op_code::BitLShift, expr.loc);
+        break;
+    default:
+        break;
     }
 }
 
 void Compiler::visit_unary_expr(const ast::Unary_expr &expr)
 {
     compile_expr(expr.right);
-    switch (expr.op)
-    {
-        case lex::TokenType::LogicalNot:
-            emit_op(Op_code::Not, expr.loc);
-            break;
-        case lex::TokenType::BitNot:
-            emit_op(Op_code::BitNot, expr.loc);
-            break;
-        case lex::TokenType::Minus:
-            emit_op(Op_code::Negate, expr.loc);
-            break;
-        default:
-            break;
+    switch (expr.op) {
+    case lex::TokenType::LogicalNot:
+        emit_op(Op_code::Not, expr.loc);
+        break;
+    case lex::TokenType::BitNot:
+        emit_op(Op_code::BitNot, expr.loc);
+        break;
+    case lex::TokenType::Minus:
+        emit_op(Op_code::Negate, expr.loc);
+        break;
+    default:
+        break;
     }
 }
 
@@ -978,8 +922,7 @@ void Compiler::visit_model_literal_expr(const ast::Model_literal_expr &expr)
 {
     auto type_var = expr.type;
 
-    if (std::holds_alternative<mem::rc_ptr<types::Union_type>>(type_var))
-    {
+    if (std::holds_alternative<mem::rc_ptr<types::Union_type>>(type_var)) {
         auto union_type_ptr = std::get<mem::rc_ptr<types::Union_type>>(type_var);
 
         // A union literal only ever has 1 field, as enforced by the Type Checker
@@ -1002,12 +945,9 @@ void Compiler::visit_model_literal_expr(const ast::Model_literal_expr &expr)
     auto model_type_ptr = std::get<mem::rc_ptr<types::Model_type>>(type_var);
 
     // Compile fields in the EXACT memory order dictated by the signature
-    for (const auto &sig_field : model_type_ptr->fields)
-    {
-        for (const auto &ast_field : expr.fields)
-        {
-            if (ast_field.first == sig_field.first)
-            {
+    for (const auto &sig_field : model_type_ptr->fields) {
+        for (const auto &ast_field : expr.fields) {
+            if (ast_field.first == sig_field.first) {
                 compile_expr(ast_field.second);
                 break;
             }
@@ -1027,10 +967,8 @@ void Compiler::visit_field_access_expr(const ast::Field_access_expr &expr)
     auto model_type_ptr = std::get<mem::rc_ptr<types::Model_type>>(type_var);
 
     uint8_t index = 0;
-    for (size_t i = 0; i < model_type_ptr->fields.size(); ++i)
-    {
-        if (model_type_ptr->fields[i].first == expr.field_name)
-        {
+    for (size_t i = 0; i < model_type_ptr->fields.size(); ++i) {
+        if (model_type_ptr->fields[i].first == expr.field_name) {
             index = i;
             break;
         }
@@ -1042,17 +980,15 @@ void Compiler::visit_field_access_expr(const ast::Field_access_expr &expr)
 
 void Compiler::visit_field_assignment_expr(const ast::Field_assignment_expr &expr)
 {
-    compile_expr(expr.value);   // Pushes the value
-    compile_expr(expr.object);  // Pushes the object
+    compile_expr(expr.value);  // Pushes the value
+    compile_expr(expr.object); // Pushes the object
 
     auto type_var = ast::get_type(expr.object->node);
     auto model_type_ptr = std::get<mem::rc_ptr<types::Model_type>>(type_var);
 
     uint8_t index = 0;
-    for (size_t i = 0; i < model_type_ptr->fields.size(); ++i)
-    {
-        if (model_type_ptr->fields[i].first == expr.field_name)
-        {
+    for (size_t i = 0; i < model_type_ptr->fields.size(); ++i) {
+        if (model_type_ptr->fields[i].first == expr.field_name) {
             index = i;
             break;
         }
@@ -1064,16 +1000,16 @@ void Compiler::visit_field_assignment_expr(const ast::Field_assignment_expr &exp
 
 void Compiler::visit_method_call_expr(const ast::Method_call_expr &expr)
 {
-    if (expr.is_closure_field)
-    {
-        compile_expr(expr.object);  // Pushes the Model
+    if (expr.is_closure_field) {
+        compile_expr(expr.object); // Pushes the Model
 
         emit_op(Op_code::Get_field, expr.loc);
-        emit_byte(expr.field_index, expr.loc);  // Replaces Model with the Closure on the stack!
+        emit_byte(expr.field_index, expr.loc); // Replaces Model with the Closure on the stack!
 
-        for (const auto &arg : expr.arguments) compile_expr(arg.value);  // Push args
+        for (const auto &arg : expr.arguments)
+            compile_expr(arg.value); // Push args
 
-        emit_op(Op_code::Call, expr.loc);  // Execute!
+        emit_op(Op_code::Call, expr.loc); // Execute!
         emit_byte(static_cast<uint8_t>(expr.arguments.size()), expr.loc);
         return;
     }
@@ -1081,8 +1017,7 @@ void Compiler::visit_method_call_expr(const ast::Method_call_expr &expr)
     auto type_var = ast::get_type(expr.object->node);
     std::string global_name;
 
-    if (std::holds_alternative<mem::rc_ptr<types::Optional_type>>(type_var) && expr.method_name == "or_else")
-    {
+    if (std::holds_alternative<mem::rc_ptr<types::Optional_type>>(type_var) && expr.method_name == "or_else") {
         compile_expr(expr.object);
         size_t nil_jump = emit_jump(Op_code::Jump_if_nil, expr.loc);
         size_t done_jump = emit_jump(Op_code::Jump, expr.loc);
@@ -1098,8 +1033,7 @@ void Compiler::visit_method_call_expr(const ast::Method_call_expr &expr)
         return;
     }
 
-    if (std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(type_var) && expr.method_name == "get")
-    {
+    if (std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(type_var) && expr.method_name == "get") {
         uint8_t name_idx = identifier_constant("Iter::get", expr.loc);
         emit_op(Op_code::Get_global, expr.loc);
         emit_byte(name_idx, expr.loc);
@@ -1109,9 +1043,8 @@ void Compiler::visit_method_call_expr(const ast::Method_call_expr &expr)
         return;
     }
 
-    if (std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(type_var) &&
-        (expr.method_name == "next" || expr.method_name == "prev" || expr.method_name == "has_next" || expr.method_name == "has_prev"))
-    {
+    if (std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(type_var)
+        && (expr.method_name == "next" || expr.method_name == "prev" || expr.method_name == "has_next" || expr.method_name == "has_prev")) {
         uint8_t name_idx = identifier_constant("Iter::" + expr.method_name, expr.loc);
         emit_op(Op_code::Get_global, expr.loc);
         emit_byte(name_idx, expr.loc);
@@ -1145,12 +1078,10 @@ void Compiler::visit_method_call_expr(const ast::Method_call_expr &expr)
     emit_op(Op_code::Get_global, expr.loc);
     emit_byte(name_idx, expr.loc);
 
-    compile_expr(expr.object);  // Push the hidden 'this'
+    compile_expr(expr.object); // Push the hidden 'this'
 
-    if (auto *native_sig = find_native_signature(*this, global_name, expr.native_signature_index))
-    {
-        for (size_t i = 0; i < expr.arguments.size(); ++i)
-        {
+    if (auto *native_sig = find_native_signature(*this, global_name, expr.native_signature_index)) {
+        for (size_t i = 0; i < expr.arguments.size(); ++i) {
             if (expr.arguments[i].value)
                 compile_expr(expr.arguments[i].value);
             else
@@ -1158,23 +1089,22 @@ void Compiler::visit_method_call_expr(const ast::Method_call_expr &expr)
         }
 
         emit_op(Op_code::Call, expr.loc);
-        emit_byte(static_cast<uint8_t>(expr.arguments.size() + 1), expr.loc);  // +1 for 'this'
+        emit_byte(static_cast<uint8_t>(expr.arguments.size() + 1), expr.loc); // +1 for 'this'
         return;
     }
 
-    for (const auto &arg : expr.arguments) compile_expr(arg.value);
+    for (const auto &arg : expr.arguments)
+        compile_expr(arg.value);
 
     emit_op(Op_code::Call, expr.loc);
-    emit_byte(static_cast<uint8_t>(expr.arguments.size() + 1), expr.loc);  // +1 for 'this'
+    emit_byte(static_cast<uint8_t>(expr.arguments.size() + 1), expr.loc); // +1 for 'this'
 }
 
 void Compiler::visit_static_path_expr(const ast::Static_path_expr &expr)
 {
     auto type_var = ast::get_type(expr.base->node);
-    if (std::holds_alternative<mem::rc_ptr<types::Union_type>>(type_var))
-    {
-        if (!std::holds_alternative<mem::rc_ptr<types::Union_type>>(expr.type))
-        {
+    if (std::holds_alternative<mem::rc_ptr<types::Union_type>>(type_var)) {
+        if (!std::holds_alternative<mem::rc_ptr<types::Union_type>>(expr.type)) {
             emit_op(Op_code::Nil, expr.loc);
             return;
         }
@@ -1188,16 +1118,14 @@ void Compiler::visit_static_path_expr(const ast::Static_path_expr &expr)
         emit_byte(identifier_constant(expr.member.lexeme, expr.loc), expr.loc);
         return;
     }
-    if (std::holds_alternative<mem::rc_ptr<types::Enum_type>>(type_var))
-    {
+    if (std::holds_alternative<mem::rc_ptr<types::Enum_type>>(type_var)) {
         auto enum_type = std::get<mem::rc_ptr<types::Enum_type>>(type_var);
         Value val = enum_type->variants->map.at(expr.member.lexeme);
         emit_constant(val, expr.loc);
         return;
     }
     // e.g., User::new -> Compiles down to Get_global "User::new"
-    if (auto *base_var = std::get_if<ast::Variable_expr>(&expr.base->node))
-    {
+    if (auto *base_var = std::get_if<ast::Variable_expr>(&expr.base->node)) {
         std::string global_name = base_var->name + "::" + expr.member.lexeme;
         uint8_t name_idx = identifier_constant(global_name, expr.loc);
         emit_op(Op_code::Get_global, expr.loc);
@@ -1208,17 +1136,14 @@ void Compiler::visit_static_path_expr(const ast::Static_path_expr &expr)
 void Compiler::visit_enum_member_expr(const ast::Enum_member_expr &expr)
 {
     types::Type base_type = expr.type;
-    if (auto* opt_t = std::get_if<mem::rc_ptr<types::Optional_type>>(&base_type)) {
+    if (auto *opt_t = std::get_if<mem::rc_ptr<types::Optional_type>>(&base_type)) {
         base_type = (*opt_t)->base_type;
     }
 
-    if (auto *enum_type_ptr = std::get_if<mem::rc_ptr<types::Enum_type>>(&base_type))
-    {
+    if (auto *enum_type_ptr = std::get_if<mem::rc_ptr<types::Enum_type>>(&base_type)) {
         Value val = (*enum_type_ptr)->variants->map.at(expr.member_name);
         emit_constant(val, expr.loc);
-    }
-    else
-    {
+    } else {
         emit_op(Op_code::Nil, expr.loc);
     }
 }
@@ -1226,7 +1151,8 @@ void Compiler::visit_enum_member_expr(const ast::Enum_member_expr &expr)
 void Compiler::visit_array_literal_expr(const ast::Array_literal_expr &expr)
 {
     // Push all elements to the stack from left to right
-    for (auto *elem : expr.elements) compile_expr(elem);
+    for (auto *elem : expr.elements)
+        compile_expr(elem);
 
     // Tell the VM to pop N elements and wrap them in an Array_value
     emit_op(Op_code::Create_array, expr.loc);
@@ -1235,17 +1161,15 @@ void Compiler::visit_array_literal_expr(const ast::Array_literal_expr &expr)
 
 void Compiler::visit_array_access_expr(const ast::Array_access_expr &expr)
 {
-    compile_expr(expr.array);  // Pushes the array
-    compile_expr(expr.index);  // Pushes the index
+    compile_expr(expr.array); // Pushes the array
+    compile_expr(expr.index); // Pushes the index
     emit_op(Op_code::Get_index, expr.loc);
 }
 
 void Compiler::visit_cast_expr(const ast::Cast_expr &expr)
 {
-    if (auto *target_array = std::get_if<mem::rc_ptr<types::Array_type>>(&expr.target_type))
-    {
-        if ((*target_array)->element_type == types::Type(types::Primitive_kind::U8))
-        {
+    if (auto *target_array = std::get_if<mem::rc_ptr<types::Array_type>>(&expr.target_type)) {
+        if ((*target_array)->element_type == types::Type(types::Primitive_kind::U8)) {
             uint8_t bytes_idx = identifier_constant("bytes", expr.loc);
             emit_op(Op_code::Get_global, expr.loc);
             emit_byte(bytes_idx, expr.loc);
@@ -1258,25 +1182,23 @@ void Compiler::visit_cast_expr(const ast::Cast_expr &expr)
 
     compile_expr(expr.expression);
 
-    if (std::holds_alternative<types::Primitive_kind>(expr.target_type))
-    {
+    if (std::holds_alternative<types::Primitive_kind>(expr.target_type)) {
         auto prim = std::get<types::Primitive_kind>(expr.target_type);
 
         // We only need runtime casts for actual memory-changing conversions
         // You can expand this if-statement as you add i32, u8, etc.
-        if (types::is_numeric_primitive(prim))
-        {
+        if (types::is_numeric_primitive(prim)) {
             emit_op(Op_code::Cast, expr.loc);
-            emit_byte(static_cast<uint8_t>(prim), expr.loc);  // The operand is the target type!
+            emit_byte(static_cast<uint8_t>(prim), expr.loc); // The operand is the target type!
         }
     }
 }
 
 void Compiler::visit_array_assignment_expr(const ast::Array_assignment_expr &expr)
 {
-    compile_expr(expr.value);  // Pushes the value FIRST
-    compile_expr(expr.array);  // Pushes the array
-    compile_expr(expr.index);  // Pushes the index
+    compile_expr(expr.value); // Pushes the value FIRST
+    compile_expr(expr.array); // Pushes the array
+    compile_expr(expr.index); // Pushes the index
     emit_op(Op_code::Set_index, expr.loc);
 }
 
@@ -1298,8 +1220,7 @@ void Compiler::visit_fstring_expr(const ast::Fstring_expr &expr)
     size_t interpolation_index = 0;
     std::string literal_buf;
 
-    auto append_literal = [&](const std::string &text)
-    {
+    auto append_literal = [&](const std::string &text) {
         if (text.empty())
             return;
 
@@ -1310,8 +1231,7 @@ void Compiler::visit_fstring_expr(const ast::Fstring_expr &expr)
             has_component = true;
     };
 
-    auto append_interpolation = [&](ast::Expr *interpolation)
-    {
+    auto append_interpolation = [&](ast::Expr *interpolation) {
         uint8_t to_str_idx = identifier_constant("to_str", expr.loc);
         emit_op(Op_code::Get_global, expr.loc);
         emit_byte(to_str_idx, expr.loc);
@@ -1326,29 +1246,27 @@ void Compiler::visit_fstring_expr(const ast::Fstring_expr &expr)
     };
 
     size_t i = 0;
-    while (i < expr.raw_template.size())
-    {
-        if (expr.raw_template[i] == '{')
-        {
+    while (i < expr.raw_template.size()) {
+        if (expr.raw_template[i] == '{') {
             append_literal(literal_buf);
             literal_buf.clear();
 
             size_t start = ++i;
             int depth = 1;
-            while (i < expr.raw_template.size() && depth > 0)
-            {
-                if (expr.raw_template[i] == '{')      depth++;
-                else if (expr.raw_template[i] == '}') depth--;
-                if (depth > 0) i++;
+            while (i < expr.raw_template.size() && depth > 0) {
+                if (expr.raw_template[i] == '{')
+                    depth++;
+                else if (expr.raw_template[i] == '}')
+                    depth--;
+                if (depth > 0)
+                    i++;
             }
             (void)start;
             i++;
 
             if (interpolation_index < expr.interpolations.size())
                 append_interpolation(expr.interpolations[interpolation_index++]);
-        }
-        else
-        {
+        } else {
             literal_buf += expr.raw_template[i++];
         }
     }
@@ -1367,8 +1285,7 @@ void Compiler::visit_anon_model_literal_expr(const ast::Anon_model_literal_expr 
         base_type = (*opt_t)->base_type;
 
     // --- 1. UNION ANONYMOUS LITERAL ---
-    if (std::holds_alternative<mem::rc_ptr<types::Union_type>>(base_type))
-    {
+    if (std::holds_alternative<mem::rc_ptr<types::Union_type>>(base_type)) {
         auto union_type_ptr = std::get<mem::rc_ptr<types::Union_type>>(base_type);
 
         // The Type Checker guarantees unions have exactly 1 field here
@@ -1388,10 +1305,10 @@ void Compiler::visit_anon_model_literal_expr(const ast::Anon_model_literal_expr 
     }
 
     // --- 2. MODEL ANONYMOUS LITERAL ---
-    if (std::holds_alternative<mem::rc_ptr<types::Model_type>>(base_type))
-    {
+    if (std::holds_alternative<mem::rc_ptr<types::Model_type>>(base_type)) {
         // Compile each field's value in structural order
-        for (const auto &field : expr.fields) compile_expr(field.second);
+        for (const auto &field : expr.fields)
+            compile_expr(field.second);
 
         auto model_type_ptr = std::get<mem::rc_ptr<types::Model_type>>(base_type);
 
@@ -1406,8 +1323,14 @@ void Compiler::visit_anon_model_literal_expr(const ast::Anon_model_literal_expr 
 // Emitters
 // ============================================================================
 
-void Compiler::emit_op(Op_code op, phos::ast::Source_location loc) { current_chunk()->write(static_cast<uint8_t>(op), loc); }
-void Compiler::emit_byte(uint8_t byte, phos::ast::Source_location loc) { current_chunk()->write(byte, loc); }
+void Compiler::emit_op(Op_code op, phos::ast::Source_location loc)
+{
+    current_chunk()->write(static_cast<uint8_t>(op), loc);
+}
+void Compiler::emit_byte(uint8_t byte, phos::ast::Source_location loc)
+{
+    current_chunk()->write(byte, loc);
+}
 
 void Compiler::emit_constant(Value value, phos::ast::Source_location loc)
 {
@@ -1465,7 +1388,7 @@ int Compiler::add_upvalue(Compiler_state *state, uint8_t index, bool is_local)
 int Compiler::resolve_upvalue(Compiler_state *state, const std::string &name)
 {
     if (state == &states.front())
-        return -1;  // The global script scope has no upvalues
+        return -1; // The global script scope has no upvalues
 
     Compiler_state *parent = state - 1;
 
@@ -1481,4 +1404,4 @@ int Compiler::resolve_upvalue(Compiler_state *state, const std::string &name)
 
     return -1;
 }
-}  // namespace phos::vm
+} // namespace phos::vm

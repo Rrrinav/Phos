@@ -1,17 +1,19 @@
 #include "./virtual_machine.hpp"
 
-#include "../utility/binary_ops.hpp"
 #include "../memory/ref_counted.hpp"
+#include "../utility/binary_ops.hpp"
 #include "../value/value.hpp"
-#include <format>
-
 #include "./chunk.hpp"
 #include "./opcodes.hpp"
 
-namespace phos::vm
-{
+#include <format>
 
-void Virtual_machine::push(Value value) { current_thread->stack.push_back(std::move(value)); }
+namespace phos::vm {
+
+void Virtual_machine::push(Value value)
+{
+    current_thread->stack.push_back(std::move(value));
+}
 
 Value Virtual_machine::pop()
 {
@@ -20,7 +22,10 @@ Value Virtual_machine::pop()
     return val;
 }
 
-Value Virtual_machine::peek(int distance) const { return current_thread->stack[current_thread->stack.size() - 1 - distance]; }
+Value Virtual_machine::peek(int distance) const
+{
+    return current_thread->stack[current_thread->stack.size() - 1 - distance];
+}
 
 ast::Source_location Virtual_machine::get_loc(Call_frame *frame, uint8_t *ip)
 {
@@ -44,21 +49,21 @@ Result<void> Virtual_machine::interpret(mem::rc_ptr<Closure_value> script_closur
     return run();
 }
 
-Result<void> Virtual_machine::call_closure(mem::rc_ptr<Closure_value> closure, int arg_count, Call_frame *&current_frame, uint8_t *&current_ip)
+Result<void>
+Virtual_machine::call_closure(mem::rc_ptr<Closure_value> closure, int arg_count, Call_frame *&current_frame, uint8_t *&current_ip)
 {
     if (arg_count != closure->arity)
         return std::unexpected(err::msg(std::format("Expected {} arguments but got {}.", closure->arity, arg_count), "vm", 0, 0));
 
     // --- THE NATIVE C++ INTERCEPT ---
-    if (closure->native_func)
-    {
+    if (closure->native_func) {
         Value result = closure->native_func(this, arg_count);
 
         // Clean up the stack natively (Drop the args AND the function itself)
         current_thread->stack.resize(current_thread->stack.size() - arg_count - 1);
         push(result);
 
-        return {};  // Return instantly without spinning up a VM frame!
+        return {}; // Return instantly without spinning up a VM frame!
     }
     // ==========================================
 
@@ -106,17 +111,13 @@ mem::rc_ptr<Upvalue_value> Virtual_machine::capture_upvalue(size_t stack_index)
 
 void Virtual_machine::close_upvalues(size_t last_stack_index)
 {
-    for (auto it = current_thread->open_upvalues.begin(); it != current_thread->open_upvalues.end();)
-    {
-        if ((*it)->stack_index >= last_stack_index)
-        {
+    for (auto it = current_thread->open_upvalues.begin(); it != current_thread->open_upvalues.end();) {
+        if ((*it)->stack_index >= last_stack_index) {
             // Scoop the value off the stack and onto the heap!
             (*it)->closed_value = current_thread->stack[(*it)->stack_index];
             (*it)->is_closed = true;
             it = current_thread->open_upvalues.erase(it);
-        }
-        else
-        {
+        } else {
             ++it;
         }
     }
@@ -127,502 +128,462 @@ Result<void> Virtual_machine::run()
     Call_frame *frame = &current_thread->frames.back();
     uint8_t *ip = frame->ip;
 
-    for (;;)
-    {
+    for (;;) {
         uint8_t instruction = *ip++;
 #ifdef DEBUG_VM
-        std::println(std::cerr, "op: {} stack_size: {}", op_code_to_string(static_cast<Op_code>(instruction)), current_thread->stack.size());
+        std::println(
+            std::cerr,
+            "op: {} stack_size: {}",
+            op_code_to_string(static_cast<Op_code>(instruction)),
+            current_thread->stack.size());
 #endif
 
-        switch (static_cast<Op_code>(instruction))
-        {
-            case Op_code::Constant:
-            {
-                uint8_t index = *ip++;
-                push(frame->closure->chunk->constants[index]);
-                break;
-            }
+        switch (static_cast<Op_code>(instruction)) {
+        case Op_code::Constant: {
+            uint8_t index = *ip++;
+            push(frame->closure->chunk->constants[index]);
+            break;
+        }
 
-            case Op_code::Get_local:
-            {
-                uint8_t slot = *ip++;
-                // Fetch perfectly from THIS function's slice of the stack window
-                push(current_thread->stack[frame->stack_offset + slot]);
-                break;
-            }
-            case Op_code::Set_local:
-            {
-                uint8_t slot = *ip++;
-                current_thread->stack[frame->stack_offset + slot] = peek(0);
-                break;
-            }
+        case Op_code::Get_local: {
+            uint8_t slot = *ip++;
+            // Fetch perfectly from THIS function's slice of the stack window
+            push(current_thread->stack[frame->stack_offset + slot]);
+            break;
+        }
+        case Op_code::Set_local: {
+            uint8_t slot = *ip++;
+            current_thread->stack[frame->stack_offset + slot] = peek(0);
+            break;
+        }
 
-            case Op_code::Define_global:
-            {
-                uint8_t index = *ip++;
-                std::string name = get_string(frame->closure->chunk->constants[index]);
-                globals[name] = pop();
-                break;
-            }
-            case Op_code::Get_global:
-            {
-                uint8_t index = *ip++;
-                std::string name = get_string(frame->closure->chunk->constants[index]);
-                auto it = globals.find(name);
-                if (it == globals.end())
-                    return std::unexpected(
+        case Op_code::Define_global: {
+            uint8_t index = *ip++;
+            std::string name = get_string(frame->closure->chunk->constants[index]);
+            globals[name] = pop();
+            break;
+        }
+        case Op_code::Get_global: {
+            uint8_t index = *ip++;
+            std::string name = get_string(frame->closure->chunk->constants[index]);
+            auto it = globals.find(name);
+            if (it == globals.end())
+                return std::unexpected(
                     err::msg(std::format("Undefined variable '{}'.", name), "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
-                push(it->second);
-                break;
-            }
-            case Op_code::Set_global:
-            {
-                uint8_t index = *ip++;
-                std::string name = get_string(frame->closure->chunk->constants[index]);
-                if (globals.find(name) == globals.end())
-                    return std::unexpected(
+            push(it->second);
+            break;
+        }
+        case Op_code::Set_global: {
+            uint8_t index = *ip++;
+            std::string name = get_string(frame->closure->chunk->constants[index]);
+            if (globals.find(name) == globals.end())
+                return std::unexpected(
                     err::msg(std::format("Undefined variable '{}'.", name), "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
-                globals[name] = peek(0);
-                break;
-            }
+            globals[name] = peek(0);
+            break;
+        }
 
-            // --- FUNCTION JUMPING ---
-            case Op_code::Call:
-            {
-                uint8_t arg_count = *ip++;
-                Value callee = peek(arg_count);
+        // --- FUNCTION JUMPING ---
+        case Op_code::Call: {
+            uint8_t arg_count = *ip++;
+            Value callee = peek(arg_count);
 
-                if (auto err = call_value(callee, arg_count, frame, ip); !err)
-                    return err;
+            if (auto err = call_value(callee, arg_count, frame, ip); !err)
+                return err;
 
-                // IMPORTANT: The frame pointer might have been invalidated by vector reallocation!
-                // Refresh our local pointers!
-                frame = &current_thread->frames.back();
-                //ip = frame->ip;
-                break;
-            }
-            case Op_code::Get_upvalue:
-            {
-                uint8_t slot = *ip++;
-                auto upval = frame->closure->upvalues[slot];
-                if (upval->is_closed)
-                    push(upval->closed_value);
-                else
-                    push(current_thread->stack[upval->stack_index]);
-                break;
-            }
+            // IMPORTANT: The frame pointer might have been invalidated by vector reallocation!
+            // Refresh our local pointers!
+            frame = &current_thread->frames.back();
+            // ip = frame->ip;
+            break;
+        }
+        case Op_code::Get_upvalue: {
+            uint8_t slot = *ip++;
+            auto upval = frame->closure->upvalues[slot];
+            if (upval->is_closed)
+                push(upval->closed_value);
+            else
+                push(current_thread->stack[upval->stack_index]);
+            break;
+        }
 
-            case Op_code::Set_upvalue:
-            {
-                uint8_t slot = *ip++;
-                auto upval = frame->closure->upvalues[slot];
-                if (upval->is_closed)
-                    upval->closed_value = peek(0);
-                else
-                    current_thread->stack[upval->stack_index] = peek(0);
-                break;
-            }
+        case Op_code::Set_upvalue: {
+            uint8_t slot = *ip++;
+            auto upval = frame->closure->upvalues[slot];
+            if (upval->is_closed)
+                upval->closed_value = peek(0);
+            else
+                current_thread->stack[upval->stack_index] = peek(0);
+            break;
+        }
 
-            case Op_code::Make_closure:
-            {
-                uint8_t constant_idx = *ip++;
-                auto func_closure = get_closure(frame->closure->chunk->constants[constant_idx]);
+        case Op_code::Make_closure: {
+            uint8_t constant_idx = *ip++;
+            auto func_closure = get_closure(frame->closure->chunk->constants[constant_idx]);
 
-                // Deep copy so each instance gets its own closure scope!
-                auto runtime_closure = mem::make_rc<Closure_value>(*func_closure);
-                runtime_closure->upvalues.clear();
+            // Deep copy so each instance gets its own closure scope!
+            auto runtime_closure = mem::make_rc<Closure_value>(*func_closure);
+            runtime_closure->upvalues.clear();
 
-                for (size_t i = 0; i < func_closure->upvalue_count; ++i)
-                {
-                    uint8_t is_local = *ip++;
-                    uint8_t index = *ip++;
-                    if (is_local)
-                    {
-                        runtime_closure->upvalues.push_back(capture_upvalue(frame->stack_offset + index));
-                    }
-                    else
-                    {
-                        // Pass down the upvalue from the parent closure
-                        runtime_closure->upvalues.push_back(frame->closure->upvalues[index]);
-                    }
+            for (size_t i = 0; i < func_closure->upvalue_count; ++i) {
+                uint8_t is_local = *ip++;
+                uint8_t index = *ip++;
+                if (is_local) {
+                    runtime_closure->upvalues.push_back(capture_upvalue(frame->stack_offset + index));
+                } else {
+                    // Pass down the upvalue from the parent closure
+                    runtime_closure->upvalues.push_back(frame->closure->upvalues[index]);
                 }
-                push(Value(runtime_closure));
-                break;
+            }
+            push(Value(runtime_closure));
+            break;
+        }
+
+        case Op_code::Return: {
+            Value result = pop();
+
+            close_upvalues(frame->stack_offset);
+            size_t old_stack_offset = frame->stack_offset;
+            current_thread->frames.pop_back();
+
+            if (current_thread->frames.empty()) {
+                current_thread->is_completed = true;
+                return {};
             }
 
-            case Op_code::Return:
-            {
-                Value result = pop();
+            current_thread->stack.resize(old_stack_offset);
+            push(result);
 
-                close_upvalues(frame->stack_offset);
-                size_t old_stack_offset = frame->stack_offset;
-                current_thread->frames.pop_back();
+            // Refresh our local pointers to the caller's frame!
+            frame = &current_thread->frames.back();
+            ip = frame->ip;
+            break;
+        }
 
-                if (current_thread->frames.empty())
-                {
-                    current_thread->is_completed = true;
-                    return {};
-                }
-
-                current_thread->stack.resize(old_stack_offset);
-                push(result);
-
-                // Refresh our local pointers to the caller's frame!
-                frame = &current_thread->frames.back();
-                ip = frame->ip;
-                break;
-            }
-
-            // --- Control Flow ---
-            case Op_code::Jump_if_false:
-            {
-                uint16_t offset = (static_cast<uint16_t>(*ip) << 8) | *(ip + 1);
-                ip += 2;
-                Value cond = peek(0);
-                bool is_true = is_bool(cond) ? get_bool(cond) : !is_nil(cond);
-                if (!is_true)
-                    ip += offset;
-                break;
-            }
-            case Op_code::Jump_if_true:
-            {
-                uint16_t offset = (static_cast<uint16_t>(*ip) << 8) | *(ip + 1);
-                ip += 2;
-                Value cond = peek(0);
-                bool is_true = is_bool(cond) ? get_bool(cond) : !is_nil(cond);
-                if (is_true)
-                    ip += offset;
-                break;
-            }
-            case Op_code::Jump_if_nil:
-            {
-                uint16_t offset = (static_cast<uint16_t>(*ip) << 8) | *(ip + 1);
-                ip += 2;
-                if (is_nil(peek(0)))
-                    ip += offset;
-                break;
-            }
-            case Op_code::Jump:
-            {
-                uint16_t offset = (static_cast<uint16_t>(*ip) << 8) | *(ip + 1);
-                ip += 2;
+        // --- Control Flow ---
+        case Op_code::Jump_if_false: {
+            uint16_t offset = (static_cast<uint16_t>(*ip) << 8) | *(ip + 1);
+            ip += 2;
+            Value cond = peek(0);
+            bool is_true = is_bool(cond) ? get_bool(cond) : !is_nil(cond);
+            if (!is_true)
                 ip += offset;
-                break;
-            }
-            case Op_code::Loop:
-            {
-                uint16_t offset = (static_cast<uint16_t>(*ip) << 8) | *(ip + 1);
-                ip += 2;
-                ip -= offset;
-                break;
-            }
+            break;
+        }
+        case Op_code::Jump_if_true: {
+            uint16_t offset = (static_cast<uint16_t>(*ip) << 8) | *(ip + 1);
+            ip += 2;
+            Value cond = peek(0);
+            bool is_true = is_bool(cond) ? get_bool(cond) : !is_nil(cond);
+            if (is_true)
+                ip += offset;
+            break;
+        }
+        case Op_code::Jump_if_nil: {
+            uint16_t offset = (static_cast<uint16_t>(*ip) << 8) | *(ip + 1);
+            ip += 2;
+            if (is_nil(peek(0)))
+                ip += offset;
+            break;
+        }
+        case Op_code::Jump: {
+            uint16_t offset = (static_cast<uint16_t>(*ip) << 8) | *(ip + 1);
+            ip += 2;
+            ip += offset;
+            break;
+        }
+        case Op_code::Loop: {
+            uint16_t offset = (static_cast<uint16_t>(*ip) << 8) | *(ip + 1);
+            ip += 2;
+            ip -= offset;
+            break;
+        }
 
-            case Op_code::Construct_model:
-            {
-                uint8_t field_count = *ip++;
-                uint8_t name_idx = *ip++;
-                std::string sig_name = get_string(frame->closure->chunk->constants[name_idx]);
+        case Op_code::Construct_model: {
+            uint8_t field_count = *ip++;
+            uint8_t name_idx = *ip++;
+            std::string sig_name = get_string(frame->closure->chunk->constants[name_idx]);
 
-                std::vector<Value> fields(field_count);
-                // Pop fields backwards because the compiler pushed them left-to-right
-                for (int i = field_count - 1; i >= 0; --i) fields[i] = pop();
+            std::vector<Value> fields(field_count);
+            // Pop fields backwards because the compiler pushed them left-to-right
+            for (int i = field_count - 1; i >= 0; --i)
+                fields[i] = pop();
 
-                // Construct a lightweight signature reference
-                types::Model_type sig;
-                sig.name = sig_name;
-                push(Value(mem::make_rc<Model_value>(sig, std::move(fields))));
-                break;
-            }
+            // Construct a lightweight signature reference
+            types::Model_type sig;
+            sig.name = sig_name;
+            push(Value(mem::make_rc<Model_value>(sig, std::move(fields))));
+            break;
+        }
 
-            case Op_code::Get_field:
-            {
-                uint8_t index = *ip++;
-                Value obj = pop();
-                auto model_val = get_model(obj);
-                push(model_val->fields[index]);
-                break;
-            }
+        case Op_code::Get_field: {
+            uint8_t index = *ip++;
+            Value obj = pop();
+            auto model_val = get_model(obj);
+            push(model_val->fields[index]);
+            break;
+        }
 
-            case Op_code::Set_field:
-            {
-                uint8_t index = *ip++;
-                Value obj = pop();
-                Value val = peek(0);  // The assigned value was pushed first, so it's under the object
-                auto model_val = get_model(obj);
-                model_val->fields[index] = val;
-                // Leave the assigned value right there on the stack as the result of the expression
-                break;
-            }
+        case Op_code::Set_field: {
+            uint8_t index = *ip++;
+            Value obj = pop();
+            Value val = peek(0); // The assigned value was pushed first, so it's under the object
+            auto model_val = get_model(obj);
+            model_val->fields[index] = val;
+            // Leave the assigned value right there on the stack as the result of the expression
+            break;
+        }
 
-            case Op_code::Add:
-                if (auto err = execute_binary_op(phos::util::add_op, frame, ip); !err)
-                    return err;
-                break;
-            case Op_code::Subtract:
-                if (auto err = execute_binary_op(phos::util::subtract_op, frame, ip); !err)
-                    return err;
-                break;
-            case Op_code::Multiply:
-                if (auto err = execute_binary_op(phos::util::multiply_op, frame, ip); !err)
-                    return err;
-                break;
-            case Op_code::Divide:
-                if (auto err = execute_binary_op(phos::util::divide_op, frame, ip); !err)
-                    return err;
-                break;
-            case Op_code::Modulo:
-                if (auto err = execute_binary_op(phos::util::modulo_op, frame, ip); !err)
-                    return err;
-                break;
-            case Op_code::Equal:
-                if (auto err = execute_binary_op(phos::util::equal_op, frame, ip); !err)
-                    return err;
-                break;
-            case Op_code::Not_equal:
-                if (auto err = execute_binary_op(phos::util::not_equal_op, frame, ip); !err)
-                    return err;
-                break;
-            case Op_code::Less:
-                if (auto err = execute_binary_op(phos::util::less_op, frame, ip); !err)
-                    return err;
-                break;
-            case Op_code::Less_equal:
-                if (auto err = execute_binary_op(phos::util::less_equal_op, frame, ip); !err)
-                    return err;
-                break;
-            case Op_code::Greater:
-                if (auto err = execute_binary_op(phos::util::greater_op, frame, ip); !err)
-                    return err;
-                break;
-            case Op_code::Greater_equal:
-                if (auto err = execute_binary_op(phos::util::greater_equal_op, frame, ip); !err)
-                    return err;
-                break;
-            case Op_code::BitAnd:
-                if (auto err = execute_binary_op(phos::util::bitwise_and_op, frame, ip); !err)
-                    return err;
-                break;
-            case Op_code::BitOr:
-                if (auto err = execute_binary_op(phos::util::bitwise_or_op, frame, ip); !err)
-                    return err;
-                break;
-            case Op_code::BitXor:
-                if (auto err = execute_binary_op(phos::util::bitwise_xor_op, frame, ip); !err)
-                    return err;
-                break;
-            case Op_code::BitLShift:
-                if (auto err = execute_binary_op(phos::util::bitwise_lshift_op, frame, ip); !err)
-                    return err;
-                break;
-            case Op_code::BitRShift:
-                if (auto err = execute_binary_op(phos::util::bitwise_rshift_op, frame, ip); !err)
-                    return err;
-                break;
+        case Op_code::Add:
+            if (auto err = execute_binary_op(phos::util::add_op, frame, ip); !err)
+                return err;
+            break;
+        case Op_code::Subtract:
+            if (auto err = execute_binary_op(phos::util::subtract_op, frame, ip); !err)
+                return err;
+            break;
+        case Op_code::Multiply:
+            if (auto err = execute_binary_op(phos::util::multiply_op, frame, ip); !err)
+                return err;
+            break;
+        case Op_code::Divide:
+            if (auto err = execute_binary_op(phos::util::divide_op, frame, ip); !err)
+                return err;
+            break;
+        case Op_code::Modulo:
+            if (auto err = execute_binary_op(phos::util::modulo_op, frame, ip); !err)
+                return err;
+            break;
+        case Op_code::Equal:
+            if (auto err = execute_binary_op(phos::util::equal_op, frame, ip); !err)
+                return err;
+            break;
+        case Op_code::Not_equal:
+            if (auto err = execute_binary_op(phos::util::not_equal_op, frame, ip); !err)
+                return err;
+            break;
+        case Op_code::Less:
+            if (auto err = execute_binary_op(phos::util::less_op, frame, ip); !err)
+                return err;
+            break;
+        case Op_code::Less_equal:
+            if (auto err = execute_binary_op(phos::util::less_equal_op, frame, ip); !err)
+                return err;
+            break;
+        case Op_code::Greater:
+            if (auto err = execute_binary_op(phos::util::greater_op, frame, ip); !err)
+                return err;
+            break;
+        case Op_code::Greater_equal:
+            if (auto err = execute_binary_op(phos::util::greater_equal_op, frame, ip); !err)
+                return err;
+            break;
+        case Op_code::BitAnd:
+            if (auto err = execute_binary_op(phos::util::bitwise_and_op, frame, ip); !err)
+                return err;
+            break;
+        case Op_code::BitOr:
+            if (auto err = execute_binary_op(phos::util::bitwise_or_op, frame, ip); !err)
+                return err;
+            break;
+        case Op_code::BitXor:
+            if (auto err = execute_binary_op(phos::util::bitwise_xor_op, frame, ip); !err)
+                return err;
+            break;
+        case Op_code::BitLShift:
+            if (auto err = execute_binary_op(phos::util::bitwise_lshift_op, frame, ip); !err)
+                return err;
+            break;
+        case Op_code::BitRShift:
+            if (auto err = execute_binary_op(phos::util::bitwise_rshift_op, frame, ip); !err)
+                return err;
+            break;
 
-            case Op_code::Not:
-                if (auto err = execute_unary_op([](auto v, auto l) { return Result<Value>(Value(!get_bool(v))); }, frame, ip); !err)
-                    return err;
-                break;
-            case Op_code::BitNot:
-            {
-                Value v = pop();
-                auto res = std::visit(
-                [&](const auto &value) -> Result<Value>
-                {
+        case Op_code::Not:
+            if (auto err = execute_unary_op([](auto v, auto l) { return Result<Value>(Value(!get_bool(v))); }, frame, ip); !err)
+                return err;
+            break;
+        case Op_code::BitNot: {
+            Value v = pop();
+            auto res = std::visit(
+                [&](const auto &value) -> Result<Value> {
                     using T = std::decay_t<decltype(value)>;
                     if constexpr (is_integer_cpp_v<T>)
                         return Value(static_cast<T>(~value));
-                    return std::unexpected(err::msg("Operand must be an integer for '~'", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
+                    return std::unexpected(
+                        err::msg("Operand must be an integer for '~'", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
                 },
                 v);
-                if (!res)
-                    return std::unexpected(res.error());
-                push(res.value());
-                break;
-            }
-            case Op_code::Negate:
-            {
-                Value r = pop();
-                auto res = std::visit(
-                [&](const auto &value) -> Result<Value>
-                {
+            if (!res)
+                return std::unexpected(res.error());
+            push(res.value());
+            break;
+        }
+        case Op_code::Negate: {
+            Value r = pop();
+            auto res = std::visit(
+                [&](const auto &value) -> Result<Value> {
                     using T = std::decay_t<decltype(value)>;
                     if constexpr (is_signed_integer_cpp_v<T> || is_float_cpp_v<T>)
                         return Value(static_cast<T>(-value));
                     if constexpr (is_unsigned_integer_cpp_v<T>)
-                        return std::unexpected(err::msg("Operand must not be unsigned for unary '-'", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
+                        return std::unexpected(
+                            err::msg("Operand must not be unsigned for unary '-'", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
                     return std::unexpected(err::msg("Operand must be a number for '-'", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
                 },
                 r);
-                if (!res)
-                    return std::unexpected(res.error());
-                push(res.value());
-                break;
-            }
-            case Op_code::Create_array:
-            {
-                uint8_t count = *ip++;
-                std::vector<Value> elements(count);
+            if (!res)
+                return std::unexpected(res.error());
+            push(res.value());
+            break;
+        }
+        case Op_code::Create_array: {
+            uint8_t count = *ip++;
+            std::vector<Value> elements(count);
 
-                // Pop elements backwards because the compiler pushed them left-to-right
-                for (int i = count - 1; i >= 0; --i) elements[i] = pop();
+            // Pop elements backwards because the compiler pushed them left-to-right
+            for (int i = count - 1; i >= 0; --i)
+                elements[i] = pop();
 
-                // Create a lightweight dummy type to satisfy the Array_value constructor
-                auto dummy_type = types::Type(mem::make_rc<types::Array_type>(types::Primitive_kind::Any));
-                push(Value(mem::make_rc<Array_value>(dummy_type, std::move(elements))));
-                break;
-            }
+            // Create a lightweight dummy type to satisfy the Array_value constructor
+            auto dummy_type = types::Type(mem::make_rc<types::Array_type>(types::Primitive_kind::Any));
+            push(Value(mem::make_rc<Array_value>(dummy_type, std::move(elements))));
+            break;
+        }
 
-            case Op_code::Get_index:
-            {
-                Value index_val = pop();
-                Value array_val = pop();
+        case Op_code::Get_index: {
+            Value index_val = pop();
+            Value array_val = pop();
 
-                auto arr = get_array(array_val);
-                auto maybe_idx = try_get_i64(index_val);
-                if (!maybe_idx)
-                    return std::unexpected(err::msg("Array index must fit into the current i64-backed runtime range."));
-                int64_t idx = *maybe_idx;
+            auto arr = get_array(array_val);
+            auto maybe_idx = try_get_i64(index_val);
+            if (!maybe_idx)
+                return std::unexpected(err::msg("Array index must fit into the current i64-backed runtime range."));
+            int64_t idx = *maybe_idx;
 
-                if (idx < 0 || idx >= static_cast<int64_t>(arr->elements.size()))
-                    return std::unexpected(err::msg("Array index out of bounds."));
+            if (idx < 0 || idx >= static_cast<int64_t>(arr->elements.size()))
+                return std::unexpected(err::msg("Array index out of bounds."));
 
-                push(arr->elements[idx]);
-                break;
-            }
+            push(arr->elements[idx]);
+            break;
+        }
 
-            case Op_code::Set_index:
-            {
-                Value index_val = pop();
-                Value array_val = pop();
-                Value val = peek(0);
+        case Op_code::Set_index: {
+            Value index_val = pop();
+            Value array_val = pop();
+            Value val = peek(0);
 
-                auto arr = get_array(array_val);
-                auto maybe_idx = try_get_i64(index_val);
-                if (!maybe_idx)
-                    return std::unexpected(err::msg("Array assignment index must fit into the current i64-backed runtime range."));
-                int64_t idx = *maybe_idx;
+            auto arr = get_array(array_val);
+            auto maybe_idx = try_get_i64(index_val);
+            if (!maybe_idx)
+                return std::unexpected(err::msg("Array assignment index must fit into the current i64-backed runtime range."));
+            int64_t idx = *maybe_idx;
 
-                if (idx < 0 || idx >= static_cast<int64_t>(arr->elements.size()))
-                    return std::unexpected(err::msg("Array assignment index out of bounds."));
+            if (idx < 0 || idx >= static_cast<int64_t>(arr->elements.size()))
+                return std::unexpected(err::msg("Array assignment index out of bounds."));
 
-                arr->elements[idx] = val;
-                // Leave the assigned value on the top of the stack
-                break;
-            }
+            arr->elements[idx] = val;
+            // Leave the assigned value on the top of the stack
+            break;
+        }
 
-            case Op_code::Construct_union:
-            {
-                uint8_t union_name_idx = *ip++;
-                uint8_t variant_name_idx = *ip++;
+        case Op_code::Construct_union: {
+            uint8_t union_name_idx = *ip++;
+            uint8_t variant_name_idx = *ip++;
 
-                std::string union_name = get_string(frame->closure->chunk->constants[union_name_idx]);
-                std::string variant_name = get_string(frame->closure->chunk->constants[variant_name_idx]);
+            std::string union_name = get_string(frame->closure->chunk->constants[union_name_idx]);
+            std::string variant_name = get_string(frame->closure->chunk->constants[variant_name_idx]);
 
-                Value payload = pop();
+            Value payload = pop();
 
-                // Direct allocation! No dummy type needed.
-                push(Value(mem::make_rc<Union_value>(std::move(union_name), std::move(variant_name), std::move(payload))));
-                break;
-            }
+            // Direct allocation! No dummy type needed.
+            push(Value(mem::make_rc<Union_value>(std::move(union_name), std::move(variant_name), std::move(payload))));
+            break;
+        }
 
-            case Op_code::Match_variant:
-            {
-                uint8_t variant_name_idx = *ip++;
-                std::string expected_variant = get_string(frame->closure->chunk->constants[variant_name_idx]);
+        case Op_code::Match_variant: {
+            uint8_t variant_name_idx = *ip++;
+            std::string expected_variant = get_string(frame->closure->chunk->constants[variant_name_idx]);
 
-                // IMPORTANT: Do NOT pop the subject! The match statement needs it for the next arm!
-                Value subject = peek(0);
+            // IMPORTANT: Do NOT pop the subject! The match statement needs it for the next arm!
+            Value subject = peek(0);
 
-                if (is_union(subject))
-                {
-                    auto u_val = get_union(subject);
-                    if (u_val->variant_name == expected_variant)
-                    {
-                        push(u_val->payload);  // 1. Push the payload so 's' gets assigned to it
-                        push(true);            // 2. Push true so Jump_if_false DOES NOT jump!
-                    }
-                    else
-                    {
-                        push(nullptr);  // 1. Push dummy payload
-                        push(false);    // 2. Push false so Jump_if_false JUMPS to the next arm
-                    }
+            if (is_union(subject)) {
+                auto u_val = get_union(subject);
+                if (u_val->variant_name == expected_variant) {
+                    push(u_val->payload); // 1. Push the payload so 's' gets assigned to it
+                    push(true);           // 2. Push true so Jump_if_false DOES NOT jump!
+                } else {
+                    push(nullptr); // 1. Push dummy payload
+                    push(false);   // 2. Push false so Jump_if_false JUMPS to the next arm
                 }
-                else
-                {
-                    push(nullptr);
-                    push(false);
-                }
-                break;
-            }
-            case Op_code::Cast:
-            {
-                uint8_t target_type_byte = *ip++;
-                auto target_kind = static_cast<types::Primitive_kind>(target_type_byte);
-                Value val = pop();
-
-                auto casted = cast_numeric_value(val, target_kind);
-                if (!casted)
-                    return std::unexpected(err::msg("Unsupported runtime cast", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
-                push(casted.value());
-                break;
-            }
-
-            case Op_code::Pop:
-            {
-                pop();
-                break;
-            }
-            case Op_code::Nil:
-            {
+            } else {
                 push(nullptr);
-                break;
-            }
-            case Op_code::True:
-            {
-                push(true);
-                break;
-            }
-            case Op_code::False:
-            {
                 push(false);
-                break;
             }
+            break;
+        }
+        case Op_code::Cast: {
+            uint8_t target_type_byte = *ip++;
+            auto target_kind = static_cast<types::Primitive_kind>(target_type_byte);
+            Value val = pop();
 
-            case Op_code::Print:
-            case Op_code::Print_err:
-            {
-                uint8_t count = *ip++;
+            auto casted = cast_numeric_value(val, target_kind);
+            if (!casted)
+                return std::unexpected(err::msg("Unsupported runtime cast", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
+            push(casted.value());
+            break;
+        }
 
-                // Stack layout (bottom to top): val[0], val[1], ..., val[n-1], sep, end
-                std::string end_str = get_string(pop());
-                std::string sep_str = get_string(pop());
+        case Op_code::Pop: {
+            pop();
+            break;
+        }
+        case Op_code::Nil: {
+            push(nullptr);
+            break;
+        }
+        case Op_code::True: {
+            push(true);
+            break;
+        }
+        case Op_code::False: {
+            push(false);
+            break;
+        }
 
-                // Collect values — they're still on the stack in forward order
-                std::vector<Value> values(count);
-                for (int i = count - 1; i >= 0; --i) values[i] = pop();
+        case Op_code::Print:
+        case Op_code::Print_err: {
+            uint8_t count = *ip++;
 
-                std::ostream &out = (static_cast<Op_code>(instruction) == Op_code::Print_err) ? *config_.err_stream : *config_.out_stream;
+            // Stack layout (bottom to top): val[0], val[1], ..., val[n-1], sep, end
+            std::string end_str = get_string(pop());
+            std::string sep_str = get_string(pop());
 
-                for (uint8_t i = 0; i < count; ++i)
-                {
-                    if (i > 0)
-                        out << sep_str;
-                    out << (is_string(values[i]) ? value_to_string(values[i]) : value_to_str_debug(values[i]));
-                }
-                out << end_str;
-                break;
+            // Collect values — they're still on the stack in forward order
+            std::vector<Value> values(count);
+            for (int i = count - 1; i >= 0; --i)
+                values[i] = pop();
+
+            std::ostream &out = (static_cast<Op_code>(instruction) == Op_code::Print_err) ? *config_.err_stream : *config_.out_stream;
+
+            for (uint8_t i = 0; i < count; ++i) {
+                if (i > 0)
+                    out << sep_str;
+                out << (is_string(values[i]) ? value_to_string(values[i]) : value_to_str_debug(values[i]));
             }
-            case Op_code::Halt:
-            {
-                return {};
-            }
+            out << end_str;
+            break;
+        }
+        case Op_code::Halt: {
+            return {};
+        }
 
-            default:
-                return std::unexpected(
+        default:
+            return std::unexpected(
                 err::msg(std::format("Unknown opcode {}", instruction), "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
         }
     }
 }
 
-}  // namespace phos::vm
+} // namespace phos::vm
