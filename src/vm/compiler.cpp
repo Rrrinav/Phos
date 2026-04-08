@@ -1205,7 +1205,6 @@ void Compiler::visit_fstring_expr(const ast::Fstring_expr &expr)
     auto append_literal = [&](const std::string &text) {
         if (text.empty())
             return;
-
         emit_constant(Value(text), expr.loc);
         if (has_component)
             emit_op(Op_code::Add, expr.loc);
@@ -1230,6 +1229,13 @@ void Compiler::visit_fstring_expr(const ast::Fstring_expr &expr)
     size_t i = 0;
     while (i < expr.raw_template.size()) {
         if (expr.raw_template[i] == '{') {
+            // RESOLVE ESCAPED OPEN BRACE
+            if (i + 1 < expr.raw_template.size() && expr.raw_template[i + 1] == '{') {
+                literal_buf += '{';
+                i += 2;
+                continue;
+            }
+
             append_literal(literal_buf);
             literal_buf.clear();
 
@@ -1248,6 +1254,14 @@ void Compiler::visit_fstring_expr(const ast::Fstring_expr &expr)
 
             if (interpolation_index < expr.interpolations.size())
                 append_interpolation(expr.interpolations[interpolation_index++]);
+        } else if (expr.raw_template[i] == '}') {
+            // RESOLVE ESCAPED CLOSE BRACE
+            if (i + 1 < expr.raw_template.size() && expr.raw_template[i + 1] == '}') {
+                literal_buf += '}';
+                i += 2;
+                continue;
+            }
+            i++; // Fallback in case of isolated '}' (caught by parser anyway)
         } else {
             literal_buf += expr.raw_template[i++];
         }

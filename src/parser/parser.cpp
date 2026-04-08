@@ -1587,6 +1587,12 @@ Result<ast::Expr *> Parser::parse_fstring(const lex::Token &tok)
     size_t i = 0;
     while (i < raw.size()) {
         if (raw[i] == '{') {
+            // ESCAPE CHECK FOR OPENING BRACE
+            if (i + 1 < raw.size() && raw[i + 1] == '{') {
+                i += 2; // Leapfrog over the '{{'
+                continue;
+            }
+
             size_t start = ++i;
             int depth = 1;
             while (i < raw.size() && depth > 0) {
@@ -1598,17 +1604,19 @@ Result<ast::Expr *> Parser::parse_fstring(const lex::Token &tok)
                     i++;
             }
             std::string inner = raw.substr(start, i - start);
-            i++;
+            i++; // Skip the closing '}'
 
             lex::Lexer inner_lexer(inner);
             auto inner_tokens = inner_lexer.tokenize();
             Parser inner_parser(std::move(inner_tokens), arena_);
-            inner_parser.current_model_ = current_model_;
+
+            inner_parser.current_model_      = current_model_;
             inner_parser.m_known_model_names = m_known_model_names;
             inner_parser.m_known_union_names = m_known_union_names;
-            inner_parser.m_known_enum_names = m_known_enum_names;
-            inner_parser.function_types_ = function_types_;
-            inner_parser.parsed_models = parsed_models;
+            inner_parser.m_known_enum_names  = m_known_enum_names;
+            inner_parser.function_types_     = function_types_;
+            inner_parser.parsed_models       = parsed_models;
+
             auto inner_expr = inner_parser.expression();
             if (!inner_expr)
                 return std::unexpected(create_error(tok, "Invalid expression in f-string: " + inner));
@@ -1618,6 +1626,15 @@ Result<ast::Expr *> Parser::parse_fstring(const lex::Token &tok)
                 return std::unexpected(create_error(tok, "Unexpected trailing tokens in f-string expression: " + inner));
 
             interpolations.push_back(*inner_expr);
+        } else if (raw[i] == '}') {
+            // ESCAPE CHECK FOR CLOSING BRACE
+            if (i + 1 < raw.size() && raw[i + 1] == '}') {
+                i += 2; // Leapfrog over the '}}'
+                continue;
+            } else {
+                // If it's just a single '}', it's a syntax error!
+                return std::unexpected(create_error(tok, "Unmatched closing brace '}' in f-string. Use '}}' to escape."));
+            }
         } else {
             i++;
         }
@@ -1630,7 +1647,8 @@ Result<ast::Expr *> Parser::parse_fstring(const lex::Token &tok)
             .interpolations = std::move(interpolations),
             .type = types::Type(types::Primitive_kind::String),
             .loc = loc,
-        }});
+        }}
+    );
 }
 
 // --- type parser -------------------------------------------------------------

@@ -323,10 +323,10 @@ private:
                     break;
                 case '{':
                     raw += '{';
-                    break; // escaped brace → literal
+                    break; // Backwards compatibility for \{
                 case '}':
                     raw += '}';
-                    break;
+                    break; // Backwards compatibility for \}
                 default:
                     raw += '\\';
                     raw += esc;
@@ -335,11 +335,20 @@ private:
                 continue;
             }
 
-            // track interpolation depth so e.g. f"{obj.method({1,2})}" works
-            if (c == '{')
-                depth++;
-            if (c == '}' && depth > 0)
-                depth--;
+            // --- NEW: TRACK INTERPOLATION DEPTH WITH ESCAPES ---
+            if (c == '{') {
+                if (depth == 0 && peek() == '{') {
+                    raw += advance(); // It's an escaped '{{', consume the second one!
+                } else {
+                    depth++; // It's a real interpolation, or nested code
+                }
+            } else if (c == '}') {
+                if (depth == 0 && peek() == '}') {
+                    raw += advance(); // It's an escaped '}}', consume the second one!
+                } else if (depth > 0) {
+                    depth--; // Close an interpolation, or nested code
+                }
+            }
 
             raw += c;
         }
