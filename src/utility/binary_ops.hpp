@@ -47,8 +47,8 @@ apply_promoted_numeric_op(const Value &l, const Value &r, ast::Source_location l
                 return Value(op(lhs, rhs));
             return std::unexpected(err::msg(message, "vm", loc.l, loc.c));
         },
-        *left_cast,
-        *right_cast);
+        left_cast->payload,
+        right_cast->payload);
 }
 
 template <typename Op>
@@ -74,8 +74,8 @@ inline Result<Value> apply_integer_op(const Value &l, const Value &r, ast::Sourc
                 return Value(op(lhs, rhs));
             return std::unexpected(err::msg(message, "vm", loc.l, loc.c));
         },
-        *left_cast,
-        *right_cast);
+        left_cast->payload,  // <-- FIXED
+        right_cast->payload); // <-- FIXED
 }
 
 // --- Arithmetic ---
@@ -120,8 +120,8 @@ inline Result<Value> divide_op(const Value &l, const Value &r, ast::Source_locat
                 }
                 return std::unexpected(err::msg("Operands must be numbers for '/'.", "vm", loc.l, loc.c));
             },
-            *left_cast,
-            *right_cast);
+            left_cast->payload,  // <-- FIXED
+            right_cast->payload); // <-- FIXED
     }
 
     auto left_cast = cast_numeric_value(l, types::Primitive_kind::F64);
@@ -157,8 +157,8 @@ inline Result<Value> modulo_op(const Value &l, const Value &r, ast::Source_locat
             }
             return std::unexpected(err::msg("Operands must be integers for '%'.", "vm", loc.l, loc.c));
         },
-        *left_cast,
-        *right_cast);
+        left_cast->payload,  // <-- FIXED
+        right_cast->payload); // <-- FIXED
 }
 
 // --- Relational Operators (Strict Type Matching) ---

@@ -41,6 +41,8 @@ std::string op_code_to_string(Op_code code)
         return "Jump_if_nil";
     case Op_code::Unwrap:
         return "Unwrap";
+    case Op_code::Wrap_optional:
+        return "Wrap_optional";
     case Op_code::Add:
         return "Add";
     case Op_code::Subtract:

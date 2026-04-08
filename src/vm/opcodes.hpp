@@ -33,6 +33,7 @@ enum class Op_code : uint8_t {
     // --- Optionals ---
     Jump_if_nil,
     Unwrap,
+    Wrap_optional,
 
     // --- Arithmetic & Logic ---
     Add,

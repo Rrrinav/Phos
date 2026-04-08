@@ -102,7 +102,7 @@ struct extract<T>
         auto casted = phos::cast_numeric_value(v, phos::primitive_kind_for_cpp_numeric_v<T>);
         if (!casted)
             throw std::bad_variant_access();
-        return std::get<T>(casted.value());
+        return std::get<T>(casted.value().payload);
     }
 };
 template <>

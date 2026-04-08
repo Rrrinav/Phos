@@ -5,8 +5,8 @@
 std::string phos::lex::token_to_string(phos::lex::TokenType t)
 {
     switch (t) {
-    case TokenType::Integer64:
-        return "Integer64";
+    case TokenType::Integer32:
+        return "Integer32";
     case TokenType::Float64:
         return "Float64";
     case TokenType::String:

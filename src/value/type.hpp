@@ -262,4 +262,22 @@ inline int primitive_bit_width(Primitive_kind kind)
     }
 }
 
+static int get_optional_depth(types::Type t)
+{
+    int depth = 0;
+    while (types::is_optional(t)) {
+        depth++;
+        t = types::get_optional_type(t)->base_type;
+    }
+    return depth;
+}
+
+static types::Type get_optional_base(types::Type t)
+{
+    while (types::is_optional(t)) {
+        t = types::get_optional_type(t)->base_type;
+    }
+    return t;
+}
+
 } // namespace phos::types

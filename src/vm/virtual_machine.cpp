@@ -53,7 +53,7 @@ Result<void>
 Virtual_machine::call_closure(mem::rc_ptr<Closure_value> closure, int arg_count, Call_frame *&current_frame, uint8_t *&current_ip)
 {
     if (arg_count != closure->arity)
-        return std::unexpected(err::msg(std::format("Expected {} arguments but got {}.", closure->arity, arg_count), "vm", 0, 0));
+        return std::unexpected(err::msg(std::format("Closure {} expected {} arguments but got {}.", closure->name, closure->arity, arg_count), "vm", 0, 0));
 
     // --- THE NATIVE C++ INTERCEPT ---
     if (closure->native_func) {
@@ -282,8 +282,31 @@ Result<void> Virtual_machine::run()
         case Op_code::Jump_if_nil: {
             uint16_t offset = (static_cast<uint16_t>(*ip) << 8) | *(ip + 1);
             ip += 2;
-            if (is_nil(peek(0)))
+            Value &val = current_thread->stack.back();
+
+            // Pure Check: Only jumps if it's an absolutely empty base optional
+            if (val.option_depth == 0 && std::holds_alternative<std::nullptr_t>(val.payload)) {
                 ip += offset;
+            }
+            break;
+        }
+
+        case Op_code::Unwrap: {
+            Value &val = current_thread->stack.back();
+
+            // Explicit panic: Protects the VM from undefined behavior
+            if (val.option_depth == 0) {
+                return std::unexpected(
+                    err::msg("Fatal VM Error: Attempted to unwrap a base value or nil.", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
+            }
+
+            val.option_depth -= 1; // Pure Mutation
+            break;
+        }
+
+        case Op_code::Wrap_optional: {
+            // Instantly wraps any value in an Optional layer (zero heap allocations)
+            current_thread->stack.back().option_depth += 1;
             break;
         }
         case Op_code::Jump: {
@@ -413,7 +436,7 @@ Result<void> Virtual_machine::run()
                     return std::unexpected(
                         err::msg("Operand must be an integer for '~'", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
                 },
-                v);
+                v.payload);
             if (!res)
                 return std::unexpected(res.error());
             push(res.value());
@@ -431,7 +454,7 @@ Result<void> Virtual_machine::run()
                             err::msg("Operand must not be unsigned for unary '-'", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
                     return std::unexpected(err::msg("Operand must be a number for '-'", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
                 },
-                r);
+                r.payload);
             if (!res)
                 return std::unexpected(res.error());
             push(res.value());
@@ -555,22 +578,18 @@ Result<void> Virtual_machine::run()
         case Op_code::Print:
         case Op_code::Print_err: {
             uint8_t count = *ip++;
-
-            // Stack layout (bottom to top): val[0], val[1], ..., val[n-1], sep, end
             std::string end_str = get_string(pop());
             std::string sep_str = get_string(pop());
-
-            // Collect values — they're still on the stack in forward order
             std::vector<Value> values(count);
             for (int i = count - 1; i >= 0; --i)
                 values[i] = pop();
-
             std::ostream &out = (static_cast<Op_code>(instruction) == Op_code::Print_err) ? *config_.err_stream : *config_.out_stream;
 
             for (uint8_t i = 0; i < count; ++i) {
                 if (i > 0)
                     out << sep_str;
-                out << (is_string(values[i]) ? value_to_string(values[i]) : value_to_str_debug(values[i]));
+                // value_to_str_debug handles the internal .payload and optional_depth checks
+                out << (is_string(values[i]) ? get_string(values[i]) : value_to_str_debug(values[i]));
             }
             out << end_str;
             break;

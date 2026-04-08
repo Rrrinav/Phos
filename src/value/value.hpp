@@ -59,34 +59,49 @@ struct Union_value;
 struct Green_thread_value;
 struct Iterator_value;
 
-// ============================================================================
-// The Core Value Variant (Notice Native_function_value is GONE!)
-// ============================================================================
-using Value = std::variant<
-    std::int8_t,
-    std::int16_t,
-    std::int32_t,
-    std::int64_t,
-    std::uint8_t,
-    std::uint16_t,
-    std::uint32_t,
-    std::uint64_t,
-    numeric::float16_t,
-    float,
-    double,
-    bool,
-    std::string,
-    mem::rc_ptr<Model_value>,
-    mem::rc_ptr<Closure_value>,
-    mem::rc_ptr<Array_value>,
-    mem::rc_ptr<Union_value>,
-    mem::rc_ptr<Iterator_value>,
-    mem::rc_ptr<Green_thread_value>,
-    std::nullptr_t,
-    std::monostate
->;
+struct Value
+{
+    using Payload = std::variant<
+        std::int8_t, std::int16_t, std::int32_t, std::int64_t,
+        std::uint8_t, std::uint16_t, std::uint32_t, std::uint64_t,
+        numeric::float16_t, float, double, bool,
+        std::string,
+        mem::rc_ptr<Model_value>,
+        mem::rc_ptr<Closure_value>,
+        mem::rc_ptr<Array_value>,
+        mem::rc_ptr<Union_value>,
+        mem::rc_ptr<Iterator_value>,
+        mem::rc_ptr<Green_thread_value>,
+        std::nullptr_t, std::monostate
+    >;
 
-// 3. Define the wrapper struct here so it has full access to the complete Value alias
+    Payload payload;
+    uint8_t option_depth = 0;
+
+    // Safe Initialization Constructors
+    Value() : payload(std::monostate{}), option_depth(0)
+    {}
+    Value(std::nullptr_t) : payload(nullptr), option_depth(0)
+    {}
+    Value(std::monostate) : payload(std::monostate{}), option_depth(0)
+    {}
+
+    // Universal Forwarding Constructor
+    // (Excludes itself so copy/move constructors aren't hijacked)
+    template <typename T>
+        requires(!std::is_same_v<std::decay_t<T>, Value>) && std::is_constructible_v<Payload, T>
+    Value(T &&val, uint8_t depth = 0) : payload(std::forward<T>(val)), option_depth(depth)
+    {}
+
+    // Expose the variant index directly for equality checks
+    size_t index() const
+    {
+        return payload.index();
+    }
+};
+
+// ============================================================================
+
 struct Enum_variants
 {
     std::unordered_map<std::string, Value> map;
@@ -205,7 +220,7 @@ struct Iterator_value
 
     types::Type element_type;
     Source source;
-    int64_t cursor = 0; // 0 = first item when available, -1 / size = edge sentinels
+    int64_t cursor = -1; // 0 = first item when available, -1 / size = edge sentinels
 
     Iterator_value(types::Type elem_type, Source src) : element_type(std::move(elem_type)), source(std::move(src))
     {}
@@ -269,22 +284,21 @@ template <typename T>
 inline constexpr bool is_float_cpp_v = std::is_same_v<T, numeric::float16_t> || std::is_same_v<T, float> || std::is_same_v<T, double>;
 
 template <typename T>
-inline constexpr types::Primitive_kind primitive_kind_for_cpp_numeric_v = std::is_same_v<T, std::int8_t> ? types::Primitive_kind::I8
-    : std::is_same_v<T, std::int16_t>                                                                    ? types::Primitive_kind::I16
-    : std::is_same_v<T, std::int32_t>                                                                    ? types::Primitive_kind::I32
-    : std::is_same_v<T, std::int64_t>                                                                    ? types::Primitive_kind::I64
-    : std::is_same_v<T, std::uint8_t>                                                                    ? types::Primitive_kind::U8
-    : std::is_same_v<T, std::uint16_t>                                                                   ? types::Primitive_kind::U16
-    : std::is_same_v<T, std::uint32_t>                                                                   ? types::Primitive_kind::U32
-    : std::is_same_v<T, std::uint64_t>                                                                   ? types::Primitive_kind::U64
-    : std::is_same_v<T, numeric::float16_t>                                                              ? types::Primitive_kind::F16
-    : std::is_same_v<T, float>                                                                           ? types::Primitive_kind::F32
-    : std::is_same_v<T, double>                                                                          ? types::Primitive_kind::F64
-                                                                                                         : types::Primitive_kind::Any;
+inline constexpr types::Primitive_kind primitive_kind_for_cpp_numeric_v =
+      std::is_same_v<T, std::int8_t>        ? types::Primitive_kind::I8
+    : std::is_same_v<T, std::int16_t>       ? types::Primitive_kind::I16
+    : std::is_same_v<T, std::int32_t>       ? types::Primitive_kind::I32
+    : std::is_same_v<T, std::int64_t>       ? types::Primitive_kind::I64
+    : std::is_same_v<T, std::uint8_t>       ? types::Primitive_kind::U8
+    : std::is_same_v<T, std::uint16_t>      ? types::Primitive_kind::U16
+    : std::is_same_v<T, std::uint32_t>      ? types::Primitive_kind::U32
+    : std::is_same_v<T, std::uint64_t>      ? types::Primitive_kind::U64
+    : std::is_same_v<T, numeric::float16_t> ? types::Primitive_kind::F16
+    : std::is_same_v<T, float>              ? types::Primitive_kind::F32
+    : std::is_same_v<T, double>             ? types::Primitive_kind::F64
+    : types::Primitive_kind::Any;
 
-// ============================================================================
 // Utility
-// ============================================================================
 
 std::string value_to_string(const Value &val);
 std::string value_to_str_debug(const Value &val);

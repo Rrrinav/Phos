@@ -1280,7 +1280,65 @@ void Type_checker::check_stmt(ast::Stmt &stmt)
 
 Result<types::Type> Type_checker::check_expr(ast::Expr &expr, std::optional<types::Type> context_type)
 {
-    return std::visit([this, context_type](auto &e) -> Result<types::Type> { return check_expr_node(e, context_type); }, expr.node);
+    // 1. Explicit Optional Fallback Interception: .{ .val = ... }
+    if (context_type && types::is_optional(*context_type)) {
+        if (auto *anon = std::get_if<ast::Anon_model_literal_expr>(&expr.node)) {
+            // If it looks EXACTLY like our explicit fallback
+            if (anon->fields.size() == 1 && anon->fields[0].first == "val") {
+                types::Type inner_context = types::get_optional_type(*context_type)->base_type;
+                ast::Expr *inner_expr = anon->fields[0].second;
+
+                if (inner_expr) {
+                    auto inner_res = check_expr(*inner_expr, inner_context);
+                    if (!inner_res)
+                        return inner_res;
+
+                    if (!is_compatible(inner_context, *inner_res)) {
+                        type_error(ast::get_loc(expr.node), "Type mismatch for explicit optional payload.");
+                        return ast::get_type(expr.node) = types::Primitive_kind::Void;
+                    }
+
+                    // REWRITE AST: Replace Anon_model with the inner expr, increment wrap depth
+                    uint8_t existing_wraps = inner_expr->auto_wrap_depth;
+                    expr.node = std::move(inner_expr->node);
+                    expr.auto_wrap_depth = existing_wraps + 1;
+                    return ast::get_type(expr.node) = *context_type;
+                }
+            }
+        }
+    }
+
+    // 2. Standard Expression Evaluation
+    auto res = std::visit([this, context_type](auto &e) -> Result<types::Type> { return check_expr_node(e, context_type); }, expr.node);
+    if (!res)
+        return res;
+
+    types::Type actual_type = res.value();
+
+    // 3. Auto-Lifting Logic
+    if (context_type) {
+        int expected_depth = get_optional_depth(*context_type);
+        int actual_depth = get_optional_depth(actual_type);
+
+        if (expected_depth > actual_depth) {
+            types::Type expected_base = get_optional_base(*context_type);
+            types::Type actual_base = get_optional_base(actual_type);
+
+            // Base 'nil' never needs to be explicitly wrapped. The VM natively understands depth 0 nil.
+            if (types::is_nil(actual_base)) {
+                expr.auto_wrap_depth = 0;
+                return ast::get_type(expr.node) = *context_type;
+            }
+
+            // If the underlying types match, calculate the gap and assign the tag!
+            if (is_compatible(expected_base, actual_base)) {
+                expr.auto_wrap_depth = expected_depth - actual_depth;
+                return ast::get_type(expr.node) = *context_type;
+            }
+        }
+    }
+
+    return ast::get_type(expr.node) = actual_type;
 }
 
 void Type_checker::check_stmt_node(ast::Function_stmt &stmt)
@@ -2240,7 +2298,7 @@ Result<types::Type> Type_checker::check_expr_node(ast::Field_assignment_expr &ex
 
 Result<types::Type> Type_checker::check_expr_node(ast::Literal_expr &expr, std::optional<types::Type> context_type)
 {
-    if (std::holds_alternative<std::nullptr_t>(expr.value))
+    if (std::holds_alternative<std::nullptr_t>(expr.value.payload))
         return expr.type = types::Primitive_kind::Nil;
 
     if (context_type && types::is_primitive(*context_type)) {
