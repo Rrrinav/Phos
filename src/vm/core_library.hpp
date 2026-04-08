@@ -373,21 +373,17 @@ inline Value iter_next(mem::rc_ptr<Iterator_value> iter)
         return Value(nullptr);
 
     const int64_t len = iterator_length(*iter);
-    if (iter->cursor < 0) {
-        if (len > 0) {
-            iter->cursor = 0;
-            return iterator_item_at(*iter, iter->cursor);
-        }
 
-        iter->cursor = len;
-        return Value(nullptr);
+    // Prefix behavior: Move the cursor forward first
+    iter->cursor++;
+
+    if (iter->cursor >= 0 && iter->cursor < len) {
+        Value val = iterator_item_at(*iter, iter->cursor);
+        val.option_depth += 1;
+        return val;
     }
 
-    if (iter->cursor < len - 1) {
-        ++iter->cursor;
-        return iterator_item_at(*iter, iter->cursor);
-    }
-
+    // If out of bounds, lock it to the end and return base nil
     iter->cursor = len;
     return Value(nullptr);
 }
@@ -398,16 +394,16 @@ inline Value iter_prev(mem::rc_ptr<Iterator_value> iter)
         return Value(nullptr);
 
     const int64_t len = iterator_length(*iter);
-    if (iter->cursor == len && len > 0) {
-        --iter->cursor;
-        return iterator_item_at(*iter, iter->cursor);
+
+    iter->cursor--;
+
+    if (iter->cursor >= 0 && iter->cursor < len) {
+        Value val = iterator_item_at(*iter, iter->cursor);
+        val.option_depth += 1;
+        return val;
     }
 
-    if (iter->cursor > 0) {
-        --iter->cursor;
-        return iterator_item_at(*iter, iter->cursor);
-    }
-
+    // If out of bounds, lock it to the start and return base nil
     iter->cursor = -1;
     return Value(nullptr);
 }
@@ -445,26 +441,21 @@ inline bool iter_has_next(mem::rc_ptr<Iterator_value> iter, Value steps_value)
 {
     if (!iter)
         return false;
-
     int64_t steps = require_i64(steps_value, "Iterator step");
-    const int64_t len = iterator_length(*iter);
-    int64_t cursor = iter->cursor;
-
     if (steps < 0)
         return false;
     if (steps == 0)
-        return cursor >= 0 && cursor < len;
+        return iter->cursor >= 0 && iter->cursor < iterator_length(*iter);
+
+    const int64_t len = iterator_length(*iter);
+    int64_t cursor = iter->cursor;
 
     for (int64_t i = 0; i < steps; ++i) {
-        if (cursor < 0) {
-            if (len > 0)
-                cursor = 0;
-            else
-                return false;
-        } else if (cursor < len - 1)
+        if (cursor >= 0 && cursor < len) {
             ++cursor;
-        else
+        } else {
             return false;
+        }
     }
     return true;
 }
@@ -473,23 +464,24 @@ inline bool iter_has_prev(mem::rc_ptr<Iterator_value> iter, Value steps_value)
 {
     if (!iter)
         return false;
-
     int64_t steps = require_i64(steps_value, "Iterator step");
-    const int64_t len = iterator_length(*iter);
-    int64_t cursor = iter->cursor;
-
     if (steps < 0)
         return false;
     if (steps == 0)
-        return cursor >= 0 && cursor < len;
+        return iter->cursor >= 0 && iter->cursor < iterator_length(*iter);
+
+    const int64_t len = iterator_length(*iter);
+    int64_t cursor = iter->cursor;
 
     for (int64_t i = 0; i < steps; ++i) {
-        if (cursor > 0)
+        if (cursor == len && len > 0)
             --cursor;
-        else if (cursor == len && len > 0)
+
+        if (cursor >= 0 && cursor < len) {
             --cursor;
-        else
+        } else {
             return false;
+        }
     }
     return true;
 }
@@ -751,29 +743,38 @@ inline Value core_clone(Value value)
 
 inline Value optional_get(Value value, std::string message)
 {
-    if (is_nil(value))
+    // It's only truly empty if the wrapper depth is 0
+    if (value.option_depth == 0)
         optional_panic(message);
+
+    // Actually peel off one layer of the optional!
+    value.option_depth -= 1;
     return value;
 }
 
 inline Value optional_or(Value value, Value fallback)
 {
-    if (is_nil(value))
+    if (value.option_depth == 0)
         return fallback;
+
+    // Peel and return
+    value.option_depth -= 1;
     return value;
 }
 
 inline bool optional_has_value(Value value)
 {
-    return !is_nil(value);
+    return value.option_depth > 0;
 }
+
 inline bool optional_is_some(Value value)
 {
-    return !is_nil(value);
+    return value.option_depth > 0;
 }
+
 inline bool optional_is_none(Value value)
 {
-    return is_nil(value);
+    return value.option_depth == 0;
 }
 
 inline void register_core_library(Virtual_machine &vm, Type_checker &tc)

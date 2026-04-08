@@ -403,14 +403,14 @@ Result<ast::Stmt *> Parser::enum_declaration()
         std::optional<Value> value = std::nullopt;
         if (match({lex::TokenType::Assign})) {
             if (types::is_primitive(base_type) && types::is_integer_primitive(types::get_primitive_kind(base_type))) {
-                auto val_tok = __Try(consume(lex::TokenType::Integer64, "Expect integer value after '=' in integer enum"));
+                auto val_tok = __Try(consume(lex::TokenType::Integer32, "Expect integer value after '=' in integer enum"));
                 auto coerced = coerce_numeric_literal(val_tok.literal, types::get_primitive_kind(base_type));
                 if (!coerced)
                     return std::unexpected(create_error(val_tok, "Enum variant value does not fit the enum base type."));
                 value = coerced.value();
             } else {
                 auto val_tok = __Try(consume(lex::TokenType::String, "Expect string value after '=' in string enum"));
-                value = Value(std::get<std::string>(val_tok.literal));
+                value = Value(std::get<std::string>(val_tok.literal.payload));
             }
         }
 
@@ -609,13 +609,13 @@ Result<ast::Stmt *> Parser::print_statement(ast::Print_stream stream)
                 auto val_result = __Try(expression());
 
                 auto *lit = std::get_if<ast::Literal_expr>(&val_result->node);
-                if (!lit || !std::holds_alternative<std::string>(lit->value))
+                if (!lit || !std::holds_alternative<std::string>(lit->value.payload))
                     return std::unexpected(create_error(previous(), "'sep' and 'end' must be string literals."));
 
                 if (name == "sep")
-                    sep = std::get<std::string>(lit->value);
+                    sep = std::get<std::string>(lit->value.payload);
                 else
-                    end = std::get<std::string>(lit->value);
+                    end = std::get<std::string>(lit->value.payload);
             } else {
                 if (seen_named)
                     return std::unexpected(create_error(peek(), "Positional arguments cannot appear after named arguments in print()."));
@@ -1366,7 +1366,6 @@ Result<ast::Expr *> Parser::primary()
         return parse_fstring(previous());
 
     // nil
-
     if (match({lex::TokenType::Nil})) {
         return mem::Arena::alloc(
             this->arena_,
@@ -1378,20 +1377,18 @@ Result<ast::Expr *> Parser::primary()
     }
 
     // bool
-
     if (match({lex::TokenType::Bool})) {
         return mem::Arena::alloc(
             this->arena_,
             ast::Expr{ast::Literal_expr{
-                .value = Value(std::get<bool>(previous().literal)),
+                .value = Value(std::get<bool>(previous().literal.payload)),
                 .type = types::Type(types::Primitive_kind::Bool),
                 .loc = {previous().line, previous().column},
             }});
     }
 
     // integer
-
-    if (match({lex::TokenType::Integer64})) {
+    if (match({lex::TokenType::Integer32})) {
         return mem::Arena::alloc(
             this->arena_,
             ast::Expr{ast::Literal_expr{
@@ -1402,7 +1399,6 @@ Result<ast::Expr *> Parser::primary()
     }
 
     // float
-
     if (match({lex::TokenType::Float64})) {
         return mem::Arena::alloc(
             this->arena_,
@@ -1414,12 +1410,11 @@ Result<ast::Expr *> Parser::primary()
     }
 
     // string
-
     if (match({lex::TokenType::String})) {
         return mem::Arena::alloc(
             this->arena_,
             ast::Expr{ast::Literal_expr{
-                .value = Value(std::get<std::string>(previous().literal)),
+                .value = Value(std::get<std::string>(previous().literal.payload)),
                 .type = types::Type(types::Primitive_kind::String),
                 .loc = {previous().line, previous().column},
             }});
@@ -1585,7 +1580,7 @@ Result<ast::Expr *> Parser::parse_model_literal(const std::string &model_name)
 Result<ast::Expr *> Parser::parse_fstring(const lex::Token &tok)
 {
     ast::Source_location loc{tok.line, tok.column};
-    const std::string &raw = std::get<std::string>(tok.literal);
+    const std::string &raw = std::get<std::string>(tok.literal.payload);
 
     std::vector<ast::Expr *> interpolations;
 

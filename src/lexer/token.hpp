@@ -12,7 +12,7 @@ namespace phos::lex {
 
 enum class TokenType : uint8_t {
     // Literals
-    Integer64,
+    Integer32,
     Float64,
     String,
     Bool,

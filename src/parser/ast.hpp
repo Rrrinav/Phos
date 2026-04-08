@@ -273,6 +273,8 @@ struct Expr
         Anon_model_literal_expr>;
 
     Node node;
+
+    uint8_t auto_wrap_depth = 0;
 };
 
 // =============================================================================

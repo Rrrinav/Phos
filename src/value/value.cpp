@@ -154,32 +154,33 @@ std::optional<Value> coerce_literal_dispatch(Source value, types::Primitive_kind
 // --- Type Checkers ---
 bool is_nil(const Value &val)
 {
-    return std::holds_alternative<std::nullptr_t>(val) || std::holds_alternative<std::monostate>(val);
+    return std::holds_alternative<std::nullptr_t>(val.payload) || std::holds_alternative<std::monostate>(val.payload);
 }
 bool is_bool(const Value &val)
 {
-    return std::holds_alternative<bool>(val);
+    return std::holds_alternative<bool>(val.payload);
 }
 bool is_integer(const Value &val)
 {
-    return std::holds_alternative<std::int8_t>(val) || std::holds_alternative<std::int16_t>(val)
-        || std::holds_alternative<std::int32_t>(val) || std::holds_alternative<std::int64_t>(val)
-        || std::holds_alternative<std::uint8_t>(val) || std::holds_alternative<std::uint16_t>(val)
-        || std::holds_alternative<std::uint32_t>(val) || std::holds_alternative<std::uint64_t>(val);
+    return std::holds_alternative<std::int8_t>(val.payload) || std::holds_alternative<std::int16_t>(val.payload)
+        || std::holds_alternative<std::int32_t>(val.payload) || std::holds_alternative<std::int64_t>(val.payload)
+        || std::holds_alternative<std::uint8_t>(val.payload) || std::holds_alternative<std::uint16_t>(val.payload)
+        || std::holds_alternative<std::uint32_t>(val.payload) || std::holds_alternative<std::uint64_t>(val.payload);
 }
 bool is_signed_integer(const Value &val)
 {
-    return std::holds_alternative<std::int8_t>(val) || std::holds_alternative<std::int16_t>(val)
-        || std::holds_alternative<std::int32_t>(val) || std::holds_alternative<std::int64_t>(val);
+    return std::holds_alternative<std::int8_t>(val.payload) || std::holds_alternative<std::int16_t>(val.payload)
+        || std::holds_alternative<std::int32_t>(val.payload) || std::holds_alternative<std::int64_t>(val.payload);
 }
 bool is_unsigned_integer(const Value &val)
 {
-    return std::holds_alternative<std::uint8_t>(val) || std::holds_alternative<std::uint16_t>(val)
-        || std::holds_alternative<std::uint32_t>(val) || std::holds_alternative<std::uint64_t>(val);
+    return std::holds_alternative<std::uint8_t>(val.payload) || std::holds_alternative<std::uint16_t>(val.payload)
+        || std::holds_alternative<std::uint32_t>(val.payload) || std::holds_alternative<std::uint64_t>(val.payload);
 }
 bool is_float(const Value &val)
 {
-    return std::holds_alternative<numeric::float16_t>(val) || std::holds_alternative<float>(val) || std::holds_alternative<double>(val);
+    return std::holds_alternative<numeric::float16_t>(val.payload) || std::holds_alternative<float>(val.payload)
+        || std::holds_alternative<double>(val.payload);
 }
 bool is_numeric(const Value &val)
 {
@@ -187,33 +188,33 @@ bool is_numeric(const Value &val)
 }
 bool is_string(const Value &val)
 {
-    return std::holds_alternative<std::string>(val);
+    return std::holds_alternative<std::string>(val.payload);
 }
 bool is_array(const Value &val)
 {
-    return std::holds_alternative<mem::rc_ptr<Array_value>>(val);
+    return std::holds_alternative<mem::rc_ptr<Array_value>>(val.payload);
 }
 bool is_model(const Value &val)
 {
-    return std::holds_alternative<mem::rc_ptr<Model_value>>(val);
+    return std::holds_alternative<mem::rc_ptr<Model_value>>(val.payload);
 }
 bool is_union(const Value &val)
 {
-    return std::holds_alternative<mem::rc_ptr<Union_value>>(val);
+    return std::holds_alternative<mem::rc_ptr<Union_value>>(val.payload);
 }
 bool is_closure(const Value &val)
 {
-    return std::holds_alternative<mem::rc_ptr<Closure_value>>(val);
+    return std::holds_alternative<mem::rc_ptr<Closure_value>>(val.payload);
 }
 bool is_iterator(const Value &val)
 {
-    return std::holds_alternative<mem::rc_ptr<Iterator_value>>(val);
+    return std::holds_alternative<mem::rc_ptr<Iterator_value>>(val.payload);
 }
 
 // --- Getters ---
 bool get_bool(const Value &val)
 {
-    return std::get<bool>(val);
+    return std::get<bool>(val.payload);
 }
 std::int64_t get_int(const Value &val)
 {
@@ -228,7 +229,7 @@ std::int64_t get_int(const Value &val)
                 throw std::bad_variant_access();
             }
         },
-        val);
+        val.payload);
 }
 std::uint64_t get_uint(const Value &val)
 {
@@ -243,7 +244,7 @@ std::uint64_t get_uint(const Value &val)
                 throw std::bad_variant_access();
             }
         },
-        val);
+        val.payload);
 }
 double get_float(const Value &val)
 {
@@ -254,11 +255,12 @@ double get_float(const Value &val)
                 return static_cast<double>(value);
             throw std::bad_variant_access();
         },
-        val);
+        val.payload);
 }
 
 std::optional<std::int64_t> try_get_i64(const Value &val)
 {
+    // These inherently use payload
     if (is_signed_integer(val))
         return get_int(val);
     if (is_unsigned_integer(val)) {
@@ -282,27 +284,27 @@ std::optional<std::uint64_t> try_get_u64(const Value &val)
 }
 std::string get_string(const Value &val)
 {
-    return std::get<std::string>(val);
+    return std::get<std::string>(val.payload);
 }
 mem::rc_ptr<Array_value> get_array(const Value &val)
 {
-    return std::get<mem::rc_ptr<Array_value>>(val);
+    return std::get<mem::rc_ptr<Array_value>>(val.payload);
 }
 mem::rc_ptr<Model_value> get_model(const Value &val)
 {
-    return std::get<mem::rc_ptr<Model_value>>(val);
+    return std::get<mem::rc_ptr<Model_value>>(val.payload);
 }
 mem::rc_ptr<Closure_value> get_closure(const Value &val)
 {
-    return std::get<mem::rc_ptr<Closure_value>>(val);
+    return std::get<mem::rc_ptr<Closure_value>>(val.payload);
 }
 mem::rc_ptr<Union_value> get_union(const Value &val)
 {
-    return std::get<mem::rc_ptr<Union_value>>(val);
+    return std::get<mem::rc_ptr<Union_value>>(val.payload);
 }
 mem::rc_ptr<Iterator_value> get_iterator(const Value &val)
 {
-    return std::get<mem::rc_ptr<Iterator_value>>(val);
+    return std::get<mem::rc_ptr<Iterator_value>>(val.payload);
 }
 
 types::Primitive_kind numeric_type_of(const Value &val)
@@ -335,7 +337,7 @@ types::Primitive_kind numeric_type_of(const Value &val)
             else
                 return types::Primitive_kind::Any;
         },
-        val);
+        val.payload);
 }
 
 std::optional<Value> cast_numeric_value(const Value &val, types::Primitive_kind target_type)
@@ -343,7 +345,7 @@ std::optional<Value> cast_numeric_value(const Value &val, types::Primitive_kind 
     if (!is_numeric(val) || !types::is_numeric_primitive(target_type))
         return std::nullopt;
 
-    return std::visit([&](const auto &value) -> std::optional<Value> { return cast_numeric_dispatch(value, target_type); }, val);
+    return std::visit([&](const auto &value) -> std::optional<Value> { return cast_numeric_dispatch(value, target_type); }, val.payload);
 }
 
 std::optional<Value> coerce_numeric_literal(const Value &val, types::Primitive_kind target_type)
@@ -351,8 +353,9 @@ std::optional<Value> coerce_numeric_literal(const Value &val, types::Primitive_k
     if (!is_numeric(val) || !types::is_numeric_primitive(target_type))
         return std::nullopt;
 
-    return std::visit([&](const auto &value) -> std::optional<Value> { return coerce_literal_dispatch(value, target_type); }, val);
+    return std::visit([&](const auto &value) -> std::optional<Value> { return coerce_literal_dispatch(value, target_type); }, val.payload);
 }
+
 // --- Utility ---
 std::string value_to_string(const Value &val)
 {
@@ -372,7 +375,7 @@ std::string value_to_string(const Value &val)
                 else
                     return "";
             },
-            val);
+            val.payload);
     if (is_string(val))
         return get_string(val); // No quotes internally
 
@@ -387,11 +390,11 @@ std::string value_to_string(const Value &val)
     if (is_iterator(val))
         return std::format("<iter {}>", types::type_to_string(get_iterator(val)->element_type));
 
-    if (std::holds_alternative<mem::rc_ptr<Union_value>>(val)) {
-        auto u = std::get<mem::rc_ptr<Union_value>>(val);
+    if (std::holds_alternative<mem::rc_ptr<Union_value>>(val.payload)) {
+        auto u = std::get<mem::rc_ptr<Union_value>>(val.payload);
         return std::format("<{}::{}>", u->union_name, u->variant_name);
     }
-    if (std::holds_alternative<mem::rc_ptr<Green_thread_value>>(val))
+    if (std::holds_alternative<mem::rc_ptr<Green_thread_value>>(val.payload))
         return "<green thread>";
 
     return "<unknown>";
@@ -399,55 +402,58 @@ std::string value_to_string(const Value &val)
 
 std::string value_to_str_debug(const Value &val)
 {
+    std::string res;
+
     if (is_nil(val))
-        return "nil";
-    if (is_bool(val))
-        return get_bool(val) ? "true" : "false";
-
-    if (is_numeric(val))
-        return value_to_string(val);
-
-    if (is_string(val))
-        return std::format("\"{}\"", get_string(val));
-
-    if (is_closure(val))
-        return value_to_string(val);
-
-    if (is_array(val)) {
+        res = "nil";
+    else if (is_bool(val))
+        res = get_bool(val) ? "true" : "false";
+    else if (is_numeric(val))
+        res = value_to_string(val);
+    else if (is_string(val))
+        res = std::format("\"{}\"", get_string(val));
+    else if (is_closure(val))
+        res = value_to_string(val);
+    else if (is_array(val)) {
         auto arr = get_array(val);
-        std::string res = "[";
+        res = "[";
         for (size_t i = 0; i < arr->elements.size(); ++i) {
             res += value_to_str_debug(arr->elements[i]);
             if (i != arr->elements.size() - 1)
                 res += ", ";
         }
         res += "]";
-        return res;
-    }
-
-    if (is_model(val)) {
+    } else if (is_model(val)) {
         auto model = get_model(val);
-        std::string res = model->signature.name + " { ";
+        res = model->signature.name + " { ";
         for (size_t i = 0; i < model->fields.size(); ++i) {
             res += value_to_str_debug(model->fields[i]);
             if (i != model->fields.size() - 1)
                 res += ", ";
         }
         res += " }";
-        return res;
+    } else if (std::holds_alternative<mem::rc_ptr<Union_value>>(val.payload)) {
+        auto u = std::get<mem::rc_ptr<Union_value>>(val.payload);
+        res = std::format("{}{{ {}: {} }}", u->union_name, u->variant_name, value_to_str_debug(u->payload));
+    } else {
+        res = value_to_string(val); // Fallback to internal
     }
 
-    if (std::holds_alternative<mem::rc_ptr<Union_value>>(val)) {
-        auto u = std::get<mem::rc_ptr<Union_value>>(val);
-        return std::format("{}{{ {}: {} }}", u->union_name, u->variant_name, value_to_str_debug(u->payload));
+    // Unobtrusively indicate depth for debug strings!
+    for (uint8_t i = 0; i < val.option_depth; ++i) {
+        res += "?";
     }
 
-    return value_to_string(val); // Fallback to internal
+    return res;
 }
 
 // --- Equality Operators ---
 bool operator==(const Value &a, const Value &b)
 {
+    // Option depth must match strictly
+    if (a.option_depth != b.option_depth)
+        return false;
+
     // If they aren't even the same variant type, they are definitely not equal
     if (a.index() != b.index())
         return false;
@@ -474,12 +480,12 @@ bool operator==(const Value &a, const Value &b)
     if (is_model(a))
         return get_model(a) == get_model(b);
 
-    if (std::holds_alternative<mem::rc_ptr<Union_value>>(a))
-        return std::get<mem::rc_ptr<Union_value>>(a) == std::get<mem::rc_ptr<Union_value>>(b);
-    if (std::holds_alternative<mem::rc_ptr<Iterator_value>>(a))
-        return std::get<mem::rc_ptr<Iterator_value>>(a) == std::get<mem::rc_ptr<Iterator_value>>(b);
-    if (std::holds_alternative<mem::rc_ptr<Green_thread_value>>(a))
-        return std::get<mem::rc_ptr<Green_thread_value>>(a) == std::get<mem::rc_ptr<Green_thread_value>>(b);
+    if (std::holds_alternative<mem::rc_ptr<Union_value>>(a.payload))
+        return std::get<mem::rc_ptr<Union_value>>(a.payload) == std::get<mem::rc_ptr<Union_value>>(b.payload);
+    if (std::holds_alternative<mem::rc_ptr<Iterator_value>>(a.payload))
+        return std::get<mem::rc_ptr<Iterator_value>>(a.payload) == std::get<mem::rc_ptr<Iterator_value>>(b.payload);
+    if (std::holds_alternative<mem::rc_ptr<Green_thread_value>>(a.payload))
+        return std::get<mem::rc_ptr<Green_thread_value>>(a.payload) == std::get<mem::rc_ptr<Green_thread_value>>(b.payload);
 
     return false;
 }

@@ -182,6 +182,10 @@ void Compiler::compile_expr(ast::Expr *expr)
         visit_anon_model_literal_expr(*node);
     else
         std::println(stderr, "Unimplemented expr node at index: {}", expr->node.index());
+
+    for (uint8_t i = 0; i < expr->auto_wrap_depth; ++i) {
+        emit_op(Op_code::Wrap_optional, ast::get_loc(expr->node));
+    }
 }
 
 // Call Frames & Functions
@@ -445,90 +449,68 @@ void Compiler::visit_for_stmt(const ast::For_stmt &stmt)
 
 void Compiler::visit_for_in_stmt(const ast::For_in_stmt &stmt)
 {
-    begin_scope();
+    begin_scope(); // Hidden scope for '.iter'
 
-    auto iterable_type = ast::get_type(stmt.iterable->node);
+    // 1. SETUP: .iter = iter(iterable)
+    uint8_t make_idx = identifier_constant("iter", stmt.loc);
+    emit_op(Op_code::Get_global, stmt.loc);
+    emit_byte(make_idx, stmt.loc);
 
-    // 1. Normalize the iterable onto the stack
-    if (is_iterator_protocol_type(iterable_type)) {
+    if (stmt.iterable)
         compile_expr(stmt.iterable);
-    } else if (has_iter_method(iterable_type)) {
-        ast::Method_call_expr iter_method{
-            .object = stmt.iterable,
-            .method_name = "iter",
-            .arguments = {},
-            .type = find_model_method_signature(iterable_type, "iter")->return_type,
-            .loc = stmt.loc,
-        };
-        visit_method_call_expr(iter_method);
-    } else {
-        uint8_t iter_name_idx = identifier_constant("iter", stmt.loc);
-        emit_op(Op_code::Get_global, stmt.loc);
-        emit_byte(iter_name_idx, stmt.loc);
-        compile_expr(stmt.iterable);
-        emit_op(Op_code::Call, stmt.loc);
-        emit_byte(1, stmt.loc);
-    }
 
-    current()->locals.push_back(Local{"<iter>", current()->scope_depth});
-    int iter_slot = static_cast<int>(current()->locals.size()) - 1;
+    emit_op(Op_code::Call, stmt.loc);
+    emit_byte(1, stmt.loc);
 
-    auto iter_type = has_iter_method(iterable_type)
-        ? find_model_method_signature(iterable_type, "iter")->return_type
-        : (is_iterator_protocol_type(iterable_type) ? iterable_type
-                                                    : types::Type(mem::make_rc<types::Iterator_type>(types::Primitive_kind::Any)));
+    current()->locals.push_back(Local{".iter", current()->scope_depth});
+    size_t iter_slot = current()->locals.size() - 1;
 
-    bool builtin_iter = std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(iter_type);
-
-    std::string has_next_name = builtin_iter ? "Iter::has_next" : std::get<mem::rc_ptr<types::Model_type>>(iter_type)->name + "::has_next";
-    std::string next_name = builtin_iter ? "Iter::next" : std::get<mem::rc_ptr<types::Model_type>>(iter_type)->name + "::next";
-    std::string get_name = builtin_iter ? "Iter::get" : std::get<mem::rc_ptr<types::Model_type>>(iter_type)->name + "::get";
-
-    // 2. Pre-allocate the loop variable slot BEFORE the loop
-    begin_scope();
-    current()->locals.push_back(Local{stmt.var_name, current()->scope_depth});
-    int loop_var_slot = static_cast<int>(current()->locals.size()) - 1;
-    emit_op(Op_code::Nil, stmt.loc);
-
+    // --- LOOP START ---
     size_t loop_start = current_chunk()->code.size();
 
-    // Condition: has_next(1) — checks if there is a next item
+    // 2. FETCH: val = Iter::next(.iter, 1)
+    // [Stack: <Func Iter::next>]
+    uint8_t next_idx = identifier_constant("Iter::next", stmt.loc);
     emit_op(Op_code::Get_global, stmt.loc);
-    emit_byte(identifier_constant(has_next_name, stmt.loc), stmt.loc);
+    emit_byte(next_idx, stmt.loc);
+
     emit_op(Op_code::Get_local, stmt.loc);
     emit_byte(static_cast<uint8_t>(iter_slot), stmt.loc);
+
+    // Push the default step argument: 1
     emit_constant(Value(int64_t(1)), stmt.loc);
+
+    // Call Iter::next(.iter, 1) -> Returns {item} (or nil if exhausted)
+    // [Stack: {item}]
     emit_op(Op_code::Call, stmt.loc);
     emit_byte(2, stmt.loc);
 
-    size_t exit_jump = emit_jump(Op_code::Jump_if_false, stmt.loc);
-    emit_op(Op_code::Pop, stmt.loc);
+    // 3. CHECK: if val == nil break
+    // Jump_if_nil specifically checks if depth == 0 AND payload == nullptr.
+    // If it's {nil} (depth 1), it WILL NOT jump!
+    size_t exit_jump = emit_jump(Op_code::Jump_if_nil, stmt.loc);
 
-    // Advance and fetch: next(1)
-    emit_op(Op_code::Get_global, stmt.loc);
-    emit_byte(identifier_constant(next_name, stmt.loc), stmt.loc);
-    emit_op(Op_code::Get_local, stmt.loc);
-    emit_byte(static_cast<uint8_t>(iter_slot), stmt.loc);
-    emit_constant(Value(int64_t(1)), stmt.loc);
-    emit_op(Op_code::Call, stmt.loc);
-    emit_byte(2, stmt.loc);
+    // 4. UNWRAP: The VM-Native Way
+    // This simply does `val.option_depth -= 1` on the top of the stack.
+    // {item} becomes item. {nil} becomes nil. Zero overhead.
+    emit_op(Op_code::Unwrap, stmt.loc);
 
-    // Store in loop variable
-    emit_op(Op_code::Set_local, stmt.loc);
-    emit_byte(static_cast<uint8_t>(loop_var_slot), stmt.loc);
-    emit_op(Op_code::Pop, stmt.loc);
-
-    // Execute body
+    // --- BODY ---
+    begin_scope();
+    current()->locals.push_back(Local{stmt.var_name, current()->scope_depth});
     if (stmt.body)
         compile_stmt(stmt.body);
+    end_scope(stmt.loc); // Pops 'item'
 
     emit_loop(loop_start, stmt.loc);
-    patch_jump(exit_jump, stmt.loc);
-    emit_op(Op_code::Pop, stmt.loc);
 
-    // 3. Clean up
-    end_scope(stmt.loc); // cleans up the loop variable
-    end_scope(stmt.loc); // cleans up the <iter> wrapper
+    // --- EXIT ---
+    patch_jump(exit_jump, stmt.loc);
+
+    // If we jumped here, the exhausted base 'nil' is sitting on the stack
+    emit_op(Op_code::Pop, stmt.loc); 
+
+    end_scope(stmt.loc); // Pops '.iter'
 }
 
 void Compiler::visit_model_stmt(const ast::Model_stmt &stmt)

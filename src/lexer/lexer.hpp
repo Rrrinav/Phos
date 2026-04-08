@@ -436,8 +436,8 @@ private:
             if (!consume_digits([](char c) { return std::isxdigit(static_cast<unsigned char>(c)); }))
                 return Token(TokenType::Invalid, "Invalid hex literal", std::string("Invalid hex literal"), line, start_col);
             std::string cleaned = strip_underscores(source.substr(start, current - start));
-            int64_t val = std::stoll(cleaned, nullptr, 16);
-            return finish_numeric_token(Value(static_cast<std::int64_t>(val)), TokenType::Integer64);
+            int32_t val = std::stoll(cleaned, nullptr, 16);
+            return finish_numeric_token(Value(static_cast<std::int32_t>(val)), TokenType::Integer32);
         }
 
         // binary literal: 0b...
@@ -446,8 +446,8 @@ private:
             if (!consume_digits([](char c) { return c == '0' || c == '1'; }))
                 return Token(TokenType::Invalid, "Invalid binary literal", std::string("Invalid binary literal"), line, start_col);
             std::string cleaned = strip_underscores(source.substr(start, current - start));
-            int64_t val = std::stoll(cleaned.substr(2), nullptr, 2);
-            return finish_numeric_token(Value(static_cast<std::int64_t>(val)), TokenType::Integer64);
+            int32_t val = std::stoll(cleaned.substr(2), nullptr, 2);
+            return finish_numeric_token(Value(static_cast<std::int32_t>(val)), TokenType::Integer32);
         }
 
         // octal literal: 0o...
@@ -456,8 +456,8 @@ private:
             if (!consume_digits([](char c) { return c >= '0' && c <= '7'; }))
                 return Token(TokenType::Invalid, "Invalid octal literal", std::string("Invalid octal literal"), line, start_col);
             std::string cleaned = strip_underscores(source.substr(start, current - start));
-            int64_t val = std::stoll(cleaned.substr(2), nullptr, 8);
-            return finish_numeric_token(Value(static_cast<std::int64_t>(val)), TokenType::Integer64);
+            int32_t val = std::stoll(cleaned.substr(2), nullptr, 8);
+            return finish_numeric_token(Value(static_cast<std::int32_t>(val)), TokenType::Integer32);
         }
 
         consume_digits([](char c) { return std::isdigit(static_cast<unsigned char>(c)); }, true);
@@ -486,7 +486,7 @@ private:
         if (is_float)
             return finish_numeric_token(Value(std::stod(cleaned)), TokenType::Float64);
 
-        return finish_numeric_token(Value(static_cast<std::int64_t>(std::stoll(cleaned))), TokenType::Integer64);
+        return finish_numeric_token(Value(static_cast<std::int32_t>(std::stoll(cleaned))), TokenType::Integer32);
     }
 
     //  identifier / keyword scanner
