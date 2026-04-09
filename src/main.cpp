@@ -101,6 +101,7 @@ int main(int argc, char *argv[])
         phos::vm::core::register_core_library(vm, type_checker); // MUST BE BEFORE .check()!
 
         auto checked = type_checker.check(parse_result.value());
+
         if (print_ast) {
             phos::ast::AstPrinter printer;
             printer.use_unicode = print_use_unicode;

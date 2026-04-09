@@ -275,6 +275,30 @@ inline Value core_bytes(Value value)
     bytes_panic("bytes(...) can only convert strings, bool arrays, or integer arrays to u8[].");
 }
 
+inline Value string_from_bytes(Value byte_array)
+{
+    if (!is_array(byte_array))
+        bytes_panic("string::from_bytes expects a u8[] or i8[] array.");
+
+    auto arr = get_array(byte_array);
+    std::string result;
+    result.reserve(arr->elements.size());
+
+    for (const auto &elem : arr->elements) {
+        if (is_signed_integer(elem)) {
+            // Mask to exactly 8 bits to safely handle negative i8 values
+            result += static_cast<char>(get_int(elem) & 0xFF);
+        } else if (is_unsigned_integer(elem)) {
+            // Mask to exactly 8 bits for clean u8 values > 127
+            result += static_cast<char>(get_uint(elem) & 0xFF);
+        } else {
+            bytes_panic("string::from_bytes encountered a non-integer element.");
+        }
+    }
+
+    return Value(std::move(result));
+}
+
 [[noreturn]] inline void optional_panic(const std::string &message);
 
 inline std::vector<size_t> utf8_boundaries(const std::string &str)
@@ -782,23 +806,29 @@ inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
     constexpr std::string_view integer_types = "i8 | i16 | i32 | i64 | u8 | u16 | u32 | u64";
 
     vm.bind_native<core_is_same>("is_same", {"T", "T"}, "bool", tc);
+
     // Clock
     vm.bind_native<clock_now>("clock", {}, "f64", tc);
 
+    // Core Intrinsics
     vm.bind_native<iterator_from_value>("iter", {"any"}, "any", tc);
     vm.bind_native<core_clone>("clone", {"any"}, "any", tc);
     vm.bind_native<core_to_str>("to_str", {"any"}, "string", tc);
+
     vm.bind_native_sig<core_bytes>(
         "bytes",
         {{"value", "string | bool[] | i8[] | i16[] | i32[] | i64[] | u8[] | u16[] | u32[] | u64[]", std::nullopt}},
         "u8[]",
         tc);
 
+    vm.bind_native_sig<string_from_bytes>("string::from_bytes", {{"bytes", "u8[] | i8[]", std::nullopt}}, "string", tc);
+
     vm.bind_native_sig<range_exclusive>(
         "__range_exclusive",
         {{"start", std::string(integer_types), std::nullopt}, {"end", std::string(integer_types), std::nullopt}},
         "any",
         tc);
+
     vm.bind_native_sig<range_inclusive>(
         "__range_inclusive",
         {{"start", std::string(integer_types), std::nullopt}, {"end", std::string(integer_types), std::nullopt}},
@@ -806,44 +836,50 @@ inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
         tc);
 
     // len() strictly accepts either ONE string OR ONE array
-    // (We use two bind_native calls to register two valid signatures for the same function!)
     vm.bind_native_sig<core_len>("len", {{"value", "string", std::nullopt}}, "i64", tc);
     vm.bind_native_sig<core_len>("len", {{"value", "any[]", std::nullopt}}, "i64", tc);
 
-    // Array.push() takes an array of T, and a value of T. Returns T.
+    // Array bindings
     vm.bind_native_sig<array_push>("Array::push", {{"", "T[]", std::nullopt}, {"value", "T", std::nullopt}}, "T", tc);
-    // Array.pop() takes an array of T, and returns an optional T?
     vm.bind_native<array_pop>("Array::pop", {"T[]"}, "T?", tc);
     vm.bind_native_sig<array_join>("Array::join", {{"", "T[]", std::nullopt}, {"separator", "string", std::nullopt}}, "string", tc);
 
+    // --- STRICT ITERATOR BINDINGS ---
     vm.bind_native_sig<static_cast<Value (*)(mem::rc_ptr<Iterator_value>, Value)>(&iter_next)>(
         "Iter::next",
-        {{"", "any", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
-        "any",
+        {{"iter", "iter<T>", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
+        "T?",
         tc);
+
     vm.bind_native_sig<static_cast<Value (*)(mem::rc_ptr<Iterator_value>, Value)>(&iter_prev)>(
         "Iter::prev",
-        {{"", "any", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
-        "any",
+        {{"iter", "iter<T>", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
+        "T?",
         tc);
-    vm.bind_native_sig<iter_get>("Iter::get", {{"", "any", std::nullopt}}, "any", tc);
+
+    vm.bind_native_sig<iter_get>("Iter::get", {{"iter", "iter<T>", std::nullopt}}, "T?", tc);
+
     vm.bind_native_sig<static_cast<bool (*)(mem::rc_ptr<Iterator_value>, Value)>(&iter_has_next)>(
         "Iter::has_next",
-        {{"", "any", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
+        {{"iter", "iter<T>", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
         "bool",
         tc);
+
     vm.bind_native_sig<static_cast<bool (*)(mem::rc_ptr<Iterator_value>, Value)>(&iter_has_prev)>(
         "Iter::has_prev",
-        {{"", "any", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
+        {{"iter", "iter<T>", std::nullopt}, {"step", std::string(integer_types), Value(int64_t(1))}},
         "bool",
         tc);
-    vm.bind_native_sig<iter_contains>("Iter::contains", {{"", "any", std::nullopt}, {"target", "any", std::nullopt}}, "bool", tc);
 
+    vm.bind_native_sig<iter_contains>("Iter::contains", {{"iter", "iter<T>", std::nullopt}, {"target", "T", std::nullopt}}, "bool", tc);
+
+    // --- OPTIONAL BINDINGS (RESTORED!) ---
     vm.bind_native_sig<optional_get>(
         "Optional::get",
-        {{"", "T?", std::nullopt}, {"message", "string", Value(std::string("Tried to extract a value from nil."))}},
+        {{"", "T?", std::nullopt}, {"message", "string", Value(std::string("Called .get() on a nil optional value."))}},
         "T",
         tc);
+
     vm.bind_native_sig<optional_or>("Optional::or", {{"", "T?", std::nullopt}, {"default", "T", std::nullopt}}, "T", tc);
     vm.bind_native_sig<optional_has_value>("Optional::has_value", {{"", "T?", std::nullopt}}, "bool", tc);
     vm.bind_native_sig<optional_is_some>("Optional::is_some", {{"", "T?", std::nullopt}}, "bool", tc);
@@ -853,6 +889,7 @@ inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
     vm.bind_native<math_sqrt>("sqrt", {"f64"}, "f64", tc);
     vm.bind_native_sig<math_pow>("pow", {{"base", "f64", std::nullopt}, {"exponent", "f64", std::nullopt}}, "f64", tc);
     vm.bind_native<math_abs>("abs", {"f64"}, "f64", tc);
+
     // Advanced String Bindings
     vm.bind_native_sig<string_starts_with>(
         "string::starts_with",
@@ -874,7 +911,8 @@ inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
     vm.bind_native<string_trim>("string::trim", {"string"}, "string", tc);
     vm.bind_native<string_trim_left>("string::trim_left", {"string"}, "string", tc);
     vm.bind_native<string_trim_right>("string::trim_right", {"string"}, "string", tc);
-    // Notice the "?" in the return type! The compiler knows these can fail and return nil.
+
+    // String parsing
     vm.bind_native_sig<string_parse_int>("string::parse_i64", {{"", "string", std::nullopt}}, "i64?", tc);
     vm.bind_native_sig<string_parse_float>("string::parse_f64", {{"", "string", std::nullopt}}, "f64?", tc);
     vm.bind_native_sig<string_parse_int>("parse_i64", {{"text", "string", std::nullopt}}, "i64?", tc);

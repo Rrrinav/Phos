@@ -16,14 +16,14 @@
 #define BLD_NO_COLORS
 #include "b_ldr.hpp"
 
-auto &cfg = bld::Config::get();
+inline auto &cfg = bld::Config::get();
 
-const std::string SRC = "./src/";
-const std::string BIN = "./bin/";
+const std::string SRC    = "./src/";
+const std::string BIN    = "./bin/";
 const std::string TARGET = BIN + "phos";
 
-const std::vector<std::string> COMMON_FLAGS = {"--std=c++23", "-pthread"};
-const std::vector<std::string> DEBUG_FLAGS = {"-ggdb", "-O0"};
+const std::vector<std::string> COMMON_FLAGS  = {"--std=c++23", "-pthread"};
+const std::vector<std::string> DEBUG_FLAGS   = {"-ggdb", "-O0"};
 const std::vector<std::string> RELEASE_FLAGS = {"-O2", "-DNDEBUG"};
 
 struct Progress
@@ -379,11 +379,13 @@ int main(int argc, char *argv[])
     cfg.add_flag("rel", "Release build (-O2 -DNDEBUG)");
     cfg.add_flag("force", "Force rebuild of all files");
     cfg.add_flag("clean", "Remove build directory");
+
     cfg.add_option("test", "", "Run tests in given directory (e.g. -test=./tests)");
     cfg.add_option("objs", "", "Comma-separated source files for custom build");
 
     bool release = static_cast<bool>(cfg["rel"]);
-    bool force = static_cast<bool>(cfg["force"]);
+    bool force   = static_cast<bool>(cfg["force"]);
+
     if (cfg["clean"]) {
         bld::log(bld::Log_type::INFO, "Cleaning " + BIN);
         bld::fs::remove_dir(BIN);

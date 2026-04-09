@@ -1420,8 +1420,12 @@ Result<ast::Expr *> Parser::primary()
             }});
     }
 
-    // identifier, scope resolution, model literal
-    if (match({lex::TokenType::Identifier})) {
+    // identifier, primitive type namespaces (like string::), scope resolution, model literal
+    if (match({ lex::TokenType::Identifier, lex::TokenType::TString, lex::TokenType::TInt8, lex::TokenType::TInt16, lex::TokenType::TInt32, lex::TokenType::TInt64,
+        lex::TokenType::TUInt8, lex::TokenType::TUInt16, lex::TokenType::TUInt32, lex::TokenType::TUInt64, lex::TokenType::TFloat16,
+        lex::TokenType::TFloat32, lex::TokenType::TFloat64, lex::TokenType::TBool
+    })) {
+
         lex::Token id = previous();
 
         if (match({lex::TokenType::ColonColon})) {

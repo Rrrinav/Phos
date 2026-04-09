@@ -1015,33 +1015,6 @@ void Compiler::visit_method_call_expr(const ast::Method_call_expr &expr)
         return;
     }
 
-    if (std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(type_var) && expr.method_name == "get") {
-        uint8_t name_idx = identifier_constant("Iter::get", expr.loc);
-        emit_op(Op_code::Get_global, expr.loc);
-        emit_byte(name_idx, expr.loc);
-        compile_expr(expr.object);
-        emit_op(Op_code::Call, expr.loc);
-        emit_byte(1, expr.loc);
-        return;
-    }
-
-    if (std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(type_var)
-        && (expr.method_name == "next" || expr.method_name == "prev" || expr.method_name == "has_next" || expr.method_name == "has_prev")) {
-        uint8_t name_idx = identifier_constant("Iter::" + expr.method_name, expr.loc);
-        emit_op(Op_code::Get_global, expr.loc);
-        emit_byte(name_idx, expr.loc);
-
-        compile_expr(expr.object);
-        if (expr.arguments.empty())
-            emit_constant(Value(int64_t(1)), expr.loc);
-        else
-            compile_expr(expr.arguments[0].value);
-
-        emit_op(Op_code::Call, expr.loc);
-        emit_byte(2, expr.loc);
-        return;
-    }
-
     // If it's a Model, route to ModelName::method
     if (auto *model_t = std::get_if<mem::rc_ptr<types::Model_type>>(&type_var))
         global_name = (*model_t)->name + "::" + expr.method_name;
@@ -1052,7 +1025,7 @@ void Compiler::visit_method_call_expr(const ast::Method_call_expr &expr)
         global_name = "Optional::" + expr.method_name;
     else if (std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(type_var))
         global_name = "Iter::" + expr.method_name;
-    // If it's an string, route to string::method
+    // If it's a string, route to string::method
     else if (auto *prim = std::get_if<types::Primitive_kind>(&type_var); prim && *prim == types::Primitive_kind::String)
         global_name = "string::" + expr.method_name;
 

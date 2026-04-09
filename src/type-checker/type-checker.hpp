@@ -251,5 +251,8 @@ public:
     Result<types::Type> check_expr_node(ast::Yield_expr &expr, std::optional<types::Type> context_type);
     Result<types::Type> check_expr_node(ast::Fstring_expr &expr, std::optional<types::Type> context_type);
     Result<types::Type> check_expr_node(ast::Anon_model_literal_expr &expr, std::optional<types::Type> context_type);
+
+
+    types::Type parse_type_string(std::string str, const std::unordered_map<std::string, types::Type> &generics) const;
 };
 } // namespace phos
