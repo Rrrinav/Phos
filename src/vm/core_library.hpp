@@ -54,6 +54,25 @@ inline double clock_now()
     return duration_cast<duration<double>>(system_clock::now().time_since_epoch()).count();
 }
 
+[[noreturn]] inline void core_panic(std::string message)
+{
+    std::println(stderr, "panic: {}", message);
+    std::exit(EXIT_FAILURE);
+}
+
+[[noreturn]] inline void core_exit(int64_t code, std::string message)
+{
+    if (!message.empty()) {
+        // Standard practice: Print successes to stdout, errors to stderr
+        if (code == 0) {
+            std::println(stdout, "{}", message);
+        } else {
+            std::println(stderr, "{}", message);
+        }
+    }
+    std::exit(static_cast<int>(code));
+}
+
 // --- Queries (Functions) ---
 inline int64_t core_len(Value val)
 {
@@ -809,8 +828,16 @@ inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
 
     // Clock
     vm.bind_native<clock_now>("clock", {}, "f64", tc);
+    vm.bind_native_sig<core_panic>("panic", {
+        {"message", "string", Value(std::string("Explicit panic."))}
+    },"void", tc);
+    vm.bind_native_sig<core_exit>("exit", {
+        {"code", "i32", Value(int64_t(0))},
+        {"message", "string", Value(std::string(""))}
+    }, "void", tc);
 
     // Core Intrinsics
+    vm.bind_native<iterator_from_value>("iter", {"any"}, "any", tc);
     vm.bind_native<iterator_from_value>("iter", {"any"}, "any", tc);
     vm.bind_native<core_clone>("clone", {"any"}, "any", tc);
     vm.bind_native<core_to_str>("to_str", {"any"}, "string", tc);

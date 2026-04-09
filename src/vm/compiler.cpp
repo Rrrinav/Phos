@@ -451,16 +451,47 @@ void Compiler::visit_for_in_stmt(const ast::For_in_stmt &stmt)
 {
     begin_scope(); // Hidden scope for '.iter'
 
-    // 1. SETUP: .iter = iter(iterable)
-    uint8_t make_idx = identifier_constant("iter", stmt.loc);
-    emit_op(Op_code::Get_global, stmt.loc);
-    emit_byte(make_idx, stmt.loc);
-
+    // Fetch the resolved type of the iterable so we know how to route it
+    types::Type iterable_type = types::Primitive_kind::Any;
     if (stmt.iterable)
-        compile_expr(stmt.iterable);
+        iterable_type = ast::get_type(stmt.iterable->node);
 
-    emit_op(Op_code::Call, stmt.loc);
-    emit_byte(1, stmt.loc);
+    // 1. DYNAMIC DISPATCH ROUTING
+    bool is_already_custom_iter = is_iterator_protocol_type(iterable_type)
+        && !std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(iterable_type);
+    bool has_custom_iter_method = has_iter_method(iterable_type);
+
+    types::Type custom_iter_type = types::Primitive_kind::Void;
+
+    // --- SETUP: INITIALIZE THE ITERATOR ---
+    if (is_already_custom_iter) {
+        custom_iter_type = iterable_type;
+        // It's already an iterator (e.g. `for i in vec.iter()`). Just push it!
+        if (stmt.iterable)
+            compile_expr(stmt.iterable);
+    } else if (has_custom_iter_method) {
+        // It's an iterable (e.g. `for i in vec`). Call `vec::iter()`!
+        auto iter_sig = find_model_method_signature(iterable_type, "iter");
+        custom_iter_type = iter_sig->return_type;
+        auto model_type = types::get_model_type(iterable_type);
+
+        std::string global_name = model_type->name + "::iter";
+        emit_op(Op_code::Get_global, stmt.loc);
+        emit_byte(identifier_constant(global_name, stmt.loc), stmt.loc);
+        if (stmt.iterable)
+            compile_expr(stmt.iterable); // Push 'this'
+        emit_op(Op_code::Call, stmt.loc);
+        emit_byte(1, stmt.loc);
+    } else {
+        // It's a native type (array, string, range). Call C++ FFI `iter()`
+        uint8_t make_idx = identifier_constant("iter", stmt.loc);
+        emit_op(Op_code::Get_global, stmt.loc);
+        emit_byte(make_idx, stmt.loc);
+        if (stmt.iterable)
+            compile_expr(stmt.iterable);
+        emit_op(Op_code::Call, stmt.loc);
+        emit_byte(1, stmt.loc);
+    }
 
     current()->locals.push_back(Local{".iter", current()->scope_depth});
     size_t iter_slot = current()->locals.size() - 1;
@@ -468,31 +499,32 @@ void Compiler::visit_for_in_stmt(const ast::For_in_stmt &stmt)
     // --- LOOP START ---
     size_t loop_start = current_chunk()->code.size();
 
-    // 2. FETCH: val = Iter::next(.iter, 1)
-    // [Stack: <Func Iter::next>]
-    uint8_t next_idx = identifier_constant("Iter::next", stmt.loc);
-    emit_op(Op_code::Get_global, stmt.loc);
-    emit_byte(next_idx, stmt.loc);
+    // --- FETCH: CALL NEXT() ---
+    if (is_already_custom_iter || has_custom_iter_method) {
+        // Call the custom user method: CustomModel::next(.iter)
+        auto iter_model = types::get_model_type(custom_iter_type);
+        std::string next_name = iter_model->name + "::next";
 
-    emit_op(Op_code::Get_local, stmt.loc);
-    emit_byte(static_cast<uint8_t>(iter_slot), stmt.loc);
+        emit_op(Op_code::Get_global, stmt.loc);
+        emit_byte(identifier_constant(next_name, stmt.loc), stmt.loc);
+        emit_op(Op_code::Get_local, stmt.loc);
+        emit_byte(static_cast<uint8_t>(iter_slot), stmt.loc);
+        emit_op(Op_code::Call, stmt.loc);
+        emit_byte(1, stmt.loc);
+    } else {
+        // Call the C++ FFI: Iter::next(.iter, step = 1)
+        uint8_t next_idx = identifier_constant("Iter::next", stmt.loc);
+        emit_op(Op_code::Get_global, stmt.loc);
+        emit_byte(next_idx, stmt.loc);
+        emit_op(Op_code::Get_local, stmt.loc);
+        emit_byte(static_cast<uint8_t>(iter_slot), stmt.loc);
+        emit_constant(Value(int64_t(1)), stmt.loc);
+        emit_op(Op_code::Call, stmt.loc);
+        emit_byte(2, stmt.loc);
+    }
 
-    // Push the default step argument: 1
-    emit_constant(Value(int64_t(1)), stmt.loc);
-
-    // Call Iter::next(.iter, 1) -> Returns {item} (or nil if exhausted)
-    // [Stack: {item}]
-    emit_op(Op_code::Call, stmt.loc);
-    emit_byte(2, stmt.loc);
-
-    // 3. CHECK: if val == nil break
-    // Jump_if_nil specifically checks if depth == 0 AND payload == nullptr.
-    // If it's {nil} (depth 1), it WILL NOT jump!
+    // --- CHECK & UNWRAP ---
     size_t exit_jump = emit_jump(Op_code::Jump_if_nil, stmt.loc);
-
-    // 4. UNWRAP: The VM-Native Way
-    // This simply does `val.option_depth -= 1` on the top of the stack.
-    // {item} becomes item. {nil} becomes nil. Zero overhead.
     emit_op(Op_code::Unwrap, stmt.loc);
 
     // --- BODY ---
@@ -506,11 +538,8 @@ void Compiler::visit_for_in_stmt(const ast::For_in_stmt &stmt)
 
     // --- EXIT ---
     patch_jump(exit_jump, stmt.loc);
-
-    // If we jumped here, the exhausted base 'nil' is sitting on the stack
-    emit_op(Op_code::Pop, stmt.loc); 
-
-    end_scope(stmt.loc); // Pops '.iter'
+    emit_op(Op_code::Pop, stmt.loc); // Pop the exhausted base 'nil'
+    end_scope(stmt.loc);             // Pops '.iter'
 }
 
 void Compiler::visit_model_stmt(const ast::Model_stmt &stmt)
