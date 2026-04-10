@@ -13,6 +13,49 @@
 
 namespace phos::ast {
 
+// Strongly-Typed AST Indices
+struct Expr_id
+{
+    uint32_t value;
+    constexpr bool operator==(const Expr_id &o) const noexcept
+    {
+        return value == o.value;
+    }
+    constexpr bool operator!=(const Expr_id &o) const noexcept
+    {
+        return value != o.value;
+    }
+    constexpr bool is_null() const noexcept
+    {
+        return value == 0xFFFFFFFF;
+    }
+    static constexpr Expr_id null() noexcept
+    {
+        return {0xFFFFFFFF};
+    }
+};
+
+struct Stmt_id
+{
+    uint32_t value;
+    constexpr bool operator==(const Stmt_id &o) const noexcept
+    {
+        return value == o.value;
+    }
+    constexpr bool operator!=(const Stmt_id &o) const noexcept
+    {
+        return value != o.value;
+    }
+    constexpr bool is_null() const noexcept
+    {
+        return value == 0xFFFFFFFF;
+    }
+    static constexpr Stmt_id null() noexcept
+    {
+        return {0xFFFFFFFF};
+    }
+};
+
 struct Source_location
 {
     size_t l = 0;
@@ -25,7 +68,7 @@ struct Function_param
     std::string name;
     types::Type_id type;
     bool is_mut = false;
-    struct Expr *default_value = nullptr;
+    Expr_id default_value = Expr_id::null();
     Source_location loc;
 };
 
@@ -33,17 +76,18 @@ struct Typed_member_decl
 {
     std::string name;
     types::Type_id type;
-    struct Expr *default_value = nullptr;
+    Expr_id default_value = Expr_id::null();
     Source_location loc;
 };
 
 struct Call_argument
 {
     std::string name;
-    struct Expr *value = nullptr;
+    Expr_id value = Expr_id::null();
     Source_location loc;
 };
 
+// Expression Nodes
 struct Literal_expr
 {
     Value value;
@@ -60,9 +104,9 @@ struct Variable_expr
 
 struct Binary_expr
 {
-    struct Expr *left;
+    Expr_id left;
     lex::TokenType op;
-    struct Expr *right;
+    Expr_id right;
     types::Type_id type;
     Source_location loc;
 };
@@ -70,59 +114,55 @@ struct Binary_expr
 struct Unary_expr
 {
     lex::TokenType op;
-    struct Expr *right;
+    Expr_id right;
     types::Type_id type;
     Source_location loc;
 };
-
 struct Call_expr
 {
-    struct Expr *callee;
+    Expr_id callee;
     std::vector<Call_argument> arguments;
     types::Type_id type;
     Source_location loc;
     int native_signature_index = -1;
 };
 
-// Simple variable assignment:  name = value
 struct Assignment_expr
 {
     std::string name;
-    struct Expr *value;
+    Expr_id value;
     types::Type_id type;
     Source_location loc;
 };
 
-// Field mutation:  obj.field = value
 struct Field_assignment_expr
 {
-    struct Expr *object;
+    Expr_id object;
     std::string field_name;
-    struct Expr *value;
+    Expr_id value;
     types::Type_id type;
     Source_location loc;
 };
 
-// Array element mutation:  arr[idx] = value
 struct Array_assignment_expr
 {
-    struct Expr *array;
-    struct Expr *index;
-    struct Expr *value;
+    Expr_id array;
+    Expr_id index;
+    Expr_id value;
     types::Type_id type;
     Source_location loc;
 };
 
 struct Cast_expr
 {
-    struct Expr *expression;
+    Expr_id expression;
     types::Type_id target_type;
     Source_location loc;
 };
 
 struct Field_access_expr
 {
-    struct Expr *object;
+    Expr_id object;
     std::string field_name;
     types::Type_id type;
     Source_location loc;
@@ -130,12 +170,11 @@ struct Field_access_expr
 
 struct Method_call_expr
 {
-    struct Expr *object;
+    Expr_id object;
     std::string method_name;
     std::vector<Call_argument> arguments;
     types::Type_id type;
     Source_location loc;
-
     bool is_closure_field = false;
     uint8_t field_index = 0;
     int native_signature_index = -1;
@@ -144,7 +183,7 @@ struct Method_call_expr
 struct Model_literal_expr
 {
     std::string model_name;
-    std::vector<std::pair<std::string, struct Expr *>> fields;
+    std::vector<std::pair<std::string, Expr_id>> fields;
     types::Type_id type;
     Source_location loc;
 };
@@ -153,77 +192,69 @@ struct Closure_expr
 {
     std::vector<Function_param> parameters;
     types::Type_id return_type;
-    struct Stmt *body;
+    Stmt_id body;
     types::Type_id type;
     Source_location loc;
 };
 
 struct Array_literal_expr
 {
-    std::vector<struct Expr *> elements;
+    std::vector<Expr_id> elements;
     types::Type_id type;
     Source_location loc;
 };
 
 struct Array_access_expr
 {
-    struct Expr *array;
-    struct Expr *index;
+    Expr_id array;
+    Expr_id index;
     types::Type_id type;
     Source_location loc;
 };
 
-// Type::Member  or  Union::Variant
 struct Static_path_expr
 {
-    struct Expr *base;
+    Expr_id base;
     lex::Token member;
     types::Type_id type;
     Source_location loc;
 };
 
-// start..end  or  start..=end
 struct Range_expr
 {
-    struct Expr *start;
-    struct Expr *end;
-    bool inclusive; // true => ..=   false => ..
+    Expr_id start;
+    Expr_id end;
+    bool inclusive;
     types::Type_id type;
     Source_location loc;
 };
 
-// spawn fn(args)  =>  Thread<T>
 struct Spawn_expr
 {
-    struct Expr *call;
+    Expr_id call;
     types::Type_id type;
     Source_location loc;
 };
 
-// await thread_val  =>  T
 struct Await_expr
 {
-    struct Expr *thread;
+    Expr_id thread;
     types::Type_id type;
     Source_location loc;
 };
 
-// yield  /  yield value
 struct Yield_expr
 {
-    struct Expr *value; // nullptr for bare yield
+    Expr_id value;
     types::Type_id type;
     Source_location loc;
 };
 
-// f"hello {name}, result {x + 1}"
-// The parser keeps this as a dedicated node so the compiler can stringify
-// interpolations with display-style formatting for any runtime value.
 struct Fstring_expr
 {
-    std::string raw_template;                  // e.g. "hello {name}"
-    std::vector<struct Expr *> interpolations; // exprs extracted from {}
-    types::Type_id type;                          // always String
+    std::string raw_template;
+    std::vector<Expr_id> interpolations;
+    types::Type_id type;
     Source_location loc;
 };
 
@@ -236,13 +267,11 @@ struct Enum_member_expr
 
 struct Anon_model_literal_expr
 {
-    std::vector<std::pair<std::string, Expr *>> fields;
+    std::vector<std::pair<std::string, Expr_id>> fields;
     types::Type_id type{};
-
     Source_location loc;
 };
 
-// Unified expression wrapper
 struct Expr
 {
     using Node = std::variant<
@@ -271,17 +300,13 @@ struct Expr
         Anon_model_literal_expr>;
 
     Node node;
-
     uint8_t auto_wrap_depth = 0;
 };
 
-// =============================================================================
-// Statement node types
-// =============================================================================
-
+// Statement Nodes
 struct Return_stmt
 {
-    struct Expr *expression; // nullptr for bare return
+    Expr_id expression = Expr_id::null();
     Source_location loc;
 };
 
@@ -291,7 +316,7 @@ struct Function_stmt
     bool is_static;
     std::vector<Function_param> parameters;
     types::Type_id return_type;
-    struct Stmt *body;
+    Stmt_id body;
     Source_location loc;
 };
 
@@ -299,7 +324,7 @@ struct Model_stmt
 {
     std::string name;
     std::vector<Typed_member_decl> fields;
-    std::vector<Function_stmt *> methods;
+    std::vector<Stmt_id> methods;
     Source_location loc;
 };
 
@@ -312,21 +337,20 @@ struct Union_stmt
 
 struct Var_stmt
 {
-    bool is_mut = false;   // let mut  => reassignable
-    bool is_const = false; // const    => compile-time inline
+    bool is_mut = false;
+    bool is_const = false;
     std::string name;
     types::Type_id type;
-    struct Expr *initializer = nullptr;
+    Expr_id initializer = Expr_id::null();
     bool type_inferred = false;
     Source_location loc;
 };
 
 enum class Print_stream { STDOUT, STDERR };
-
 struct Print_stmt
 {
     Print_stream stream{Print_stream::STDOUT};
-    std::vector<struct Expr *> expressions{};
+    std::vector<Expr_id> expressions{};
     std::string sep = " ";
     std::string end = "\n";
     Source_location loc;
@@ -334,62 +358,59 @@ struct Print_stmt
 
 struct Expr_stmt
 {
-    struct Expr *expression;
+    Expr_id expression;
     Source_location loc;
 };
 
 struct Block_stmt
 {
-    std::vector<struct Stmt *> statements;
+    std::vector<Stmt_id> statements;
     Source_location loc;
 };
 
 struct If_stmt
 {
-    struct Expr *condition;
-    struct Stmt *then_branch;
-    struct Stmt *else_branch; // nullptr if no else
+    Expr_id condition;
+    Stmt_id then_branch;
+    Stmt_id else_branch = Stmt_id::null();
     Source_location loc;
 };
 
 struct While_stmt
 {
-    struct Expr *condition;
-    struct Stmt *body;
+    Expr_id condition;
+    Stmt_id body;
     Source_location loc;
 };
 
-// C-style for  (kept for compatibility)
 struct For_stmt
 {
-    struct Stmt *initializer;
-    struct Expr *condition;
-    struct Expr *increment;
-    struct Stmt *body;
+    Stmt_id initializer;
+    Expr_id condition;
+    Expr_id increment;
+    Stmt_id body;
     Source_location loc;
 };
 
-// for x in iterable { ... }
 struct For_in_stmt
 {
-    std::string var_name;  // always immutable inside body
-    struct Expr *iterable; // Range_expr or array expr
-    struct Stmt *body;
+    std::string var_name;
+    Expr_id iterable;
+    Stmt_id body;
     Source_location loc;
 };
 
-// One arm of a match statement
 struct Match_arm
 {
-    struct Expr *pattern = nullptr;
-    std::string bind_name;    // e.g. "s" in `ip_addr::v4(s)`
-    bool is_wildcard = false; // true for `_ =>`
-    struct Stmt *body = nullptr;
+    Expr_id pattern = Expr_id::null();
+    std::string bind_name;
+    bool is_wildcard = false;
+    Stmt_id body = Stmt_id::null();
 };
 
 struct Match_stmt
 {
-    struct Expr *subject;
+    Expr_id subject;
     std::vector<Match_arm> arms;
     Source_location loc;
 };
@@ -401,10 +422,6 @@ struct Enum_stmt
     std::vector<std::pair<std::string, std::optional<Value>>> variants;
     Source_location loc;
 };
-
-// =============================================================================
-// Unified statement wrapper
-// =============================================================================
 
 struct Stmt
 {
@@ -422,12 +439,53 @@ struct Stmt
         For_in_stmt,
         Union_stmt,
         Match_stmt,
-        Enum_stmt>;
+        Enum_stmt
+    >;
 
     Node node;
 };
 
-// Inline helpers
+// The Abstract Syntax Tree (Central Storage)
+class Ast_tree
+{
+public:
+    std::vector<Expr> expressions;
+    std::vector<Stmt> statements;
+
+    Expr_id add_expr(Expr expr)
+    {
+        Expr_id id = {static_cast<uint32_t>(expressions.size())};
+        expressions.push_back(std::move(expr));
+        return id;
+    }
+
+    Stmt_id add_stmt(Stmt stmt)
+    {
+        Stmt_id id = {static_cast<uint32_t>(statements.size())};
+        statements.push_back(std::move(stmt));
+        return id;
+    }
+
+    Expr &get(Expr_id id)
+    {
+        return expressions[id.value];
+    }
+    const Expr &get(Expr_id id) const
+    {
+        return expressions[id.value];
+    }
+
+    Stmt &get(Stmt_id id)
+    {
+        return statements[id.value];
+    }
+    const Stmt &get(Stmt_id id) const
+    {
+        return statements[id.value];
+    }
+};
+
+// Inline Extractors
 inline types::Type_id &get_type(Expr::Node &node)
 {
     return std::visit(
@@ -473,4 +531,5 @@ inline Source_location get_loc(const Stmt::Node &node)
 {
     return std::visit([](const auto &stmt) -> Source_location { return stmt.loc; }, node);
 }
+
 } // namespace phos::ast
