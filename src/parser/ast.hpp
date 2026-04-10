@@ -17,12 +17,13 @@ struct Source_location
 {
     size_t l = 0;
     size_t c = 0;
+    std::string file{""};
 };
 
 struct Function_param
 {
     std::string name;
-    types::Type type;
+    types::Type_id type;
     bool is_mut = false;
     struct Expr *default_value = nullptr;
     Source_location loc;
@@ -31,7 +32,7 @@ struct Function_param
 struct Typed_member_decl
 {
     std::string name;
-    types::Type type;
+    types::Type_id type;
     struct Expr *default_value = nullptr;
     Source_location loc;
 };
@@ -46,14 +47,14 @@ struct Call_argument
 struct Literal_expr
 {
     Value value;
-    types::Type type;
+    types::Type_id type;
     Source_location loc;
 };
 
 struct Variable_expr
 {
     std::string name;
-    types::Type type;
+    types::Type_id type;
     Source_location loc;
 };
 
@@ -62,7 +63,7 @@ struct Binary_expr
     struct Expr *left;
     lex::TokenType op;
     struct Expr *right;
-    types::Type type;
+    types::Type_id type;
     Source_location loc;
 };
 
@@ -70,7 +71,7 @@ struct Unary_expr
 {
     lex::TokenType op;
     struct Expr *right;
-    types::Type type;
+    types::Type_id type;
     Source_location loc;
 };
 
@@ -78,7 +79,7 @@ struct Call_expr
 {
     struct Expr *callee;
     std::vector<Call_argument> arguments;
-    types::Type type;
+    types::Type_id type;
     Source_location loc;
     int native_signature_index = -1;
 };
@@ -88,7 +89,7 @@ struct Assignment_expr
 {
     std::string name;
     struct Expr *value;
-    types::Type type;
+    types::Type_id type;
     Source_location loc;
 };
 
@@ -98,7 +99,7 @@ struct Field_assignment_expr
     struct Expr *object;
     std::string field_name;
     struct Expr *value;
-    types::Type type;
+    types::Type_id type;
     Source_location loc;
 };
 
@@ -108,14 +109,14 @@ struct Array_assignment_expr
     struct Expr *array;
     struct Expr *index;
     struct Expr *value;
-    types::Type type;
+    types::Type_id type;
     Source_location loc;
 };
 
 struct Cast_expr
 {
     struct Expr *expression;
-    types::Type target_type;
+    types::Type_id target_type;
     Source_location loc;
 };
 
@@ -123,7 +124,7 @@ struct Field_access_expr
 {
     struct Expr *object;
     std::string field_name;
-    types::Type type;
+    types::Type_id type;
     Source_location loc;
 };
 
@@ -132,7 +133,7 @@ struct Method_call_expr
     struct Expr *object;
     std::string method_name;
     std::vector<Call_argument> arguments;
-    types::Type type;
+    types::Type_id type;
     Source_location loc;
 
     bool is_closure_field = false;
@@ -144,23 +145,23 @@ struct Model_literal_expr
 {
     std::string model_name;
     std::vector<std::pair<std::string, struct Expr *>> fields;
-    types::Type type;
+    types::Type_id type;
     Source_location loc;
 };
 
 struct Closure_expr
 {
     std::vector<Function_param> parameters;
-    types::Type return_type;
+    types::Type_id return_type;
     struct Stmt *body;
-    types::Type type;
+    types::Type_id type;
     Source_location loc;
 };
 
 struct Array_literal_expr
 {
     std::vector<struct Expr *> elements;
-    types::Type type;
+    types::Type_id type;
     Source_location loc;
 };
 
@@ -168,7 +169,7 @@ struct Array_access_expr
 {
     struct Expr *array;
     struct Expr *index;
-    types::Type type;
+    types::Type_id type;
     Source_location loc;
 };
 
@@ -177,7 +178,7 @@ struct Static_path_expr
 {
     struct Expr *base;
     lex::Token member;
-    types::Type type;
+    types::Type_id type;
     Source_location loc;
 };
 
@@ -187,7 +188,7 @@ struct Range_expr
     struct Expr *start;
     struct Expr *end;
     bool inclusive; // true => ..=   false => ..
-    types::Type type;
+    types::Type_id type;
     Source_location loc;
 };
 
@@ -195,7 +196,7 @@ struct Range_expr
 struct Spawn_expr
 {
     struct Expr *call;
-    types::Type type;
+    types::Type_id type;
     Source_location loc;
 };
 
@@ -203,7 +204,7 @@ struct Spawn_expr
 struct Await_expr
 {
     struct Expr *thread;
-    types::Type type;
+    types::Type_id type;
     Source_location loc;
 };
 
@@ -211,7 +212,7 @@ struct Await_expr
 struct Yield_expr
 {
     struct Expr *value; // nullptr for bare yield
-    types::Type type;
+    types::Type_id type;
     Source_location loc;
 };
 
@@ -222,7 +223,7 @@ struct Fstring_expr
 {
     std::string raw_template;                  // e.g. "hello {name}"
     std::vector<struct Expr *> interpolations; // exprs extracted from {}
-    types::Type type;                          // always String
+    types::Type_id type;                          // always String
     Source_location loc;
 };
 
@@ -230,21 +231,18 @@ struct Enum_member_expr
 {
     std::string member_name;
     Source_location loc;
-    types::Type type = types::Primitive_kind::Void;
+    types::Type_id type{};
 };
 
 struct Anon_model_literal_expr
 {
     std::vector<std::pair<std::string, Expr *>> fields;
-    types::Type type{types::Primitive_kind::Void};
+    types::Type_id type{};
 
     Source_location loc;
 };
 
-// =============================================================================
 // Unified expression wrapper
-// =============================================================================
-
 struct Expr
 {
     using Node = std::variant<
@@ -292,7 +290,7 @@ struct Function_stmt
     std::string name;
     bool is_static;
     std::vector<Function_param> parameters;
-    types::Type return_type;
+    types::Type_id return_type;
     struct Stmt *body;
     Source_location loc;
 };
@@ -317,7 +315,7 @@ struct Var_stmt
     bool is_mut = false;   // let mut  => reassignable
     bool is_const = false; // const    => compile-time inline
     std::string name;
-    types::Type type;
+    types::Type_id type;
     struct Expr *initializer = nullptr;
     bool type_inferred = false;
     Source_location loc;
@@ -399,7 +397,7 @@ struct Match_stmt
 struct Enum_stmt
 {
     std::string name;
-    types::Type base_type;
+    types::Type_id base_type;
     std::vector<std::pair<std::string, std::optional<Value>>> variants;
     Source_location loc;
 };
@@ -429,14 +427,11 @@ struct Stmt
     Node node;
 };
 
-// =============================================================================
 // Inline helpers
-// =============================================================================
-
-inline types::Type &get_type(Expr::Node &node)
+inline types::Type_id &get_type(Expr::Node &node)
 {
     return std::visit(
-        [](auto &expr) -> types::Type & {
+        [](auto &expr) -> types::Type_id & {
             using T = std::decay_t<decltype(expr)>;
             if constexpr (std::is_same_v<T, Cast_expr>)
                 return expr.target_type;
@@ -446,10 +441,10 @@ inline types::Type &get_type(Expr::Node &node)
         node);
 }
 
-inline const types::Type &get_type(const Expr::Node &node)
+inline const types::Type_id &get_type(const Expr::Node &node)
 {
     return std::visit(
-        [](const auto &expr) -> const types::Type & {
+        [](const auto &expr) -> const types::Type_id & {
             using T = std::decay_t<decltype(expr)>;
             if constexpr (std::is_same_v<T, Cast_expr>)
                 return expr.target_type;
@@ -478,22 +473,4 @@ inline Source_location get_loc(const Stmt::Node &node)
 {
     return std::visit([](const auto &stmt) -> Source_location { return stmt.loc; }, node);
 }
-
-inline types::Type get_type(const Stmt::Node &node)
-{
-    return std::visit(
-        [](const auto &stmt) -> types::Type {
-            using T = std::decay_t<decltype(stmt)>;
-            if constexpr (std::is_same_v<T, Var_stmt>)
-                return stmt.type;
-            else if constexpr (std::is_same_v<T, Return_stmt>)
-                return stmt.expression ? get_type(stmt.expression->node) : types::Type(types::Primitive_kind::Void);
-            else if constexpr (std::is_same_v<T, Expr_stmt>)
-                return get_type(stmt.expression->node);
-            else
-                return types::Type(types::Primitive_kind::Void);
-        },
-        node);
-}
-
 } // namespace phos::ast

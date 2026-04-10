@@ -14,7 +14,7 @@ class AstPrinter
 {
 public:
     // Added `simple_mode`. If true, prints clean indentation instead of tree lines.
-    explicit AstPrinter(bool unicode = true, bool simple_mode = false);
+    explicit AstPrinter(types::Type_table& tt, bool unicode = true, bool simple_mode = false);
     void print_statements(const std::vector<Stmt *> &statements);
 
     bool use_unicode;
@@ -22,6 +22,7 @@ public:
 
 private:
     std::vector<bool> branch_stack;
+    types::Type_table& tt;
 
     void print_expr_ptr(const Expr *expr);
     void print_stmt_ptr(const Stmt *stmt);
@@ -90,7 +91,7 @@ private:
 class Source_printer
 {
 public:
-    Source_printer() = default;
+    Source_printer(types::Type_table& tt) : tt(tt) {}
 
     std::string print_statements(const std::vector<Stmt *> &statements);
     std::string print_expr_ptr(const Expr *expr);
@@ -98,6 +99,7 @@ public:
 
 private:
     int indent_level = 0;
+    types::Type_table& tt;
     std::string get_indent() const;
 
     // --- Expression Visitors ---

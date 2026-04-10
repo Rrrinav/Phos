@@ -9,7 +9,6 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -18,13 +17,14 @@ namespace phos {
 class Parser
 {
 public:
-    explicit Parser(std::vector<lex::Token> tokens, mem::Arena &arena) : arena_(arena), tokens_(std::move(tokens))
-    {}
+    explicit Parser(std::vector<lex::Token> tokens, phos::types::Type_table& type_table, mem::Arena &arena)
+        : arena_(arena), type_table_(type_table), tokens_(tokens) {}
 
     Result<std::vector<ast::Stmt *>> parse();
 
 private:
     mem::Arena &arena_;
+    phos::types::Type_table &type_table_;
     std::vector<lex::Token> tokens_;
     size_t current_ = 0;
     std::string stage_ = "parser";
@@ -32,13 +32,8 @@ private:
     // set while parsing inside a model body so 'this' is valid
     std::string current_model_;
 
-    // populated during parse so parse_type() can resolve union vs model names
-    std::unordered_set<std::string> m_known_model_names;
-    std::unordered_set<std::string> m_known_union_names;
-    std::unordered_set<std::string> m_known_enum_names;
-
     // return types of top-level functions, used downstream by the type checker
-    std::unordered_map<std::string, types::Type> function_types_;
+    std::unordered_map<std::string, types::Type_id> function_types_;
 
     // Memory of parsed models so the 'bind' block can find them
     std::unordered_map<std::string, ast::Model_stmt *> parsed_models;
@@ -61,7 +56,7 @@ private:
     err::msg create_error(const lex::Token &token, const std::string &message);
     void synchronize();
 
-    Result<types::Type> parse_type();
+    Result<types::Type_id> parse_type();
     Result<ast::Function_param> parse_function_parameter(bool allow_default_value);
     Result<std::vector<ast::Call_argument>> parse_call_arguments();
 
@@ -86,8 +81,6 @@ private:
     Result<ast::Stmt *> return_statement();
     Result<ast::Stmt *> expression_statement();
 
-    // --- expressions (precedence: low -> high) ---
-
     Result<ast::Expr *> expression();
     Result<ast::Expr *> assignment();
     Result<ast::Expr *> range_expr();
@@ -105,8 +98,6 @@ private:
     Result<ast::Expr *> unary();
     Result<ast::Expr *> call();
     Result<ast::Expr *> primary();
-
-    // --- specific sub-parsers ---
 
     Result<ast::Expr *> parse_closure_expression();
     Result<ast::Expr *> parse_array_literal();

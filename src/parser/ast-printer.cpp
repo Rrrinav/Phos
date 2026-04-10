@@ -4,7 +4,6 @@
 
 #include <format>
 #include <iostream>
-#include <ranges>
 
 namespace phos::ast {
 
@@ -12,7 +11,7 @@ namespace phos::ast {
 // AstPrinter Implementation
 // =============================================================================
 
-AstPrinter::AstPrinter(bool unicode, bool simple) : use_unicode(unicode), simple_mode(simple)
+AstPrinter::AstPrinter(types::Type_table& tt, bool unicode, bool simple) : use_unicode(unicode), simple_mode(simple), tt(tt)
 {}
 
 std::string AstPrinter::branch_sym(bool has_next) const
@@ -86,7 +85,7 @@ void AstPrinter::print_expr_node(const Literal_expr &node)
     print_str("Literal: " + value_to_string(node.value));
     with_child(false, [&] {
         indent();
-        print_str("Type: " + types::type_to_string(node.type));
+        print_str("Type: " + tt.to_string(node.type));
     });
 }
 
@@ -96,7 +95,7 @@ void AstPrinter::print_expr_node(const Variable_expr &node)
     print_str("Variable: " + node.name);
     with_child(false, [&] {
         indent();
-        print_str("Type: " + types::type_to_string(node.type));
+        print_str("Type: " + tt.to_string(node.type));
     });
 }
 
@@ -110,7 +109,7 @@ void AstPrinter::print_expr_node(const Binary_expr &node)
     });
     with_child(true, [&] {
         indent();
-        print_str("Type: " + types::type_to_string(node.type));
+        print_str("Type: " + tt.to_string(node.type));
     });
     with_child(true, [&] {
         indent();
@@ -134,7 +133,7 @@ void AstPrinter::print_expr_node(const Unary_expr &node)
     });
     with_child(true, [&] {
         indent();
-        print_str("Type: " + types::type_to_string(node.type));
+        print_str("Type: " + tt.to_string(node.type));
     });
     with_child(false, [&] {
         indent();
@@ -155,7 +154,7 @@ void AstPrinter::print_expr_node(const Call_expr &node)
     });
     with_child(!has_args, [&] {
         indent();
-        print_str("Type: " + types::type_to_string(node.type));
+        print_str("Type: " + tt.to_string(node.type));
     });
     if (has_args) {
         with_child(false, [&] {
@@ -182,7 +181,7 @@ void AstPrinter::print_expr_node(const Assignment_expr &node)
     print_str("Assign: " + node.name);
     with_child(true, [&] {
         indent();
-        print_str("Type: " + types::type_to_string(node.type));
+        print_str("Type: " + tt.to_string(node.type));
     });
     with_child(false, [&] {
         indent();
@@ -213,7 +212,7 @@ void AstPrinter::print_expr_node(const Field_access_expr &node)
     print_str("Field Access: " + node.field_name);
     with_child(true, [&] {
         indent();
-        print_str("Type: " + types::type_to_string(node.type));
+        print_str("Type: " + tt.to_string(node.type));
     });
     with_child(false, [&] {
         indent();
@@ -229,7 +228,7 @@ void AstPrinter::print_expr_node(const Method_call_expr &node)
     bool has_args = !node.arguments.empty();
     with_child(true, [&] {
         indent();
-        print_str("Type: " + types::type_to_string(node.type));
+        print_str("Type: " + tt.to_string(node.type));
     });
     with_child(has_args, [&] {
         indent();
@@ -261,7 +260,7 @@ void AstPrinter::print_expr_node(const Model_literal_expr &node)
     print_str("Model Literal: " + node.model_name);
     with_child(true, [&] {
         indent();
-        print_str("Type: " + types::type_to_string(node.type));
+        print_str("Type: " + tt.to_string(node.type));
     });
     with_child(false, [&] {
         indent();
@@ -283,11 +282,11 @@ void AstPrinter::print_expr_node(const Closure_expr &node)
     print_str("Closure");
     with_child(true, [&] {
         indent();
-        print_str("Type: " + types::type_to_string(node.type));
+        print_str("Type: " + tt.to_string(node.type));
     });
     with_child(true, [&] {
         indent();
-        print_str("Return Type: " + types::type_to_string(node.return_type));
+        print_str("Return Type: " + tt.to_string(node.return_type));
     });
     with_child(true, [&] {
         indent();
@@ -296,9 +295,9 @@ void AstPrinter::print_expr_node(const Closure_expr &node)
             with_child(i + 1 < node.parameters.size(), [&] {
                 indent();
                 std::string text = (node.parameters[i].is_mut ? "mut " : "") + node.parameters[i].name + " : "
-                    + types::type_to_string(node.parameters[i].type);
+                    + tt.to_string(node.parameters[i].type);
                 if (node.parameters[i].default_value)
-                    text += " = " + Source_printer{}.print_expr_ptr(node.parameters[i].default_value);
+                    text += " = " + Source_printer{tt}.print_expr_ptr(node.parameters[i].default_value);
                 print_str(text);
             });
         }
@@ -316,7 +315,7 @@ void AstPrinter::print_expr_node(const Cast_expr &node)
     print_str("Cast");
     with_child(true, [&] {
         indent();
-        print_str("Target Type: " + types::type_to_string(node.target_type));
+        print_str("Target Type: " + tt.to_string(node.target_type));
     });
     with_child(false, [&] {
         indent();
@@ -331,7 +330,7 @@ void AstPrinter::print_expr_node(const Array_literal_expr &node)
     print_str("Array Literal");
     with_child(true, [&] {
         indent();
-        print_str("Type: " + types::type_to_string(node.type));
+        print_str("Type: " + tt.to_string(node.type));
     });
     with_child(false, [&] {
         indent();
@@ -347,7 +346,7 @@ void AstPrinter::print_expr_node(const Array_access_expr &node)
     print_str("Array Access");
     with_child(true, [&] {
         indent();
-        print_str("Type: " + types::type_to_string(node.type));
+        print_str("Type: " + tt.to_string(node.type));
     });
     with_child(true, [&] {
         indent();
@@ -367,7 +366,7 @@ void AstPrinter::print_expr_node(const Array_assignment_expr &node)
     print_str("Array Assignment");
     with_child(true, [&] {
         indent();
-        print_str("Type: " + types::type_to_string(node.type));
+        print_str("Type: " + tt.to_string(node.type));
     });
     with_child(true, [&] {
         indent();
@@ -395,7 +394,7 @@ void AstPrinter::print_expr_node(const Static_path_expr &node)
     print_str("Static Path: " + base_name + "::" + node.member.lexeme);
     with_child(false, [&] {
         indent();
-        print_str("Type: " + types::type_to_string(node.type));
+        print_str("Type: " + tt.to_string(node.type));
     });
 }
 
@@ -405,7 +404,7 @@ void AstPrinter::print_expr_node(const Enum_member_expr &node)
     print_str("Enum Member: ." + node.member_name);
     with_child(false, [&] {
         indent();
-        print_str("Type: " + types::type_to_string(node.type));
+        print_str("Type: " + tt.to_string(node.type));
     });
 }
 
@@ -493,13 +492,13 @@ void AstPrinter::print_stmt_node(const Function_stmt &node)
                 indent();
                 print_str(
                     (node.parameters[i].is_mut ? "mut " : "") + node.parameters[i].name + " : "
-                    + types::type_to_string(node.parameters[i].type));
+                    + tt.to_string(node.parameters[i].type));
             });
         }
     });
     with_child(true, [&] {
         indent();
-        print_str("Return type: " + types::type_to_string(node.return_type));
+        print_str("Return type: " + tt.to_string(node.return_type));
     });
     with_child(false, [&] {
         indent();
@@ -524,9 +523,9 @@ void AstPrinter::print_stmt_node(const Model_stmt &node)
             for (size_t i = 0; i < node.fields.size(); ++i) {
                 with_child(i + 1 < node.fields.size(), [&] {
                     indent();
-                    std::string text = node.fields[i].name + " : " + types::type_to_string(node.fields[i].type);
+                    std::string text = node.fields[i].name + " : " + tt.to_string(node.fields[i].type);
                     if (node.fields[i].default_value)
-                        text += " = " + Source_printer{}.print_expr_ptr(node.fields[i].default_value);
+                        text += " = " + Source_printer{tt}.print_expr_ptr(node.fields[i].default_value);
                     print_str(text);
                 });
             }
@@ -550,7 +549,7 @@ void AstPrinter::print_stmt_node(const Model_stmt &node)
 void AstPrinter::print_stmt_node(const Var_stmt &node)
 {
     indent();
-    print_str("Var: " + node.name + " : " + types::type_to_string(node.type));
+    print_str("Var: " + node.name + " : " + tt.to_string(node.type));
     if (node.initializer) {
         with_child(false, [&] {
             indent();
@@ -682,9 +681,9 @@ void AstPrinter::print_stmt_node(const Union_stmt &node)
             for (size_t i = 0; i < node.variants.size(); ++i) {
                 with_child(i + 1 < node.variants.size(), [&] {
                     indent();
-                    std::string text = node.variants[i].name + " : " + types::type_to_string(node.variants[i].type);
+                    std::string text = node.variants[i].name + " : " + tt.to_string(node.variants[i].type);
                     if (node.variants[i].default_value)
-                        text += " = " + Source_printer{}.print_expr_ptr(node.variants[i].default_value);
+                        text += " = " + Source_printer{tt}.print_expr_ptr(node.variants[i].default_value);
                     print_str(text);
                 });
             }
@@ -757,7 +756,7 @@ void AstPrinter::print_expr_node(const Anon_model_literal_expr &node)
     print_str("Anonymous Model Literal");
     with_child(true, [&] {
         indent();
-        print_str("Inferred Type: " + (types::type_to_string(node.type)));
+        print_str("Inferred Type: " + (tt.to_string(node.type)));
     });
     with_child(false, [&] {
         indent();
@@ -889,20 +888,20 @@ std::string Source_printer::print_node(const Closure_expr &node)
     for (size_t i = 0; i < node.parameters.size(); ++i) {
         if (node.parameters[i].is_mut)
             res += "mut ";
-        res += node.parameters[i].name + ": " + types::type_to_string(node.parameters[i].type);
+        res += node.parameters[i].name + ": " + tt.to_string(node.parameters[i].type);
         if (node.parameters[i].default_value)
             res += " = " + print_expr_ptr(node.parameters[i].default_value);
         if (i + 1 < node.parameters.size())
             res += ", ";
     }
-    res += "| -> " + types::type_to_string(node.return_type) + " ";
+    res += "| -> " + tt.to_string(node.return_type) + " ";
     res += print_stmt_ptr(node.body);
     return res;
 }
 
 std::string Source_printer::print_node(const Cast_expr &node)
 {
-    return "(" + print_expr_ptr(node.expression) + " as " + types::type_to_string(node.target_type) + ")";
+    return "(" + print_expr_ptr(node.expression) + " as " + tt.to_string(node.target_type) + ")";
 }
 
 std::string Source_printer::print_node(const Array_literal_expr &node)
@@ -982,13 +981,13 @@ std::string Source_printer::print_node(const Function_stmt &node)
     for (size_t i = 0; i < node.parameters.size(); ++i) {
         if (node.parameters[i].is_mut)
             res += "mut ";
-        res += node.parameters[i].name + ": " + types::type_to_string(node.parameters[i].type);
+        res += node.parameters[i].name + ": " + tt.to_string(node.parameters[i].type);
         if (node.parameters[i].default_value)
             res += " = " + print_expr_ptr(node.parameters[i].default_value);
         if (i + 1 < node.parameters.size())
             res += ", ";
     }
-    res += ") -> " + types::type_to_string(node.return_type) + "\n";
+    res += ") -> " + tt.to_string(node.return_type) + "\n";
     res += print_stmt_ptr(node.body);
     return res;
 }
@@ -998,7 +997,7 @@ std::string Source_printer::print_node(const Model_stmt &node)
     std::string res = get_indent() + "model " + node.name + " {\n";
     indent_level++;
     for (const auto &field : node.fields) {
-        res += get_indent() + field.name + ": " + types::type_to_string(field.type);
+        res += get_indent() + field.name + ": " + tt.to_string(field.type);
         if (field.default_value)
             res += " = " + print_expr_ptr(field.default_value);
         res += ";\n";
@@ -1020,7 +1019,7 @@ std::string Source_printer::print_node(const Var_stmt &node)
     res += node.name;
 
     if (!node.type_inferred) {
-        res += ": " + types::type_to_string(node.type);
+        res += ": " + tt.to_string(node.type);
         if (node.initializer)
             res += " = " + print_expr_ptr(node.initializer);
     } else {
@@ -1095,7 +1094,7 @@ std::string Source_printer::print_node(const Union_stmt &node)
     std::string res = get_indent() + "union " + node.name + " {\n";
     indent_level++;
     for (const auto &var : node.variants) {
-        res += get_indent() + var.name + ": " + types::type_to_string(var.type);
+        res += get_indent() + var.name + ": " + tt.to_string(var.type);
         if (var.default_value)
             res += " = " + print_expr_ptr(var.default_value);
         res += ";\n";

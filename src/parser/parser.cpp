@@ -17,8 +17,7 @@
 
 namespace phos {
 
-// utility
-
+// Utility
 void Parser::skip_newlines()
 {
     while (!is_at_end() && match({lex::TokenType::Newline})) {}
@@ -85,6 +84,7 @@ void Parser::synchronize()
     while (!is_at_end()) {
         if (previous().type == lex::TokenType::Semicolon)
             return;
+
         switch (peek().type) {
         case lex::TokenType::Fn:
         case lex::TokenType::Let:
@@ -105,13 +105,15 @@ void Parser::synchronize()
     }
 }
 
-// --- top-level ---------------------------------------------------------------
+// =============================================================================
+// Top-Level
+// =============================================================================
 
 // program -> declaration* EOF
 Result<std::vector<ast::Stmt *>> Parser::parse()
 {
     std::vector<ast::Stmt *> statements;
-    bool had_error = false; // Add an error flag!
+    bool had_error = false;
 
     while (!is_at_end()) {
         skip_newlines();
@@ -131,23 +133,29 @@ Result<std::vector<ast::Stmt *>> Parser::parse()
         if (decl_result.value())
             statements.push_back(*decl_result.value());
     }
+
     if (had_error)
         return std::unexpected(err::msg("Compilation halted due to syntax errors", "parser", 0, 0));
 
     return statements;
 }
 
-// declarations
+// =============================================================================
+// Declarations
+// =============================================================================
+
 Result<ast::Function_param> Parser::parse_function_parameter(bool allow_default_value)
 {
     bool is_mut = match({lex::TokenType::Mut});
     auto param_name = __Try(consume(lex::TokenType::Identifier, "Expect parameter name"));
     __TryIgnore(consume(lex::TokenType::Colon, "Expect ':' after parameter name"));
+
     auto param_type = __Try(parse_type());
 
     ast::Expr *default_value = nullptr;
-    if (allow_default_value && match({lex::TokenType::Assign}))
+    if (allow_default_value && match({lex::TokenType::Assign})) {
         default_value = __Try(expression());
+    }
 
     return ast::Function_param{
         .name = param_name.lexeme,
@@ -161,16 +169,19 @@ Result<ast::Function_param> Parser::parse_function_parameter(bool allow_default_
 Result<std::vector<ast::Call_argument>> Parser::parse_call_arguments()
 {
     std::vector<ast::Call_argument> arguments;
+
     if (check(lex::TokenType::RightParen))
         return arguments;
 
     do {
         if (check(lex::TokenType::RightParen))
             break;
+
         if (check(lex::TokenType::Identifier) && check_next(lex::TokenType::Assign)) {
             auto name = advance();
             __TryIgnore(consume(lex::TokenType::Assign, "Expect '=' after argument name"));
             auto *value = __Try(expression());
+
             arguments.push_back(
                 ast::Call_argument{
                     .name = name.lexeme,
@@ -179,6 +190,7 @@ Result<std::vector<ast::Call_argument>> Parser::parse_call_arguments()
                 });
         } else {
             auto *value = __Try(expression());
+
             arguments.push_back(
                 ast::Call_argument{
                     .name = "",
@@ -217,7 +229,6 @@ Result<std::optional<ast::Stmt *>> Parser::declaration()
 }
 
 // fn_decl -> "fn" IDENT "(" param* ")" ("->" type)? block
-// param   -> "mut"? IDENT ":" type
 Result<ast::Stmt *> Parser::function_declaration()
 {
     lex::Token name = __Try(consume(lex::TokenType::Identifier, "Expect function name"));
@@ -235,8 +246,9 @@ Result<ast::Stmt *> Parser::function_declaration()
     __TryIgnore(consume(lex::TokenType::RightParen, "Expect ')' after parameters"));
 
     types::Type_id return_type{};
-    if (match({lex::TokenType::Arrow}))
+    if (match({lex::TokenType::Arrow})) {
         return_type = __Try(parse_type());
+    }
 
     function_types_.emplace(name.lexeme, return_type);
 
@@ -259,7 +271,6 @@ Result<ast::Stmt *> Parser::function_declaration()
 Result<ast::Stmt *> Parser::model_declaration()
 {
     auto name = __Try(consume(lex::TokenType::Identifier, "Expected model name"));
-    m_known_model_names.insert(name.lexeme);
     current_model_ = name.lexeme;
 
     __TryIgnore(consume(lex::TokenType::LeftBrace, "Expect '{' after model name"));
@@ -330,8 +341,6 @@ Result<ast::Stmt *> Parser::parse_bind_statement()
 Result<ast::Stmt *> Parser::union_declaration()
 {
     auto name = __Try(consume(lex::TokenType::Identifier, "Expected union name"));
-    m_known_union_names.insert(name.lexeme);
-
     __TryIgnore(consume(lex::TokenType::LeftBrace, "Expect '{' after union name"));
 
     std::vector<ast::Typed_member_decl> variants;
@@ -343,11 +352,12 @@ Result<ast::Stmt *> Parser::union_declaration()
         auto variant_name = __Try(consume(lex::TokenType::Identifier, "Expect variant name"));
         __TryIgnore(consume(lex::TokenType::Colon, "Expect ':' after variant name for type"));
 
-        types::Type_id variant_type{};
-        variant_type = __Try(parse_type());
+        types::Type_id variant_type = __Try(parse_type());
         ast::Expr *default_value = nullptr;
-        if (match({lex::TokenType::Assign}))
+
+        if (match({lex::TokenType::Assign})) {
             default_value = __Try(expression());
+        }
 
         variants.push_back(
             ast::Typed_member_decl{
@@ -357,8 +367,9 @@ Result<ast::Stmt *> Parser::union_declaration()
                 .loc = {variant_name.line, variant_name.column},
             });
 
-        if (!check(lex::TokenType::RightBrace))
+        if (!check(lex::TokenType::RightBrace)) {
             __TryIgnore(consume(lex::TokenType::Semicolon, "Expect ';' after variant declaration"));
+        }
 
         skip_newlines();
     }
@@ -378,13 +389,13 @@ Result<ast::Stmt *> Parser::union_declaration()
 Result<ast::Stmt *> Parser::enum_declaration()
 {
     auto name = __Try(consume(lex::TokenType::Identifier, "Expected enum name"));
-    m_known_enum_names.insert(name.lexeme);
-
     types::Type_id base_type{};
 
     if (match({lex::TokenType::Colon})) {
         base_type = __Try(parse_type());
-        if (!(type_table_.is_primitive(base_type) && (types::is_integer_primitive(type_table_.get_primitive(base_type)) || type_table_.get_primitive(base_type) == types::Primitive_kind::String))) {
+        if (!(type_table_.is_primitive(base_type)
+              && (types::is_integer_primitive(type_table_.get_primitive(base_type))
+                  || type_table_.get_primitive(base_type) == types::Primitive_kind::String))) {
             return std::unexpected(create_error(previous(), "Enum base type must be an integer type or 'string'"));
         }
     }
@@ -398,7 +409,6 @@ Result<ast::Stmt *> Parser::enum_declaration()
             break;
 
         auto variant_name = __Try(consume(lex::TokenType::Identifier, "Expect enum variant name"));
-
         std::optional<Value> value = std::nullopt;
 
         if (match({lex::TokenType::Assign})) {
@@ -441,10 +451,14 @@ Result<ast::Typed_member_decl> Parser::parse_model_field()
     auto name_result = __Try(consume(lex::TokenType::Identifier, "Expect field name"));
     __TryIgnore(consume(lex::TokenType::Colon, "Expect ':' after field name"));
     auto type_result = __Try(parse_type());
+
     ast::Expr *default_value = nullptr;
-    if (match({lex::TokenType::Assign}))
+    if (match({lex::TokenType::Assign})) {
         default_value = __Try(expression());
+    }
+
     __TryIgnore(consume(lex::TokenType::Semicolon, "Expect ';' after field declaration"));
+
     return ast::Typed_member_decl{
         .name = name_result.lexeme,
         .type = type_result,
@@ -476,7 +490,6 @@ Result<ast::Function_stmt> Parser::parse_model_method()
     __TryIgnore(consume(lex::TokenType::RightParen, "Expect ')' after parameters"));
 
     types::Type_id return_type = type_table_.primitive(types::Primitive_kind::Void);
-
     if (match({lex::TokenType::Arrow})) {
         return_type = __Try(parse_type());
     }
@@ -536,7 +549,9 @@ Result<ast::Stmt *> Parser::var_declaration()
         }});
 }
 
-// --- statements --------------------------------------------------------------
+// =============================================================================
+// Statements
+// =============================================================================
 
 // statement -> print_stmt | block | if_stmt | while_stmt | for_stmt
 //            | match_stmt | return_stmt | expr_stmt
@@ -730,10 +745,12 @@ Result<ast::Stmt *> Parser::for_statement()
     ast::Expr *increment = nullptr;
 
     if (match({lex::TokenType::Semicolon})) {
-    } else if (match({lex::TokenType::Let}))
+        // empty initializer
+    } else if (match({lex::TokenType::Let})) {
         initializer = __TryOr(var_declaration(), nullptr);
-    else
+    } else {
         initializer = __TryOr(expression_statement(), nullptr);
+    }
 
     if (!check(lex::TokenType::Semicolon))
         condition = __TryOr(expression(), nullptr);
@@ -865,9 +882,10 @@ Result<ast::Stmt *> Parser::expression_statement()
     return mem::Arena::alloc(this->arena_, ast::Stmt{ast::Expr_stmt{expr_result.value(), {previous().line, previous().column}}});
 }
 
-// --- expressions -------------------------------------------------------------
+// =============================================================================
+// Expressions (Precedence: Low -> High)
+// =============================================================================
 
-// expression -> assignment
 Result<ast::Expr *> Parser::expression()
 {
     return assignment();
@@ -888,8 +906,7 @@ Result<ast::Expr *> Parser::assignment()
         if (auto *var_expr = std::get_if<ast::Variable_expr>(&expr->node)) {
             return mem::Arena::alloc(
                 this->arena_,
-                ast::Expr{ast::Assignment_expr{var_expr->name, value_result, var_expr->type, {equals.line, equals.column}}}
-            );
+                ast::Expr{ast::Assignment_expr{var_expr->name, value_result, var_expr->type, {equals.line, equals.column}}});
         } else if (auto *field_access_expr = std::get_if<ast::Field_access_expr>(&expr->node)) {
             return mem::Arena::alloc(
                 this->arena_,
@@ -899,8 +916,7 @@ Result<ast::Expr *> Parser::assignment()
                     .value = value_result,
                     .type = type_table_.primitive(types::Primitive_kind::Void),
                     .loc = {equals.line, equals.column},
-                }}
-            );
+                }});
         } else if (auto *array_access_expr = std::get_if<ast::Array_access_expr>(&expr->node)) {
             return mem::Arena::alloc(
                 this->arena_,
@@ -910,8 +926,7 @@ Result<ast::Expr *> Parser::assignment()
                     .value = value_result,
                     .type = type_table_.primitive(types::Primitive_kind::Void),
                     .loc = {equals.line, equals.column},
-                }}
-            );
+                }});
         }
 
         return std::unexpected(create_error(equals, "Invalid assignment target"));
@@ -1125,7 +1140,7 @@ Result<ast::Expr *> Parser::term()
                 .left = expr,
                 .op = op.type,
                 .right = right,
-                .type = type_table_.primitive(types::Primitive_kind::Void),,
+                .type = type_table_.primitive(types::Primitive_kind::Void), // FIXED: Double comma removed
                 .loc = {op.line, op.column},
             }});
     }
@@ -1202,7 +1217,11 @@ Result<ast::Expr *> Parser::call()
 
             auto *call_node = mem::Arena::alloc(
                 arena_,
-                ast::Call_expr{expr, arguments, type_table_.primitive(types::Primitive_kind::Void), ast::Source_location{paren.line, paren.column}});
+                ast::Call_expr{
+                    expr,
+                    arguments,
+                    type_table_.primitive(types::Primitive_kind::Void),
+                    ast::Source_location{paren.line, paren.column}});
             expr = mem::Arena::alloc(arena_, ast::Expr{*call_node});
         } else if (match({lex::TokenType::LeftBracket})) {
             auto index_result = __Try(expression());
@@ -1335,6 +1354,7 @@ Result<ast::Expr *> Parser::primary()
         ast::Expr *value = nullptr;
         if (!check(lex::TokenType::Semicolon) && !check(lex::TokenType::RightBrace))
             value = __Try(expression());
+
         return mem::Arena::alloc(
             this->arena_,
             ast::Expr{ast::Yield_expr{
@@ -1345,10 +1365,10 @@ Result<ast::Expr *> Parser::primary()
     }
 
     // this
-
     if (match({lex::TokenType::This})) {
         if (current_model_.empty())
             return std::unexpected(create_error(previous(), "Cannot use 'this' outside of a model method"));
+
         return mem::Arena::alloc(
             this->arena_,
             ast::Expr{ast::Variable_expr{
@@ -1359,21 +1379,18 @@ Result<ast::Expr *> Parser::primary()
     }
 
     // closure
-
     if (peek().type == lex::TokenType::Pipe || peek().type == lex::TokenType::LogicalOr)
         return parse_closure_expression();
 
     // array literal
-
     if (match({lex::TokenType::LeftBracket}))
         return parse_array_literal();
 
     // f-string
-
     if (match({lex::TokenType::Fstring}))
         return parse_fstring(previous());
 
-    // nil
+    // primitives
     if (match({lex::TokenType::Nil})) {
         return mem::Arena::alloc(
             this->arena_,
@@ -1384,7 +1401,6 @@ Result<ast::Expr *> Parser::primary()
             }});
     }
 
-    // bool
     if (match({lex::TokenType::Bool})) {
         return mem::Arena::alloc(
             this->arena_,
@@ -1395,7 +1411,6 @@ Result<ast::Expr *> Parser::primary()
             }});
     }
 
-    // integer
     if (match({lex::TokenType::Integer32})) {
         return mem::Arena::alloc(
             this->arena_,
@@ -1406,7 +1421,6 @@ Result<ast::Expr *> Parser::primary()
             }});
     }
 
-    // float
     if (match({lex::TokenType::Float64})) {
         return mem::Arena::alloc(
             this->arena_,
@@ -1417,7 +1431,6 @@ Result<ast::Expr *> Parser::primary()
             }});
     }
 
-    // string
     if (match({lex::TokenType::String})) {
         return mem::Arena::alloc(
             this->arena_,
@@ -1429,11 +1442,21 @@ Result<ast::Expr *> Parser::primary()
     }
 
     // identifier, primitive type namespaces (like string::), scope resolution, model literal
-    if (match({ lex::TokenType::Identifier, lex::TokenType::TString, lex::TokenType::TInt8, lex::TokenType::TInt16, lex::TokenType::TInt32, lex::TokenType::TInt64,
-        lex::TokenType::TUInt8, lex::TokenType::TUInt16, lex::TokenType::TUInt32, lex::TokenType::TUInt64, lex::TokenType::TFloat16,
-        lex::TokenType::TFloat32, lex::TokenType::TFloat64, lex::TokenType::TBool
-    })) {
-
+    if (match(
+            {lex::TokenType::Identifier,
+             lex::TokenType::TString,
+             lex::TokenType::TInt8,
+             lex::TokenType::TInt16,
+             lex::TokenType::TInt32,
+             lex::TokenType::TInt64,
+             lex::TokenType::TUInt8,
+             lex::TokenType::TUInt16,
+             lex::TokenType::TUInt32,
+             lex::TokenType::TUInt64,
+             lex::TokenType::TFloat16,
+             lex::TokenType::TFloat32,
+             lex::TokenType::TFloat64,
+             lex::TokenType::TBool})) {
         lex::Token id = previous();
 
         if (match({lex::TokenType::ColonColon})) {
@@ -1453,13 +1476,32 @@ Result<ast::Expr *> Parser::primary()
             return mem::Arena::alloc(arena_, ast::Expr{*static_path});
         }
 
-        // Only parse as a literal if the identifier is actually a registered type!
-        // (Enums are purposely excluded from model `{}` literal instantiation)
-        bool is_known_type = m_known_model_names.count(id.lexeme) || m_known_union_names.count(id.lexeme);
+        // --- LL(2) SYNTACTIC LOOKAHEAD FOR MODEL LITERALS ---
+        // If we see an Identifier followed by '{', we peek ahead to see if it structurally looks like a model literal
+        // (i.e. '}' or 'field_name:' or 'field_name,'). If it does, we parse it as a literal!
+        bool is_model_literal = false;
 
-        if (check(lex::TokenType::LeftBrace) && is_known_type)
+        if (check(lex::TokenType::LeftBrace) && current_ + 1 < tokens_.size()) {
+            lex::TokenType next_tok = tokens_[current_ + 1].type;
+
+            if (next_tok == lex::TokenType::RightBrace) {
+                // e.g. MyModel {}
+                is_model_literal = true;
+            } else if (next_tok == lex::TokenType::Identifier && current_ + 2 < tokens_.size()) {
+                // e.g. MyModel { field: ... } or MyModel { field, ... } or MyModel { field }
+                lex::TokenType after_next_tok = tokens_[current_ + 2].type;
+                if (after_next_tok == lex::TokenType::Colon || after_next_tok == lex::TokenType::Comma
+                    || after_next_tok == lex::TokenType::RightBrace) {
+                    is_model_literal = true;
+                }
+            }
+        }
+
+        if (is_model_literal) {
             return parse_model_literal(id.lexeme);
+        }
 
+        // Otherwise, it's just a standard variable expression!
         return mem::Arena::alloc(
             this->arena_,
             ast::Expr{ast::Variable_expr{
@@ -1470,7 +1512,6 @@ Result<ast::Expr *> Parser::primary()
     }
 
     // grouped expression
-
     if (match({lex::TokenType::LeftParen})) {
         auto expr_result = __Try(expression());
         __TryIgnore(consume(lex::TokenType::RightParen, "Expect ')' after expression"));
@@ -1480,7 +1521,9 @@ Result<ast::Expr *> Parser::primary()
     return std::unexpected(create_error(peek(), "Expect expression. Found: " + peek().lexeme));
 }
 
-// --- specific sub-parsers ----------------------------------------------------
+// =============================================================================
+// Specific Sub-Parsers
+// =============================================================================
 
 // closure -> ("|" param* "|" | "||") ("->" type)? block
 // param   -> "mut"? IDENT ":" type
@@ -1531,8 +1574,7 @@ Result<ast::Expr *> Parser::parse_closure_expression()
             .body = body,
             .type = closure_type,
             .loc = {line, column},
-        }}
-    );
+        }});
 }
 
 // array_literal -> "[" (expr ("," expr)*)? "]"
@@ -1628,14 +1670,13 @@ Result<ast::Expr *> Parser::parse_fstring(const lex::Token &tok)
 
             lex::Lexer inner_lexer(inner);
             auto inner_tokens = inner_lexer.tokenize();
-            Parser inner_parser(std::move(inner_tokens), arena_);
 
-            inner_parser.current_model_      = current_model_;
-            inner_parser.m_known_model_names = m_known_model_names;
-            inner_parser.m_known_union_names = m_known_union_names;
-            inner_parser.m_known_enum_names  = m_known_enum_names;
-            inner_parser.function_types_     = function_types_;
-            inner_parser.parsed_models       = parsed_models;
+            // Passing type_table_ properly to the new instance
+            Parser inner_parser(std::move(inner_tokens).value(), type_table_, arena_);
+
+            inner_parser.current_model_ = current_model_;
+            inner_parser.function_types_ = function_types_;
+            inner_parser.parsed_models = parsed_models;
 
             auto inner_expr = inner_parser.expression();
             if (!inner_expr)
@@ -1667,11 +1708,12 @@ Result<ast::Expr *> Parser::parse_fstring(const lex::Token &tok)
             .interpolations = std::move(interpolations),
             .type = type_table_.primitive(types::Primitive_kind::String),
             .loc = loc,
-        }}
-    );
+        }});
 }
 
-// type parser
+// =============================================================================
+// Type Parser
+// =============================================================================
 
 // type        -> "(" type ")"
 //              | ("|" param_types "|" | "||") "->" type    closure type
@@ -1679,7 +1721,7 @@ Result<ast::Expr *> Parser::parse_fstring(const lex::Token &tok)
 //              | type_name type_suffix*
 // type_suffix -> "[" "]"                                   array type
 //              | "?"                                       optional type
-// type_name   -> primitive_kw | known_union_name | IDENT   (defaults to model)
+// type_name   -> primitive_kw | IDENT                      (defaults to unresolved)
 Result<types::Type_id> Parser::parse_type()
 {
     using namespace types;
@@ -1712,49 +1754,29 @@ Result<types::Type_id> Parser::parse_type()
 
         current = type_table_.function(params, ret);
     }
-
-    else if (match({lex::TokenType::TInt64}))
-        current = type_table_.primitive(Primitive_kind::I64);
-    else if (match({lex::TokenType::TInt32}))
-        current = type_table_.primitive(Primitive_kind::I32);
-    else if (match({lex::TokenType::TInt16}))
-        current = type_table_.primitive(Primitive_kind::I16);
-    else if (match({lex::TokenType::TInt8}))
-        current = type_table_.primitive(Primitive_kind::I8);
-
-    else if (match({lex::TokenType::TUInt64}))
-        current = type_table_.primitive(Primitive_kind::U64);
-    else if (match({lex::TokenType::TUInt32}))
-        current = type_table_.primitive(Primitive_kind::U32);
-    else if (match({lex::TokenType::TUInt16}))
-        current = type_table_.primitive(Primitive_kind::U16);
-    else if (match({lex::TokenType::TUInt8}))
-        current = type_table_.primitive(Primitive_kind::U8);
-
-    else if (match({lex::TokenType::TFloat64}))
-        current = type_table_.primitive(Primitive_kind::F64);
-    else if (match({lex::TokenType::TFloat32}))
-        current = type_table_.primitive(Primitive_kind::F32);
-    else if (match({lex::TokenType::TFloat16}))
-        current = type_table_.primitive(Primitive_kind::F16);
-
-    else if (match({lex::TokenType::TBool}))
-        current = type_table_.primitive(Primitive_kind::Bool);
-    else if (match({lex::TokenType::TString}))
-        current = type_table_.primitive(Primitive_kind::String);
-    else if (match({lex::TokenType::TVoid}))
-        current = type_table_.primitive(Primitive_kind::Void);
-    else if (match({lex::TokenType::TAny}))
-        current = type_table_.primitive(Primitive_kind::Any);
+    // Primitives
+    else if (match({lex::TokenType::TInt64}))   current = type_table_.primitive(Primitive_kind::I64);
+    else if (match({lex::TokenType::TInt32}))   current = type_table_.primitive(Primitive_kind::I32);
+    else if (match({lex::TokenType::TInt16}))   current = type_table_.primitive(Primitive_kind::I16);
+    else if (match({lex::TokenType::TInt8}))    current = type_table_.primitive(Primitive_kind::I8);
+    else if (match({lex::TokenType::TUInt64}))  current = type_table_.primitive(Primitive_kind::U64);
+    else if (match({lex::TokenType::TUInt32}))  current = type_table_.primitive(Primitive_kind::U32);
+    else if (match({lex::TokenType::TUInt16}))  current = type_table_.primitive(Primitive_kind::U16);
+    else if (match({lex::TokenType::TUInt8}))   current = type_table_.primitive(Primitive_kind::U8);
+    else if (match({lex::TokenType::TFloat64})) current = type_table_.primitive(Primitive_kind::F64);
+    else if (match({lex::TokenType::TFloat32})) current = type_table_.primitive(Primitive_kind::F32);
+    else if (match({lex::TokenType::TFloat16})) current = type_table_.primitive(Primitive_kind::F16);
+    else if (match({lex::TokenType::TBool}))    current = type_table_.primitive(Primitive_kind::Bool);
+    else if (match({lex::TokenType::TString}))  current = type_table_.primitive(Primitive_kind::String);
+    else if (match({lex::TokenType::TVoid}))    current = type_table_.primitive(Primitive_kind::Void);
+    else if (match({lex::TokenType::TAny}))     current = type_table_.primitive(Primitive_kind::Any);
     else if (match({lex::TokenType::Model})) {
-        // anonymous model
 
         std::vector<std::pair<std::string, Type_id>> fields;
 
         __TryIgnore(consume(lex::TokenType::LeftBrace, "Expect '{' after model"));
 
         while (!check(lex::TokenType::RightBrace) && !is_at_end()) {
-
             auto name = __Try(consume(lex::TokenType::Identifier, "Expect field name"));
             __TryIgnore(consume(lex::TokenType::Colon, "Expect ':'"));
 
@@ -1766,27 +1788,20 @@ Result<types::Type_id> Parser::parse_type()
         }
 
         __TryIgnore(consume(lex::TokenType::RightBrace, "Expect '}'"));
-
         current = type_table_.model("", fields); // anonymous
     }
-
-    // named types
+    // --- THE DUMB PARSER APPROACH ---
     else if (match({lex::TokenType::Identifier})) {
-
         std::string name = previous().lexeme;
 
-        if (m_known_union_names.count(name)) {
-            current = type_table_.union_(name);
-        } else if (m_known_enum_names.count(name)) {
-            current = type_table_.enum_(name);
-        } else {
-            current = type_table_.model(name);
-        }
+        // The parser no longer attempts to resolve if this is a Model, Union, or Enum!
+        // It simply creates an Unresolved_type placeholder. The Type Checker maps it later.
+        current = type_table_.unresolved(name);
     } else {
         return std::unexpected(create_error(peek(), "Expected a type"));
     }
 
-    // suffixes
+    // suffixes (Arrays and Optionals)
     while (true) {
         if (match({lex::TokenType::LeftBracket})) {
             __TryIgnore(consume(lex::TokenType::RightBracket, "Expected ']'"));

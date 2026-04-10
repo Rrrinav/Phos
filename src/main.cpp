@@ -11,7 +11,6 @@
 #include <print>
 #include <sstream>
 #include <string>
-#include <vector>
 
 // --- VM Integrations ---
 #include "vm/assembler.hpp"
@@ -78,19 +77,19 @@ int main(int argc, char *argv[])
     }
 
     phos::mem::Arena arena;
+    phos::types::Type_table type_table{};
+    phos::lex::Lexer lexer(source);
     try {
-        phos::lex::Lexer lexer(source);
         auto tokens = lexer.tokenize();
-        // TODO: Do this in lexer itself.
-        for (const auto &token : tokens) {
-            if (token.type == phos::lex::TokenType::Invalid) {
-                std::println(stderr, "{}:{}:{}: error: Invalid token: {}", filename, token.line, token.column, token.lexeme);
-                return 1;
-            }
+
+        if (!tokens.has_value()) {
+            std::println(stderr, "{}:{}:{}: error: Invalid token: {}", filename, tokens.error().line, tokens.error().column, tokens.error().lexeme);
+            return 1;
         }
 
-        phos::Parser parser(tokens, arena);
+        phos::Parser parser(*tokens, type_table, arena);
         auto parse_result = parser.parse();
+
         if (!parse_result) {
             std::println(stderr, "{}:{}", filename, parse_result.error().format());
             return 1;
@@ -98,7 +97,7 @@ int main(int argc, char *argv[])
 
         // 3. Register Core Library & Type Check
         phos::Type_checker type_checker;
-        phos::vm::core::register_core_library(vm, type_checker); // MUST BE BEFORE .check()!
+        phos::vm::core::register_core_library(vm, type_checker);
 
         auto checked = type_checker.check(parse_result.value());
 

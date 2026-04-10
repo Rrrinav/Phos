@@ -388,7 +388,9 @@ std::string value_to_string(const Value &val)
     if (is_model(val))
         return std::format("<model {}>", get_model(val)->signature.name);
     if (is_iterator(val))
-        return std::format("<iter {}>", types::type_to_string(get_iterator(val)->element_type));
+        // FIX: This is just a hack
+        //return std::format("<iter {}>", type_to_string(get_iterator(val)->element_type));
+        return "it";
 
     if (std::holds_alternative<mem::rc_ptr<Union_value>>(val.payload)) {
         auto u = std::get<mem::rc_ptr<Union_value>>(val.payload);

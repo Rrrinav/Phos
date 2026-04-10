@@ -220,7 +220,6 @@ static const std::unordered_map<std::string_view, TokenType> token_keywords = {
     {"bool", TokenType::TBool},
     {"string", TokenType::TString},
     {"void", TokenType::TVoid},
-    {"any", TokenType::TAny},
 };
 
 //  Utilities

@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <expected>
 
 namespace phos::lex {
 
@@ -16,12 +17,16 @@ public:
     explicit Lexer(std::string_view src) : source(src)
     {}
 
-    std::vector<Token> tokenize()
+    std::expected<std::vector<Token>, Token> tokenize()
     {
         std::vector<Token> tokens;
         while (!is_at_end()) {
-            if (auto tok = scan_token(); tok.has_value())
+            if (auto tok = scan_token(); tok.has_value()) {
+                if ((*tok).type == TokenType::Invalid) {
+                    return std::unexpected(tok.value());
+                }
                 tokens.push_back(std::move(*tok));
+            }
         }
         tokens.emplace_back(TokenType::Eof, "", std::monostate{}, line, column);
         return tokens;
