@@ -439,8 +439,7 @@ struct Stmt
         For_in_stmt,
         Union_stmt,
         Match_stmt,
-        Enum_stmt
-    >;
+        Enum_stmt>;
 
     Node node;
 };
@@ -491,10 +490,11 @@ inline types::Type_id &get_type(Expr::Node &node)
     return std::visit(
         [](auto &expr) -> types::Type_id & {
             using T = std::decay_t<decltype(expr)>;
-            if constexpr (std::is_same_v<T, Cast_expr>)
+            if constexpr (std::is_same_v<T, Cast_expr>) {
                 return expr.target_type;
-            else
+            } else {
                 return expr.type;
+            }
         },
         node);
 }
@@ -504,10 +504,11 @@ inline const types::Type_id &get_type(const Expr::Node &node)
     return std::visit(
         [](const auto &expr) -> const types::Type_id & {
             using T = std::decay_t<decltype(expr)>;
-            if constexpr (std::is_same_v<T, Cast_expr>)
+            if constexpr (std::is_same_v<T, Cast_expr>) {
                 return expr.target_type;
-            else
+            } else {
                 return expr.type;
+            }
         },
         node);
 }

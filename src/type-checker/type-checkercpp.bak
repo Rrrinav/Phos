@@ -132,14 +132,17 @@ bool Type_checker::default_expr_uses_forbidden_names(const ast::Expr &expr, cons
 
             if constexpr (std::is_same_v<T, ast::Variable_expr>) {
                 return forbidden_names.contains(node.name);
+
             } else if constexpr (std::is_same_v<T, ast::Binary_expr>) {
-                return default_expr_uses_forbidden_names(*node.left, forbidden_names)
-                    || default_expr_uses_forbidden_names(*node.right, forbidden_names);
+                return default_expr_uses_forbidden_names(*node.left, forbidden_names) || default_expr_uses_forbidden_names(*node.right, forbidden_names);
+
             } else if constexpr (std::is_same_v<T, ast::Unary_expr>) {
                 return default_expr_uses_forbidden_names(*node.right, forbidden_names);
+
             } else if constexpr (std::is_same_v<T, ast::Call_expr>) {
-                if (default_expr_uses_forbidden_names(*node.callee, forbidden_names))
+                if (default_expr_uses_forbidden_names(*node.callee, forbidden_names)) {
                     return true;
+                }
                 for (const auto &arg : node.arguments)
                     if (arg.value && default_expr_uses_forbidden_names(*arg.value, forbidden_names))
                         return true;

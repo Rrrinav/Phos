@@ -52,8 +52,10 @@ Result<void> Virtual_machine::interpret(mem::rc_ptr<Closure_value> script_closur
 Result<void>
 Virtual_machine::call_closure(mem::rc_ptr<Closure_value> closure, int arg_count, Call_frame *&current_frame, uint8_t *&current_ip)
 {
-    if (arg_count != closure->arity)
-        return std::unexpected(err::msg(std::format("Closure {} expected {} arguments but got {}.", closure->name, closure->arity, arg_count), "vm", 0, 0));
+    if (arg_count != closure->arity) {
+        return std::unexpected(
+            err::msg(std::format("Closure {} expected {} arguments but got {}.", closure->name, closure->arity, arg_count), "vm", 0, 0));
+    }
 
     // --- THE NATIVE C++ INTERCEPT ---
     if (closure->native_func) {
@@ -67,8 +69,9 @@ Virtual_machine::call_closure(mem::rc_ptr<Closure_value> closure, int arg_count,
     }
     // ==========================================
 
-    if (current_thread->frames.size() >= 256)
+    if (current_thread->frames.size() >= 256) {
         return std::unexpected(err::msg("Stack overflow.", "vm", 0, 0));
+    }
 
     // Save the old Instruction Pointer before jumping
     current_frame->ip = current_ip;
@@ -91,8 +94,9 @@ Virtual_machine::call_closure(mem::rc_ptr<Closure_value> closure, int arg_count,
 Result<void> Virtual_machine::call_value(Value callee, int arg_count, Call_frame *&current_frame, uint8_t *&current_ip)
 {
     // Native functions are now unified inside 'Closure_value'
-    if (is_closure(callee))
+    if (is_closure(callee)) {
         return call_closure(get_closure(callee), arg_count, current_frame, current_ip);
+    }
 
     return std::unexpected(err::msg("Can only call functions and closures.", "vm", 0, 0));
 }
@@ -100,9 +104,11 @@ Result<void> Virtual_machine::call_value(Value callee, int arg_count, Call_frame
 mem::rc_ptr<Upvalue_value> Virtual_machine::capture_upvalue(size_t stack_index)
 {
     // 1. If we are already capturing this local variable, return the existing Upvalue!
-    for (auto &upvalue : current_thread->open_upvalues)
-        if (upvalue->stack_index == stack_index)
+    for (auto &upvalue : current_thread->open_upvalues) {
+        if (upvalue->stack_index == stack_index) {
             return upvalue;
+        }
+    }
     // 2. Otherwise, create a new one and track it.
     auto created = mem::make_rc<Upvalue_value>(stack_index);
     current_thread->open_upvalues.push_back(created);
@@ -167,18 +173,20 @@ Result<void> Virtual_machine::run()
             uint8_t index = *ip++;
             std::string name = get_string(frame->closure->chunk->constants[index]);
             auto it = globals.find(name);
-            if (it == globals.end())
+            if (it == globals.end()) {
                 return std::unexpected(
                     err::msg(std::format("Undefined variable '{}'.", name), "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
+            }
             push(it->second);
             break;
         }
         case Op_code::Set_global: {
             uint8_t index = *ip++;
             std::string name = get_string(frame->closure->chunk->constants[index]);
-            if (globals.find(name) == globals.end())
+            if (globals.find(name) == globals.end()) {
                 return std::unexpected(
                     err::msg(std::format("Undefined variable '{}'.", name), "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
+            }
             globals[name] = peek(0);
             break;
         }
@@ -188,8 +196,9 @@ Result<void> Virtual_machine::run()
             uint8_t arg_count = *ip++;
             Value callee = peek(arg_count);
 
-            if (auto err = call_value(callee, arg_count, frame, ip); !err)
+            if (auto err = call_value(callee, arg_count, frame, ip); !err) {
                 return err;
+            }
 
             // IMPORTANT: The frame pointer might have been invalidated by vector reallocation!
             // Refresh our local pointers!
@@ -200,20 +209,22 @@ Result<void> Virtual_machine::run()
         case Op_code::Get_upvalue: {
             uint8_t slot = *ip++;
             auto upval = frame->closure->upvalues[slot];
-            if (upval->is_closed)
+            if (upval->is_closed) {
                 push(upval->closed_value);
-            else
+            } else {
                 push(current_thread->stack[upval->stack_index]);
+            }
             break;
         }
 
         case Op_code::Set_upvalue: {
             uint8_t slot = *ip++;
             auto upval = frame->closure->upvalues[slot];
-            if (upval->is_closed)
+            if (upval->is_closed) {
                 upval->closed_value = peek(0);
-            else
+            } else {
                 current_thread->stack[upval->stack_index] = peek(0);
+            }
             break;
         }
 
@@ -266,8 +277,9 @@ Result<void> Virtual_machine::run()
             ip += 2;
             Value cond = peek(0);
             bool is_true = is_bool(cond) ? get_bool(cond) : !is_nil(cond);
-            if (!is_true)
+            if (!is_true) {
                 ip += offset;
+            }
             break;
         }
         case Op_code::Jump_if_true: {
@@ -275,8 +287,9 @@ Result<void> Virtual_machine::run()
             ip += 2;
             Value cond = peek(0);
             bool is_true = is_bool(cond) ? get_bool(cond) : !is_nil(cond);
-            if (is_true)
+            if (is_true) {
                 ip += offset;
+            }
             break;
         }
         case Op_code::Jump_if_nil: {
@@ -329,8 +342,9 @@ Result<void> Virtual_machine::run()
 
             std::vector<Value> fields(field_count);
             // Pop fields backwards because the compiler pushed them left-to-right
-            for (int i = field_count - 1; i >= 0; --i)
+            for (int i = field_count - 1; i >= 0; --i) {
                 fields[i] = pop();
+            }
 
             // Construct a lightweight signature reference
             types::Model_type sig;
@@ -358,87 +372,106 @@ Result<void> Virtual_machine::run()
         }
 
         case Op_code::Add:
-            if (auto err = execute_binary_op(phos::util::add_op, frame, ip); !err)
+            if (auto err = execute_binary_op(phos::util::add_op, frame, ip); !err) {
                 return err;
+            }
             break;
         case Op_code::Subtract:
-            if (auto err = execute_binary_op(phos::util::subtract_op, frame, ip); !err)
+            if (auto err = execute_binary_op(phos::util::subtract_op, frame, ip); !err) {
                 return err;
+            }
             break;
         case Op_code::Multiply:
-            if (auto err = execute_binary_op(phos::util::multiply_op, frame, ip); !err)
+            if (auto err = execute_binary_op(phos::util::multiply_op, frame, ip); !err) {
                 return err;
+            }
             break;
         case Op_code::Divide:
-            if (auto err = execute_binary_op(phos::util::divide_op, frame, ip); !err)
+            if (auto err = execute_binary_op(phos::util::divide_op, frame, ip); !err) {
                 return err;
+            }
             break;
         case Op_code::Modulo:
-            if (auto err = execute_binary_op(phos::util::modulo_op, frame, ip); !err)
+            if (auto err = execute_binary_op(phos::util::modulo_op, frame, ip); !err) {
                 return err;
+            }
             break;
         case Op_code::Equal:
-            if (auto err = execute_binary_op(phos::util::equal_op, frame, ip); !err)
+            if (auto err = execute_binary_op(phos::util::equal_op, frame, ip); !err) {
                 return err;
+            }
             break;
         case Op_code::Not_equal:
-            if (auto err = execute_binary_op(phos::util::not_equal_op, frame, ip); !err)
+            if (auto err = execute_binary_op(phos::util::not_equal_op, frame, ip); !err) {
                 return err;
+            }
             break;
         case Op_code::Less:
-            if (auto err = execute_binary_op(phos::util::less_op, frame, ip); !err)
+            if (auto err = execute_binary_op(phos::util::less_op, frame, ip); !err) {
                 return err;
+            }
             break;
         case Op_code::Less_equal:
-            if (auto err = execute_binary_op(phos::util::less_equal_op, frame, ip); !err)
+            if (auto err = execute_binary_op(phos::util::less_equal_op, frame, ip); !err) {
                 return err;
+            }
             break;
         case Op_code::Greater:
-            if (auto err = execute_binary_op(phos::util::greater_op, frame, ip); !err)
+            if (auto err = execute_binary_op(phos::util::greater_op, frame, ip); !err) {
                 return err;
+            }
             break;
         case Op_code::Greater_equal:
-            if (auto err = execute_binary_op(phos::util::greater_equal_op, frame, ip); !err)
+            if (auto err = execute_binary_op(phos::util::greater_equal_op, frame, ip); !err) {
                 return err;
+            }
             break;
         case Op_code::BitAnd:
-            if (auto err = execute_binary_op(phos::util::bitwise_and_op, frame, ip); !err)
+            if (auto err = execute_binary_op(phos::util::bitwise_and_op, frame, ip); !err) {
                 return err;
+            }
             break;
         case Op_code::BitOr:
-            if (auto err = execute_binary_op(phos::util::bitwise_or_op, frame, ip); !err)
+            if (auto err = execute_binary_op(phos::util::bitwise_or_op, frame, ip); !err) {
                 return err;
+            }
             break;
         case Op_code::BitXor:
-            if (auto err = execute_binary_op(phos::util::bitwise_xor_op, frame, ip); !err)
+            if (auto err = execute_binary_op(phos::util::bitwise_xor_op, frame, ip); !err) {
                 return err;
+            }
             break;
         case Op_code::BitLShift:
-            if (auto err = execute_binary_op(phos::util::bitwise_lshift_op, frame, ip); !err)
+            if (auto err = execute_binary_op(phos::util::bitwise_lshift_op, frame, ip); !err) {
                 return err;
+            }
             break;
         case Op_code::BitRShift:
-            if (auto err = execute_binary_op(phos::util::bitwise_rshift_op, frame, ip); !err)
+            if (auto err = execute_binary_op(phos::util::bitwise_rshift_op, frame, ip); !err) {
                 return err;
+            }
             break;
 
         case Op_code::Not:
-            if (auto err = execute_unary_op([](auto v, auto l) { return Result<Value>(Value(!get_bool(v))); }, frame, ip); !err)
+            if (auto err = execute_unary_op([](auto v, auto l) { return Result<Value>(Value(!get_bool(v))); }, frame, ip); !err) {
                 return err;
+            }
             break;
         case Op_code::BitNot: {
             Value v = pop();
             auto res = std::visit(
                 [&](const auto &value) -> Result<Value> {
                     using T = std::decay_t<decltype(value)>;
-                    if constexpr (is_integer_cpp_v<T>)
+                    if constexpr (is_integer_cpp_v<T>) {
                         return Value(static_cast<T>(~value));
+                    }
                     return std::unexpected(
                         err::msg("Operand must be an integer for '~'", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
                 },
                 v.payload);
-            if (!res)
+            if (!res) {
                 return std::unexpected(res.error());
+            }
             push(res.value());
             break;
         }
@@ -447,16 +480,19 @@ Result<void> Virtual_machine::run()
             auto res = std::visit(
                 [&](const auto &value) -> Result<Value> {
                     using T = std::decay_t<decltype(value)>;
-                    if constexpr (is_signed_integer_cpp_v<T> || is_float_cpp_v<T>)
+                    if constexpr (is_signed_integer_cpp_v<T> || is_float_cpp_v<T>) {
                         return Value(static_cast<T>(-value));
-                    if constexpr (is_unsigned_integer_cpp_v<T>)
+                    }
+                    if constexpr (is_unsigned_integer_cpp_v<T>) {
                         return std::unexpected(
                             err::msg("Operand must not be unsigned for unary '-'", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
+                    }
                     return std::unexpected(err::msg("Operand must be a number for '-'", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
                 },
                 r.payload);
-            if (!res)
+            if (!res) {
                 return std::unexpected(res.error());
+            }
             push(res.value());
             break;
         }
@@ -465,8 +501,9 @@ Result<void> Virtual_machine::run()
             std::vector<Value> elements(count);
 
             // Pop elements backwards because the compiler pushed them left-to-right
-            for (int i = count - 1; i >= 0; --i)
+            for (int i = count - 1; i >= 0; --i) {
                 elements[i] = pop();
+            }
 
             // Create a lightweight dummy type to satisfy the Array_value constructor
             auto dummy_type = types::Type(mem::make_rc<types::Array_type>(types::Primitive_kind::Any));
@@ -480,12 +517,14 @@ Result<void> Virtual_machine::run()
 
             auto arr = get_array(array_val);
             auto maybe_idx = try_get_i64(index_val);
-            if (!maybe_idx)
+            if (!maybe_idx) {
                 return std::unexpected(err::msg("Array index must fit into the current i64-backed runtime range."));
+            }
             int64_t idx = *maybe_idx;
 
-            if (idx < 0 || idx >= static_cast<int64_t>(arr->elements.size()))
+            if (idx < 0 || idx >= static_cast<int64_t>(arr->elements.size())) {
                 return std::unexpected(err::msg("Array index out of bounds."));
+            }
 
             push(arr->elements[idx]);
             break;
@@ -498,12 +537,14 @@ Result<void> Virtual_machine::run()
 
             auto arr = get_array(array_val);
             auto maybe_idx = try_get_i64(index_val);
-            if (!maybe_idx)
+            if (!maybe_idx) {
                 return std::unexpected(err::msg("Array assignment index must fit into the current i64-backed runtime range."));
+            }
             int64_t idx = *maybe_idx;
 
-            if (idx < 0 || idx >= static_cast<int64_t>(arr->elements.size()))
+            if (idx < 0 || idx >= static_cast<int64_t>(arr->elements.size())) {
                 return std::unexpected(err::msg("Array assignment index out of bounds."));
+            }
 
             arr->elements[idx] = val;
             // Leave the assigned value on the top of the stack
@@ -552,8 +593,9 @@ Result<void> Virtual_machine::run()
             Value val = pop();
 
             auto casted = cast_numeric_value(val, target_kind);
-            if (!casted)
+            if (!casted) {
                 return std::unexpected(err::msg("Unsupported runtime cast", "vm", get_loc(frame, ip).l, get_loc(frame, ip).c));
+            }
             push(casted.value());
             break;
         }
@@ -581,13 +623,15 @@ Result<void> Virtual_machine::run()
             std::string end_str = get_string(pop());
             std::string sep_str = get_string(pop());
             std::vector<Value> values(count);
-            for (int i = count - 1; i >= 0; --i)
+            for (int i = count - 1; i >= 0; --i) {
                 values[i] = pop();
+            }
             std::ostream &out = (static_cast<Op_code>(instruction) == Op_code::Print_err) ? *config_.err_stream : *config_.out_stream;
 
             for (uint8_t i = 0; i < count; ++i) {
-                if (i > 0)
+                if (i > 0) {
                     out << sep_str;
+                }
                 // value_to_str_debug handles the internal .payload and optional_depth checks
                 out << (is_string(values[i]) ? get_string(values[i]) : value_to_str_debug(values[i]));
             }

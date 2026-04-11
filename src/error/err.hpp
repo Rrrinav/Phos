@@ -25,10 +25,11 @@ struct msg
 
     std::string format() const
     {
-        if (line > 0)
-            return std::format("{}:{}: error: in phase: {} : {}.", line, column, phase, message);
-        else
-            return std::format("error: in phase: {}: {}", phase, message);
+        if (line > 0) {
+            return std::format("{}:{}: [error in {}]: {}", line, column, phase, message);
+        } else {
+            return std::format("[error in {}]: {}", phase, message);
+        }
     }
 };
 

@@ -16,29 +16,40 @@ namespace phos::vm::core {
 // --- Identity / Reference Equality ---
 inline bool core_is_same(Value a, Value b)
 {
-    if (a.index() != b.index())
+    if (a.index() != b.index()) {
         return false;
+    }
 
-    if (is_model(a))
+    if (is_model(a)) {
         return get_model(a).get() == get_model(b).get();
-    if (is_array(a))
+    }
+    if (is_array(a)) {
         return get_array(a).get() == get_array(b).get();
-    if (is_closure(a))
+    }
+    if (is_closure(a)) {
         return get_closure(a).get() == get_closure(b).get();
-    if (is_iterator(a))
+    }
+    if (is_iterator(a)) {
         return get_iterator(a) == get_iterator(b);
-    if (is_signed_integer(a))
+    }
+    if (is_signed_integer(a)) {
         return get_int(a) == get_int(b);
-    if (is_unsigned_integer(a))
+    }
+    if (is_unsigned_integer(a)) {
         return get_uint(a) == get_uint(b);
-    if (is_float(a))
+    }
+    if (is_float(a)) {
         return get_float(a) == get_float(b);
-    if (is_bool(a))
+    }
+    if (is_bool(a)) {
         return get_bool(a) == get_bool(b);
-    if (is_string(a))
+    }
+    if (is_string(a)) {
         return get_string(a) == get_string(b);
-    if (is_nil(a))
+    }
+    if (is_nil(a)) {
         return true;
+    }
 
     return false;
 }
@@ -76,10 +87,12 @@ inline double clock_now()
 // --- Queries (Functions) ---
 inline int64_t core_len(Value val)
 {
-    if (is_array(val))
+    if (is_array(val)) {
         return static_cast<int64_t>(get_array(val)->elements.size());
-    if (is_string(val))
+    }
+    if (is_string(val)) {
         return static_cast<int64_t>(get_string(val).length());
+    }
     return 0; // Fallback for unsupported types
 }
 
@@ -92,8 +105,9 @@ inline Value array_push(mem::rc_ptr<Array_value> arr, Value val)
 
 inline Value array_pop(mem::rc_ptr<Array_value> arr)
 {
-    if (arr->elements.empty())
+    if (arr->elements.empty()) {
         return nullptr;
+    }
     Value last = std::move(arr->elements.back());
     arr->elements.pop_back();
     return last;
@@ -117,12 +131,14 @@ inline int64_t string_index_of(std::string str, std::string search)
 
 inline std::string string_repeat(std::string str, int64_t count)
 {
-    if (count <= 0)
+    if (count <= 0) {
         return "";
+    }
     std::string result;
     result.reserve(str.length() * count);
-    for (int64_t i = 0; i < count; ++i)
+    for (int64_t i = 0; i < count; ++i) {
         result += str;
+    }
     return result;
 }
 
@@ -152,8 +168,9 @@ inline std::string array_join(mem::rc_ptr<Array_value> arr, std::string delimite
     std::string result;
     for (size_t i = 0; i < arr->elements.size(); ++i) {
         result += value_to_string(arr->elements[i]);
-        if (i < arr->elements.size() - 1)
+        if (i < arr->elements.size() - 1) {
             result += delimiter;
+        }
     }
     return result;
 }
@@ -164,8 +181,9 @@ inline Value string_split(std::string str, std::string delimiter)
 
     if (delimiter.empty()) {
         // Split into individual characters if delimiter is empty
-        for (char c : str)
+        for (char c : str) {
             elements.push_back(Value(std::string(1, c)));
+        }
     } else {
         size_t pos = 0;
         while ((pos = str.find(delimiter)) != std::string::npos) {
@@ -184,12 +202,14 @@ inline Value string_split(std::string str, std::string delimiter)
 inline std::string string_trim(std::string str)
 {
     size_t start = 0;
-    while (start < str.size() && std::isspace(static_cast<unsigned char>(str[start])))
+    while (start < str.size() && std::isspace(static_cast<unsigned char>(str[start]))) {
         ++start;
+    }
 
     size_t end = str.size();
-    while (end > start && std::isspace(static_cast<unsigned char>(str[end - 1])))
+    while (end > start && std::isspace(static_cast<unsigned char>(str[end - 1]))) {
         --end;
+    }
 
     return str.substr(start, end - start);
 }
@@ -197,8 +217,9 @@ inline std::string string_trim(std::string str)
 inline std::string string_trim_left(std::string str)
 {
     size_t start = 0;
-    while (start < str.size() && std::isspace(static_cast<unsigned char>(str[start])))
+    while (start < str.size() && std::isspace(static_cast<unsigned char>(str[start]))) {
         ++start;
+    }
 
     return str.substr(start);
 }
@@ -206,8 +227,9 @@ inline std::string string_trim_left(std::string str)
 inline std::string string_trim_right(std::string str)
 {
     size_t end = str.size();
-    while (end > 0 && std::isspace(static_cast<unsigned char>(str[end - 1])))
+    while (end > 0 && std::isspace(static_cast<unsigned char>(str[end - 1]))) {
         --end;
+    }
 
     return str.substr(0, end);
 }
@@ -230,8 +252,9 @@ inline Value core_to_i64(std::string str)
     int64_t result = 0;
     auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), result);
 
-    if (ec == std::errc())
+    if (ec == std::errc()) {
         return Value(result);
+    }
 
     return Value(nullptr); // Return Phos 'nil' if parsing fails!
 }
@@ -241,8 +264,9 @@ inline Value core_to_f64(std::string str)
     double result = 0.0;
     auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), result);
 
-    if (ec == std::errc())
+    if (ec == std::errc()) {
         return Value(result);
+    }
 
     return Value(nullptr);
 }
@@ -266,8 +290,9 @@ inline Value core_bytes(Value value)
     if (is_string(value)) {
         const auto &str = get_string(value);
         elements.reserve(str.size());
-        for (unsigned char c : str)
+        for (unsigned char c : str) {
             elements.push_back(Value(static_cast<std::uint8_t>(c)));
+        }
         return Value(mem::make_rc<Array_value>(byte_array_type, std::move(elements)));
     }
 
@@ -282,8 +307,9 @@ inline Value core_bytes(Value value)
             }
 
             auto casted = cast_numeric_value(elem, types::Primitive_kind::U8);
-            if (!casted)
+            if (!casted) {
                 bytes_panic("bytes(...) can only convert strings, bool arrays, or integer arrays to u8[].");
+            }
 
             elements.push_back(casted.value());
         }
@@ -296,8 +322,9 @@ inline Value core_bytes(Value value)
 
 inline Value string_from_bytes(Value byte_array)
 {
-    if (!is_array(byte_array))
+    if (!is_array(byte_array)) {
         bytes_panic("string::from_bytes expects a u8[] or i8[] array.");
+    }
 
     auto arr = get_array(byte_array);
     std::string result;
@@ -330,17 +357,19 @@ inline std::vector<size_t> utf8_boundaries(const std::string &str)
         unsigned char byte = static_cast<unsigned char>(str[i]);
         size_t width = 1;
 
-        if ((byte & 0x80u) == 0x00u)
+        if ((byte & 0x80u) == 0x00u) {
             width = 1;
-        else if ((byte & 0xE0u) == 0xC0u)
+        } else if ((byte & 0xE0u) == 0xC0u) {
             width = 2;
-        else if ((byte & 0xF0u) == 0xE0u)
+        } else if ((byte & 0xF0u) == 0xE0u) {
             width = 3;
-        else if ((byte & 0xF8u) == 0xF0u)
+        } else if ((byte & 0xF8u) == 0xF0u) {
             width = 4;
+        }
 
-        if (i + width > str.size())
+        if (i + width > str.size()) {
             width = 1;
+        }
 
         i += width;
         boundaries.push_back(i);
@@ -359,11 +388,13 @@ inline int64_t iterator_length(const Iterator_value &iter)
             } else if constexpr (std::is_same_v<T, Iterator_value::Singleton_state>) {
                 return 1;
             } else if constexpr (std::is_same_v<T, Iterator_value::Interval_state>) {
-                if (state.start == state.end)
+                if (state.start == state.end) {
                     return state.inclusive ? 1 : 0;
+                }
 
-                if (state.start < state.end)
+                if (state.start < state.end) {
                     return state.inclusive ? (state.end - state.start + 1) : (state.end - state.start);
+                }
 
                 return state.inclusive ? (state.start - state.end + 1) : (state.start - state.end);
             } else if constexpr (std::is_same_v<T, Iterator_value::Array_state>) {
@@ -390,17 +421,20 @@ inline Value iterator_item_at(const Iterator_value &iter, int64_t index)
                 Value raw = Value(static_cast<std::int64_t>(state.start + (index * step)));
                 if (types::is_primitive(iter.element_type) && types::is_integer_primitive(types::get_primitive_kind(iter.element_type))) {
                     auto casted = cast_numeric_value(raw, types::get_primitive_kind(iter.element_type));
-                    if (casted)
+                    if (casted) {
                         return casted.value();
+                    }
                 }
                 return raw;
             } else if constexpr (std::is_same_v<T, Iterator_value::Array_state>) {
-                if (!state.array || index < 0 || index >= static_cast<int64_t>(state.array->elements.size()))
+                if (!state.array || index < 0 || index >= static_cast<int64_t>(state.array->elements.size())) {
                     return Value(nullptr);
+                }
                 return state.array->elements[static_cast<size_t>(index)];
             } else if constexpr (std::is_same_v<T, Iterator_value::String_state>) {
-                if (index < 0 || index + 1 >= static_cast<int64_t>(state.boundaries.size()))
+                if (index < 0 || index + 1 >= static_cast<int64_t>(state.boundaries.size())) {
                     return Value(nullptr);
+                }
                 size_t start = state.boundaries[static_cast<size_t>(index)];
                 size_t end = state.boundaries[static_cast<size_t>(index + 1)];
                 return Value(state.source.substr(start, end - start));
@@ -412,8 +446,9 @@ inline Value iterator_item_at(const Iterator_value &iter, int64_t index)
 
 inline Value iter_next(mem::rc_ptr<Iterator_value> iter)
 {
-    if (!iter)
+    if (!iter) {
         return Value(nullptr);
+    }
 
     const int64_t len = iterator_length(*iter);
 
@@ -433,8 +468,9 @@ inline Value iter_next(mem::rc_ptr<Iterator_value> iter)
 
 inline Value iter_prev(mem::rc_ptr<Iterator_value> iter)
 {
-    if (!iter)
+    if (!iter) {
         return Value(nullptr);
+    }
 
     const int64_t len = iterator_length(*iter);
 
@@ -453,19 +489,22 @@ inline Value iter_prev(mem::rc_ptr<Iterator_value> iter)
 
 inline Value iter_get(mem::rc_ptr<Iterator_value> iter)
 {
-    if (!iter)
+    if (!iter) {
         return Value(nullptr);
+    }
 
-    if (iter->cursor >= 0 && iter->cursor < iterator_length(*iter))
+    if (iter->cursor >= 0 && iter->cursor < iterator_length(*iter)) {
         return iterator_item_at(*iter, iter->cursor);
+    }
     return Value(nullptr);
 }
 
 inline int64_t require_i64(Value value, const std::string &context)
 {
     auto converted = try_get_i64(value);
-    if (!converted)
+    if (!converted) {
         optional_panic(context + " must fit into the current i64-backed runtime range.");
+    }
     return *converted;
 }
 
@@ -474,21 +513,25 @@ inline types::Primitive_kind promote_integer_kind(types::Primitive_kind left, ty
     bool same_signedness = (types::is_signed_integer_primitive(left) && types::is_signed_integer_primitive(right))
         || (types::is_unsigned_integer_primitive(left) && types::is_unsigned_integer_primitive(right));
 
-    if (!same_signedness)
+    if (!same_signedness) {
         return types::Primitive_kind::I64;
+    }
 
     return types::primitive_bit_width(left) >= types::primitive_bit_width(right) ? left : right;
 }
 
 inline bool iter_has_next(mem::rc_ptr<Iterator_value> iter, Value steps_value)
 {
-    if (!iter)
+    if (!iter) {
         return false;
+    }
     int64_t steps = require_i64(steps_value, "Iterator step");
-    if (steps < 0)
+    if (steps < 0) {
         return false;
-    if (steps == 0)
+    }
+    if (steps == 0) {
         return iter->cursor >= 0 && iter->cursor < iterator_length(*iter);
+    }
 
     const int64_t len = iterator_length(*iter);
     int64_t cursor = iter->cursor;
@@ -505,20 +548,24 @@ inline bool iter_has_next(mem::rc_ptr<Iterator_value> iter, Value steps_value)
 
 inline bool iter_has_prev(mem::rc_ptr<Iterator_value> iter, Value steps_value)
 {
-    if (!iter)
+    if (!iter) {
         return false;
+    }
     int64_t steps = require_i64(steps_value, "Iterator step");
-    if (steps < 0)
+    if (steps < 0) {
         return false;
-    if (steps == 0)
+    }
+    if (steps == 0) {
         return iter->cursor >= 0 && iter->cursor < iterator_length(*iter);
+    }
 
     const int64_t len = iterator_length(*iter);
     int64_t cursor = iter->cursor;
 
     for (int64_t i = 0; i < steps; ++i) {
-        if (cursor == len && len > 0)
+        if (cursor == len && len > 0) {
             --cursor;
+        }
 
         if (cursor >= 0 && cursor < len) {
             --cursor;
@@ -531,48 +578,57 @@ inline bool iter_has_prev(mem::rc_ptr<Iterator_value> iter, Value steps_value)
 
 inline Value iter_next(mem::rc_ptr<Iterator_value> iter, Value steps_value)
 {
-    if (!iter)
+    if (!iter) {
         return Value(nullptr);
+    }
 
     int64_t steps = require_i64(steps_value, "Iterator step");
-    if (steps < 0)
+    if (steps < 0) {
         return Value(nullptr);
+    }
     if (steps == 0) {
-        if (iter->cursor >= 0 && iter->cursor < iterator_length(*iter))
+        if (iter->cursor >= 0 && iter->cursor < iterator_length(*iter)) {
             return iterator_item_at(*iter, iter->cursor);
+        }
         return Value(nullptr);
     }
 
     Value result = Value(nullptr);
-    for (int64_t i = 0; i < steps; ++i)
+    for (int64_t i = 0; i < steps; ++i) {
         result = iter_next(iter);
+    }
     return result;
 }
 
 inline Value iter_prev(mem::rc_ptr<Iterator_value> iter, Value steps_value)
 {
-    if (!iter)
+    if (!iter) {
         return Value(nullptr);
+    }
 
     int64_t steps = require_i64(steps_value, "Iterator step");
-    if (steps < 0)
+    if (steps < 0) {
         return Value(nullptr);
+    }
     if (steps == 0) {
-        if (iter->cursor >= 0 && iter->cursor < iterator_length(*iter))
+        if (iter->cursor >= 0 && iter->cursor < iterator_length(*iter)) {
             return iterator_item_at(*iter, iter->cursor);
+        }
         return Value(nullptr);
     }
 
     Value result = Value(nullptr);
-    for (int64_t i = 0; i < steps; ++i)
+    for (int64_t i = 0; i < steps; ++i) {
         result = iter_prev(iter);
+    }
     return result;
 }
 
 inline bool iter_contains(mem::rc_ptr<Iterator_value> iter, Value target)
 {
-    if (!iter)
+    if (!iter) {
         return false;
+    }
 
     return std::visit(
         [&](const auto &state) -> bool {
@@ -581,33 +637,40 @@ inline bool iter_contains(mem::rc_ptr<Iterator_value> iter, Value target)
             // 1. O(1) Math check for Ranges (The secret sauce for pattern matching!)
             if constexpr (std::is_same_v<T, Iterator_value::Interval_state>) {
                 auto maybe_target = try_get_i64(target);
-                if (!maybe_target)
+                if (!maybe_target) {
                     return false;
+                }
                 int64_t val = *maybe_target;
 
-                if (state.start <= state.end)
-                    if (state.inclusive)
+                if (state.start <= state.end) {
+                    if (state.inclusive) {
                         return val >= state.start && val <= state.end;
-                    else
+                    } else {
                         return val >= state.start && val < state.end;
-                else if (state.inclusive)
+                    }
+                } else if (state.inclusive) {
                     return val <= state.start && val >= state.end;
-                else
+                } else {
                     return val <= state.start && val > state.end;
+                }
             }
             // 2. O(N) Linear scan for Arrays
             else if constexpr (std::is_same_v<T, Iterator_value::Array_state>) {
-                if (!state.array)
+                if (!state.array) {
                     return false;
-                for (const auto &elem : state.array->elements)
-                    if (core_is_same(elem, target))
+                }
+                for (const auto &elem : state.array->elements) {
+                    if (core_is_same(elem, target)) {
                         return true;
+                    }
+                }
                 return false;
             }
             // 3. Substring check for Strings
             else if constexpr (std::is_same_v<T, Iterator_value::String_state>) {
-                if (!is_string(target))
+                if (!is_string(target)) {
                     return false;
+                }
                 return state.source.find(get_string(target)) != std::string::npos;
             }
             // 4. Exact match for Singletons
@@ -628,37 +691,48 @@ inline Value make_iterator(types::Type element_type, Iterator_value::Source sour
 
 inline types::Type runtime_value_type(const Value &value)
 {
-    if (is_numeric(value))
+    if (is_numeric(value)) {
         return numeric_type_of(value);
-    if (is_float(value))
+    }
+    if (is_float(value)) {
         return numeric_type_of(value);
-    if (is_bool(value))
+    }
+    if (is_bool(value)) {
         return types::Primitive_kind::Bool;
-    if (is_string(value))
+    }
+    if (is_string(value)) {
         return types::Primitive_kind::String;
+    }
     if (is_array(value)) {
         auto array = get_array(value);
-        if (types::is_array(array->type))
+        if (types::is_array(array->type)) {
             return types::get_array_type(array->type)->element_type;
+        }
         return types::Primitive_kind::Any;
     }
-    if (is_closure(value))
+    if (is_closure(value)) {
         return types::Type(mem::make_rc<types::Function_type>(get_closure(value)->signature));
-    if (is_model(value))
+    }
+    if (is_model(value)) {
         return types::Type(mem::make_rc<types::Model_type>(get_model(value)->signature));
-    if (is_iterator(value))
+    }
+    if (is_iterator(value)) {
         return get_iterator(value)->element_type;
+    }
     return types::Primitive_kind::Any;
 }
 
 inline Value iterator_from_value(Value value)
 {
-    if (is_iterator(value))
+    if (is_iterator(value)) {
         return value;
-    if (is_nil(value))
+    }
+    if (is_nil(value)) {
         return make_iterator(types::Primitive_kind::Any, Iterator_value::Empty_state{});
-    if (is_array(value))
+    }
+    if (is_array(value)) {
         return make_iterator(runtime_value_type(value), Iterator_value::Array_state{get_array(value)});
+    }
     if (is_string(value)) {
         auto str = get_string(value);
         return make_iterator(types::Primitive_kind::String, Iterator_value::String_state{str, utf8_boundaries(str)});
@@ -687,10 +761,12 @@ inline Value deep_clone_value(const Value &value, std::unordered_map<const void 
 
 inline Value clone_iterator(mem::rc_ptr<Iterator_value> iter, std::unordered_map<const void *, Value> &seen)
 {
-    if (!iter)
+    if (!iter) {
         return Value(nullptr);
-    if (auto it = seen.find(iter.get()); it != seen.end())
+    }
+    if (auto it = seen.find(iter.get()); it != seen.end()) {
         return it->second;
+    }
 
     Iterator_value::Source source = std::visit(
         [&](const auto &state) -> Iterator_value::Source {
@@ -720,43 +796,49 @@ inline Value clone_iterator(mem::rc_ptr<Iterator_value> iter, std::unordered_map
 
 inline Value deep_clone_value(const Value &value, std::unordered_map<const void *, Value> &seen)
 {
-    if (is_nil(value) || is_bool(value) || is_numeric(value) || is_string(value) || is_closure(value))
+    if (is_nil(value) || is_bool(value) || is_numeric(value) || is_string(value) || is_closure(value)) {
         return value;
+    }
 
     if (is_array(value)) {
         auto arr = get_array(value);
-        if (auto it = seen.find(arr.get()); it != seen.end())
+        if (auto it = seen.find(arr.get()); it != seen.end()) {
             return it->second;
+        }
 
         auto cloned = mem::make_rc<Array_value>(arr->type, std::vector<Value>{});
         Value result = Value(cloned);
         seen[arr.get()] = result;
 
         cloned->elements.reserve(arr->elements.size());
-        for (const auto &elem : arr->elements)
+        for (const auto &elem : arr->elements) {
             cloned->elements.push_back(deep_clone_value(elem, seen));
+        }
         return result;
     }
 
     if (is_model(value)) {
         auto model = get_model(value);
-        if (auto it = seen.find(model.get()); it != seen.end())
+        if (auto it = seen.find(model.get()); it != seen.end()) {
             return it->second;
+        }
 
         auto cloned = mem::make_rc<Model_value>(model->signature, std::vector<Value>{});
         Value result = Value(cloned);
         seen[model.get()] = result;
 
         cloned->fields.reserve(model->fields.size());
-        for (const auto &field : model->fields)
+        for (const auto &field : model->fields) {
             cloned->fields.push_back(deep_clone_value(field, seen));
+        }
         return result;
     }
 
     if (is_union(value)) {
         auto uni = get_union(value);
-        if (auto it = seen.find(uni.get()); it != seen.end())
+        if (auto it = seen.find(uni.get()); it != seen.end()) {
             return it->second;
+        }
 
         auto cloned = mem::make_rc<Union_value>(uni->union_name, uni->variant_name, Value(nullptr));
         Value result = Value(cloned);
@@ -766,8 +848,9 @@ inline Value deep_clone_value(const Value &value, std::unordered_map<const void 
         return result;
     }
 
-    if (is_iterator(value))
+    if (is_iterator(value)) {
         return clone_iterator(get_iterator(value), seen);
+    }
 
     return value;
 }
@@ -787,8 +870,9 @@ inline Value core_clone(Value value)
 inline Value optional_get(Value value, std::string message)
 {
     // It's only truly empty if the wrapper depth is 0
-    if (value.option_depth == 0)
+    if (value.option_depth == 0) {
         optional_panic(message);
+    }
 
     // Actually peel off one layer of the optional!
     value.option_depth -= 1;
@@ -797,8 +881,9 @@ inline Value optional_get(Value value, std::string message)
 
 inline Value optional_or(Value value, Value fallback)
 {
-    if (value.option_depth == 0)
+    if (value.option_depth == 0) {
         return fallback;
+    }
 
     // Peel and return
     value.option_depth -= 1;
@@ -828,13 +913,8 @@ inline void register_core_library(Virtual_machine &vm, Type_checker &tc)
 
     // Clock
     vm.bind_native<clock_now>("clock", {}, "f64", tc);
-    vm.bind_native_sig<core_panic>("panic", {
-        {"message", "string", Value(std::string("Explicit panic."))}
-    },"void", tc);
-    vm.bind_native_sig<core_exit>("exit", {
-        {"code", "i32", Value(int64_t(0))},
-        {"message", "string", Value(std::string(""))}
-    }, "void", tc);
+    vm.bind_native_sig<core_panic>("panic", {{"message", "string", Value(std::string("Explicit panic."))}}, "void", tc);
+    vm.bind_native_sig<core_exit>("exit", {{"code", "i32", Value(int64_t(0))}, {"message", "string", Value(std::string(""))}}, "void", tc);
 
     // Core Intrinsics
     vm.bind_native<iterator_from_value>("iter", {"any"}, "any", tc);

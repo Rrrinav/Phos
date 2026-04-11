@@ -40,13 +40,15 @@ bool integral_fits(Source value)
     } else if constexpr (std::is_signed_v<Source> == std::is_signed_v<Target>) {
         return value >= std::numeric_limits<Target>::min() && value <= std::numeric_limits<Target>::max();
     } else if constexpr (std::is_signed_v<Source>) {
-        if (value < 0)
+        if (value < 0) {
             return false;
+        }
         using UnsignedSource = std::make_unsigned_t<Source>;
         return static_cast<UnsignedSource>(value) <= std::numeric_limits<Target>::max();
     } else {
-        if (value > static_cast<std::make_unsigned_t<Target>>(std::numeric_limits<Target>::max()))
+        if (value > static_cast<std::make_unsigned_t<Target>>(std::numeric_limits<Target>::max())) {
             return false;
+        }
         return true;
     }
 }
@@ -61,8 +63,9 @@ template <typename Target, typename Source>
 std::optional<Value> coerce_literal_to(Source value)
 {
     if constexpr (is_integer_cpp_v<Source> && is_integer_cpp_v<Target>) {
-        if (!integral_fits<Target>(value))
+        if (!integral_fits<Target>(value)) {
             return std::nullopt;
+        }
         return Value(static_cast<Target>(value));
     } else if constexpr (is_integer_cpp_v<Source> && is_float_cpp_v<Target>) {
         return Value(static_cast<Target>(value));
@@ -76,8 +79,9 @@ std::optional<Value> coerce_literal_to(Source value)
 template <typename Target, typename Source>
 std::optional<Value> cast_numeric_source(Source value)
 {
-    if constexpr (is_numeric_cpp_v<Source>)
+    if constexpr (is_numeric_cpp_v<Source>) {
         return numeric_cast_value<Target>(value);
+    }
     return std::nullopt;
 }
 
@@ -251,8 +255,9 @@ double get_float(const Value &val)
     return std::visit(
         [](const auto &value) -> double {
             using T = std::decay_t<decltype(value)>;
-            if constexpr (std::is_same_v<T, numeric::float16_t> || std::is_same_v<T, float> || std::is_same_v<T, double>)
+            if constexpr (std::is_same_v<T, numeric::float16_t> || std::is_same_v<T, float> || std::is_same_v<T, double>) {
                 return static_cast<double>(value);
+            }
             throw std::bad_variant_access();
         },
         val.payload);
@@ -261,24 +266,28 @@ double get_float(const Value &val)
 std::optional<std::int64_t> try_get_i64(const Value &val)
 {
     // These inherently use payload
-    if (is_signed_integer(val))
+    if (is_signed_integer(val)) {
         return get_int(val);
+    }
     if (is_unsigned_integer(val)) {
         auto u = get_uint(val);
-        if (u <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+        if (u <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
             return static_cast<std::int64_t>(u);
+        }
     }
     return std::nullopt;
 }
 
 std::optional<std::uint64_t> try_get_u64(const Value &val)
 {
-    if (is_unsigned_integer(val))
+    if (is_unsigned_integer(val)) {
         return get_uint(val);
+    }
     if (is_signed_integer(val)) {
         auto i = get_int(val);
-        if (i >= 0)
+        if (i >= 0) {
             return static_cast<std::uint64_t>(i);
+        }
     }
     return std::nullopt;
 }
@@ -312,46 +321,49 @@ types::Primitive_kind numeric_type_of(const Value &val)
     return std::visit(
         [](const auto &value) -> types::Primitive_kind {
             using T = std::decay_t<decltype(value)>;
-            if constexpr (std::is_same_v<T, std::int8_t>)
+            if constexpr (std::is_same_v<T, std::int8_t>) {
                 return types::Primitive_kind::I8;
-            else if constexpr (std::is_same_v<T, std::int16_t>)
+            } else if constexpr (std::is_same_v<T, std::int16_t>) {
                 return types::Primitive_kind::I16;
-            else if constexpr (std::is_same_v<T, std::int32_t>)
+            } else if constexpr (std::is_same_v<T, std::int32_t>) {
                 return types::Primitive_kind::I32;
-            else if constexpr (std::is_same_v<T, std::int64_t>)
+            } else if constexpr (std::is_same_v<T, std::int64_t>) {
                 return types::Primitive_kind::I64;
-            else if constexpr (std::is_same_v<T, std::uint8_t>)
+            } else if constexpr (std::is_same_v<T, std::uint8_t>) {
                 return types::Primitive_kind::U8;
-            else if constexpr (std::is_same_v<T, std::uint16_t>)
+            } else if constexpr (std::is_same_v<T, std::uint16_t>) {
                 return types::Primitive_kind::U16;
-            else if constexpr (std::is_same_v<T, std::uint32_t>)
+            } else if constexpr (std::is_same_v<T, std::uint32_t>) {
                 return types::Primitive_kind::U32;
-            else if constexpr (std::is_same_v<T, std::uint64_t>)
+            } else if constexpr (std::is_same_v<T, std::uint64_t>) {
                 return types::Primitive_kind::U64;
-            else if constexpr (std::is_same_v<T, numeric::float16_t>)
+            } else if constexpr (std::is_same_v<T, numeric::float16_t>) {
                 return types::Primitive_kind::F16;
-            else if constexpr (std::is_same_v<T, float>)
+            } else if constexpr (std::is_same_v<T, float>) {
                 return types::Primitive_kind::F32;
-            else if constexpr (std::is_same_v<T, double>)
+            } else if constexpr (std::is_same_v<T, double>) {
                 return types::Primitive_kind::F64;
-            else
+            } else {
                 return types::Primitive_kind::Any;
+            }
         },
         val.payload);
 }
 
 std::optional<Value> cast_numeric_value(const Value &val, types::Primitive_kind target_type)
 {
-    if (!is_numeric(val) || !types::is_numeric_primitive(target_type))
+    if (!is_numeric(val) || !types::is_numeric_primitive(target_type)) {
         return std::nullopt;
+    }
 
     return std::visit([&](const auto &value) -> std::optional<Value> { return cast_numeric_dispatch(value, target_type); }, val.payload);
 }
 
 std::optional<Value> coerce_numeric_literal(const Value &val, types::Primitive_kind target_type)
 {
-    if (!is_numeric(val) || !types::is_numeric_primitive(target_type))
+    if (!is_numeric(val) || !types::is_numeric_primitive(target_type)) {
         return std::nullopt;
+    }
 
     return std::visit([&](const auto &value) -> std::optional<Value> { return coerce_literal_dispatch(value, target_type); }, val.payload);
 }
@@ -359,45 +371,54 @@ std::optional<Value> coerce_numeric_literal(const Value &val, types::Primitive_k
 // --- Utility ---
 std::string value_to_string(const Value &val)
 {
-    if (is_nil(val))
+    if (is_nil(val)) {
         return "nil";
-    if (is_bool(val))
+    }
+    if (is_bool(val)) {
         return get_bool(val) ? "true" : "false";
+    }
 
-    if (is_numeric(val))
+    if (is_numeric(val)) {
         return std::visit(
             [](const auto &value) -> std::string {
                 using T = std::decay_t<decltype(value)>;
-                if constexpr (is_signed_integer_cpp_v<T> || is_unsigned_integer_cpp_v<T>)
+                if constexpr (is_signed_integer_cpp_v<T> || is_unsigned_integer_cpp_v<T>) {
                     return format_integer(value);
-                else if constexpr (is_float_cpp_v<T>)
+                } else if constexpr (is_float_cpp_v<T>) {
                     return format_float(value);
-                else
+                } else {
                     return "";
+                }
             },
             val.payload);
-    if (is_string(val))
+    }
+    if (is_string(val)) {
         return get_string(val); // No quotes internally
+    }
 
     if (is_closure(val)) {
         auto closure = get_closure(val);
         return closure->native_func ? std::format("<native fn {}>", closure->name) : std::format("<fn {}>", closure->name);
     }
-    if (is_array(val))
+    if (is_array(val)) {
         return std::format("<array len {}>", get_array(val)->elements.size());
-    if (is_model(val))
+    }
+    if (is_model(val)) {
         return std::format("<model {}>", get_model(val)->signature.name);
-    if (is_iterator(val))
+    }
+    if (is_iterator(val)) {
         // FIX: This is just a hack
-        //return std::format("<iter {}>", type_to_string(get_iterator(val)->element_type));
+        // return std::format("<iter {}>", type_to_string(get_iterator(val)->element_type));
         return "it";
+    }
 
     if (std::holds_alternative<mem::rc_ptr<Union_value>>(val.payload)) {
         auto u = std::get<mem::rc_ptr<Union_value>>(val.payload);
         return std::format("<{}::{}>", u->union_name, u->variant_name);
     }
-    if (std::holds_alternative<mem::rc_ptr<Green_thread_value>>(val.payload))
+    if (std::holds_alternative<mem::rc_ptr<Green_thread_value>>(val.payload)) {
         return "<green thread>";
+    }
 
     return "<unknown>";
 }
@@ -406,23 +427,24 @@ std::string value_to_str_debug(const Value &val)
 {
     std::string res;
 
-    if (is_nil(val))
+    if (is_nil(val)) {
         res = "nil";
-    else if (is_bool(val))
+    } else if (is_bool(val)) {
         res = get_bool(val) ? "true" : "false";
-    else if (is_numeric(val))
+    } else if (is_numeric(val)) {
         res = value_to_string(val);
-    else if (is_string(val))
+    } else if (is_string(val)) {
         res = std::format("\"{}\"", get_string(val));
-    else if (is_closure(val))
+    } else if (is_closure(val)) {
         res = value_to_string(val);
-    else if (is_array(val)) {
+    } else if (is_array(val)) {
         auto arr = get_array(val);
         res = "[";
         for (size_t i = 0; i < arr->elements.size(); ++i) {
             res += value_to_str_debug(arr->elements[i]);
-            if (i != arr->elements.size() - 1)
+            if (i != arr->elements.size() - 1) {
                 res += ", ";
+            }
         }
         res += "]";
     } else if (is_model(val)) {
@@ -430,8 +452,9 @@ std::string value_to_str_debug(const Value &val)
         res = model->signature.name + " { ";
         for (size_t i = 0; i < model->fields.size(); ++i) {
             res += value_to_str_debug(model->fields[i]);
-            if (i != model->fields.size() - 1)
+            if (i != model->fields.size() - 1) {
                 res += ", ";
+            }
         }
         res += " }";
     } else if (std::holds_alternative<mem::rc_ptr<Union_value>>(val.payload)) {
@@ -453,41 +476,55 @@ std::string value_to_str_debug(const Value &val)
 bool operator==(const Value &a, const Value &b)
 {
     // Option depth must match strictly
-    if (a.option_depth != b.option_depth)
+    if (a.option_depth != b.option_depth) {
         return false;
+    }
 
     // If they aren't even the same variant type, they are definitely not equal
-    if (a.index() != b.index())
+    if (a.index() != b.index()) {
         return false;
+    }
 
-    if (is_nil(a))
+    if (is_nil(a)) {
         return true;
-    if (is_bool(a))
+    }
+    if (is_bool(a)) {
         return get_bool(a) == get_bool(b);
-    if (is_signed_integer(a))
+    }
+    if (is_signed_integer(a)) {
         return get_int(a) == get_int(b);
-    if (is_unsigned_integer(a))
+    }
+    if (is_unsigned_integer(a)) {
         return get_uint(a) == get_uint(b);
-    if (is_float(a))
+    }
+    if (is_float(a)) {
         return get_float(a) == get_float(b);
-    if (is_string(a))
+    }
+    if (is_string(a)) {
         return get_string(a) == get_string(b);
+    }
 
     // For Reference Counted objects, we do fast pointer equality
     // (If you want deep-equality later for Arrays, you would loop through elements here)
-    if (is_closure(a))
+    if (is_closure(a)) {
         return get_closure(a) == get_closure(b);
-    if (is_array(a))
+    }
+    if (is_array(a)) {
         return get_array(a) == get_array(b);
-    if (is_model(a))
+    }
+    if (is_model(a)) {
         return get_model(a) == get_model(b);
+    }
 
-    if (std::holds_alternative<mem::rc_ptr<Union_value>>(a.payload))
+    if (std::holds_alternative<mem::rc_ptr<Union_value>>(a.payload)) {
         return std::get<mem::rc_ptr<Union_value>>(a.payload) == std::get<mem::rc_ptr<Union_value>>(b.payload);
-    if (std::holds_alternative<mem::rc_ptr<Iterator_value>>(a.payload))
+    }
+    if (std::holds_alternative<mem::rc_ptr<Iterator_value>>(a.payload)) {
         return std::get<mem::rc_ptr<Iterator_value>>(a.payload) == std::get<mem::rc_ptr<Iterator_value>>(b.payload);
-    if (std::holds_alternative<mem::rc_ptr<Green_thread_value>>(a.payload))
+    }
+    if (std::holds_alternative<mem::rc_ptr<Green_thread_value>>(a.payload)) {
         return std::get<mem::rc_ptr<Green_thread_value>>(a.payload) == std::get<mem::rc_ptr<Green_thread_value>>(b.payload);
+    }
 
     return false;
 }

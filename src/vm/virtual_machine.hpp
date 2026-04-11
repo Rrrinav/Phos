@@ -43,8 +43,9 @@ public:
     }
     std::optional<Value> get_global(const std::string &name) const
     {
-        if (auto it = globals.find(name); it != globals.end())
+        if (auto it = globals.find(name); it != globals.end()) {
             return it->second;
+        }
         return std::nullopt;
     }
 
@@ -100,8 +101,9 @@ struct extract<T>
     static T get(const Value &v)
     {
         auto casted = phos::cast_numeric_value(v, phos::primitive_kind_for_cpp_numeric_v<T>);
-        if (!casted)
+        if (!casted) {
             throw std::bad_variant_access();
+        }
         return std::get<T>(casted.value().payload);
     }
 };
@@ -217,8 +219,9 @@ Result<void> Virtual_machine::execute_binary_op(Op &&op, Call_frame *frame, uint
     Value r = pop();
     Value l = pop();
     auto res = op(l, r, get_loc(frame, ip));
-    if (!res)
+    if (!res) {
         return std::unexpected(res.error());
+    }
     push(res.value());
     return {};
 }
@@ -228,8 +231,9 @@ Result<void> Virtual_machine::execute_unary_op(Op &&op, Call_frame *frame, uint8
 {
     Value v = pop();
     auto res = op(v, get_loc(frame, ip));
-    if (!res)
+    if (!res) {
         return std::unexpected(res.error());
+    }
     push(res.value());
     return {};
 }

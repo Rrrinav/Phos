@@ -62,9 +62,18 @@ struct Iterator_value;
 struct Value
 {
     using Payload = std::variant<
-        std::int8_t, std::int16_t, std::int32_t, std::int64_t,
-        std::uint8_t, std::uint16_t, std::uint32_t, std::uint64_t,
-        numeric::float16_t, float, double, bool,
+        std::int8_t,
+        std::int16_t,
+        std::int32_t,
+        std::int64_t,
+        std::uint8_t,
+        std::uint16_t,
+        std::uint32_t,
+        std::uint64_t,
+        numeric::float16_t,
+        float,
+        double,
+        bool,
         std::string,
         mem::rc_ptr<Model_value>,
         mem::rc_ptr<Closure_value>,
@@ -72,8 +81,8 @@ struct Value
         mem::rc_ptr<Union_value>,
         mem::rc_ptr<Iterator_value>,
         mem::rc_ptr<Green_thread_value>,
-        std::nullptr_t, std::monostate
-    >;
+        std::nullptr_t,
+        std::monostate>;
 
     Payload payload;
     uint8_t option_depth = 0;
@@ -284,19 +293,18 @@ template <typename T>
 inline constexpr bool is_float_cpp_v = std::is_same_v<T, numeric::float16_t> || std::is_same_v<T, float> || std::is_same_v<T, double>;
 
 template <typename T>
-inline constexpr types::Primitive_kind primitive_kind_for_cpp_numeric_v =
-      std::is_same_v<T, std::int8_t>        ? types::Primitive_kind::I8
-    : std::is_same_v<T, std::int16_t>       ? types::Primitive_kind::I16
-    : std::is_same_v<T, std::int32_t>       ? types::Primitive_kind::I32
-    : std::is_same_v<T, std::int64_t>       ? types::Primitive_kind::I64
-    : std::is_same_v<T, std::uint8_t>       ? types::Primitive_kind::U8
-    : std::is_same_v<T, std::uint16_t>      ? types::Primitive_kind::U16
-    : std::is_same_v<T, std::uint32_t>      ? types::Primitive_kind::U32
-    : std::is_same_v<T, std::uint64_t>      ? types::Primitive_kind::U64
-    : std::is_same_v<T, numeric::float16_t> ? types::Primitive_kind::F16
-    : std::is_same_v<T, float>              ? types::Primitive_kind::F32
-    : std::is_same_v<T, double>             ? types::Primitive_kind::F64
-    : types::Primitive_kind::Any;
+inline constexpr types::Primitive_kind primitive_kind_for_cpp_numeric_v = std::is_same_v<T, std::int8_t> ? types::Primitive_kind::I8
+    : std::is_same_v<T, std::int16_t>                                                                    ? types::Primitive_kind::I16
+    : std::is_same_v<T, std::int32_t>                                                                    ? types::Primitive_kind::I32
+    : std::is_same_v<T, std::int64_t>                                                                    ? types::Primitive_kind::I64
+    : std::is_same_v<T, std::uint8_t>                                                                    ? types::Primitive_kind::U8
+    : std::is_same_v<T, std::uint16_t>                                                                   ? types::Primitive_kind::U16
+    : std::is_same_v<T, std::uint32_t>                                                                   ? types::Primitive_kind::U32
+    : std::is_same_v<T, std::uint64_t>                                                                   ? types::Primitive_kind::U64
+    : std::is_same_v<T, numeric::float16_t>                                                              ? types::Primitive_kind::F16
+    : std::is_same_v<T, float>                                                                           ? types::Primitive_kind::F32
+    : std::is_same_v<T, double>                                                                          ? types::Primitive_kind::F64
+                                                                                                         : types::Primitive_kind::Any;
 
 // Utility
 

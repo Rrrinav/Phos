@@ -37,8 +37,9 @@ class Arena
 public:
     ~Arena()
     {
-        for (auto &block : blocks_)
+        for (auto &block : blocks_) {
             delete block;
+        }
         blocks_.clear();
     }
 
@@ -58,8 +59,9 @@ public:
     Arena &operator=(Arena &&other) noexcept
     {
         if (this != &other) {
-            for (auto *b : blocks_)
+            for (auto *b : blocks_) {
                 delete b;
+            }
             blocks_ = std::move(other.blocks_);
             other.blocks_.clear();
         }
@@ -92,8 +94,9 @@ public:
 
     void reset()
     {
-        for (auto *b : blocks_)
+        for (auto *b : blocks_) {
             b->size = 0;
+        }
     }
 
     // Static method for creating objects with constructor arguments

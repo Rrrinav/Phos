@@ -34,15 +34,17 @@ const lex::Token &Parser::peek() const
 
 const lex::Token &Parser::previous() const
 {
-    if (current_ == 0)
+    if (current_ == 0) {
         return tokens_[0];
+    }
     return tokens_[current_ - 1];
 }
 
 lex::Token Parser::advance()
 {
-    if (!is_at_end())
+    if (!is_at_end()) {
         current_++;
+    }
     return previous();
 }
 
@@ -59,16 +61,18 @@ bool Parser::match(std::initializer_list<lex::TokenType> types)
 
 bool Parser::check_next(lex::TokenType type) const
 {
-    if (current_ + 1 >= tokens_.size())
+    if (current_ + 1 >= tokens_.size()) {
         return false;
+    }
     return tokens_[current_ + 1].type == type;
 }
 
 // consume -> advance if current token matches type, else return error
 Result<lex::Token> Parser::consume(lex::TokenType type, const std::string &message)
 {
-    if (check(type))
+    if (check(type)) {
         return advance();
+    }
     return std::unexpected(err::msg(message, "parser", peek().line, peek().column));
 }
 
@@ -82,8 +86,9 @@ void Parser::synchronize()
 {
     advance();
     while (!is_at_end()) {
-        if (previous().type == lex::TokenType::Semicolon)
+        if (previous().type == lex::TokenType::Semicolon) {
             return;
+        }
 
         switch (peek().type) {
         case lex::TokenType::Fn:
@@ -114,25 +119,29 @@ Result<std::vector<ast::Stmt_id>> Parser::parse()
 
     while (!is_at_end()) {
         skip_newlines();
-        if (is_at_end())
+        if (is_at_end()) {
             break;
+        }
 
         auto decl_result = declaration();
         if (!decl_result) {
-            if (!decl_result.error().message.empty())
+            if (!decl_result.error().message.empty()) {
                 std::println(stderr, "{}", decl_result.error().format());
+            }
 
             had_error = true;
             synchronize();
             continue;
         }
 
-        if (decl_result.value())
+        if (decl_result.value()) {
             statements.push_back(*decl_result.value());
+        }
     }
 
-    if (had_error)
+    if (had_error) {
         return std::unexpected(err::msg("Compilation halted due to syntax errors", "parser", 0, 0));
+    }
 
     return statements;
 }
@@ -164,12 +173,14 @@ Result<std::vector<ast::Call_argument>> Parser::parse_call_arguments()
 {
     std::vector<ast::Call_argument> arguments;
 
-    if (check(lex::TokenType::RightParen))
+    if (check(lex::TokenType::RightParen)) {
         return arguments;
+    }
 
     do {
-        if (check(lex::TokenType::RightParen))
+        if (check(lex::TokenType::RightParen)) {
             break;
+        }
 
         if (check(lex::TokenType::Identifier) && check_next(lex::TokenType::Assign)) {
             auto name = advance();
@@ -190,7 +201,8 @@ Result<std::vector<ast::Call_argument>> Parser::parse_call_arguments()
                     .name = "",
                     .value = value,
                     .loc = ast::get_loc(tree_.get(value).node),
-                });
+                }
+            );
         }
     } while (match({lex::TokenType::Comma}));
 
@@ -201,23 +213,29 @@ Result<std::vector<ast::Call_argument>> Parser::parse_call_arguments()
 Result<std::optional<ast::Stmt_id>> Parser::declaration()
 {
     skip_newlines();
-    if (is_at_end())
+    if (is_at_end()) {
         return std::optional<ast::Stmt_id>{std::nullopt};
+    }
 
-    if (match({lex::TokenType::Fn}))
+    if (match({lex::TokenType::Fn})) {
         return std::optional<ast::Stmt_id>{__Try(function_declaration())};
-    if (match({lex::TokenType::Model}))
+    }
+    if (match({lex::TokenType::Model})) {
         return std::optional<ast::Stmt_id>{__Try(model_declaration())};
+    }
     if (match({lex::TokenType::Bind})) {
         __Try(parse_bind_statement());
         return std::optional<ast::Stmt_id>{std::nullopt};
     }
-    if (match({lex::TokenType::Union}))
+    if (match({lex::TokenType::Union})) {
         return std::optional<ast::Stmt_id>{__Try(union_declaration())};
-    if (match({lex::TokenType::Enum}))
+    }
+    if (match({lex::TokenType::Enum})) {
         return std::optional<ast::Stmt_id>{__Try(enum_declaration())};
-    if (match({lex::TokenType::Let}))
+    }
+    if (match({lex::TokenType::Let})) {
         return std::optional<ast::Stmt_id>{__Try(var_declaration())};
+    }
 
     return std::optional<ast::Stmt_id>{__Try(statement())};
 }
@@ -231,8 +249,9 @@ Result<ast::Stmt_id> Parser::function_declaration()
     std::vector<ast::Function_param> parameters;
     if (!check(lex::TokenType::RightParen)) {
         do {
-            if (check(lex::TokenType::RightParen))
+            if (check(lex::TokenType::RightParen)) {
                 break;
+            }
             parameters.push_back(__Try(parse_function_parameter(true)));
         } while (match({lex::TokenType::Comma}));
     }
@@ -274,8 +293,9 @@ Result<ast::Stmt_id> Parser::model_declaration()
 
     while (!check(lex::TokenType::RightBrace) && !is_at_end()) {
         skip_newlines();
-        if (check(lex::TokenType::RightBrace))
+        if (check(lex::TokenType::RightBrace)) {
             break;
+        }
 
         fields.push_back(__Try(parse_model_field()));
         skip_newlines();
@@ -315,8 +335,9 @@ Result<ast::Stmt_id> Parser::parse_bind_statement()
 
     while (!check(lex::TokenType::RightBrace) && !is_at_end()) {
         skip_newlines();
-        if (check(lex::TokenType::RightBrace))
+        if (check(lex::TokenType::RightBrace)) {
             break;
+        }
 
         auto method_ast = __Try(parse_model_method());
         ast::Stmt_id method_id = tree_.add_stmt(ast::Stmt{method_ast});
@@ -343,8 +364,9 @@ Result<ast::Stmt_id> Parser::union_declaration()
     std::vector<ast::Typed_member_decl> variants;
     while (!check(lex::TokenType::RightBrace) && !is_at_end()) {
         skip_newlines();
-        if (check(lex::TokenType::RightBrace))
+        if (check(lex::TokenType::RightBrace)) {
             break;
+        }
 
         auto variant_name = __Try(consume(lex::TokenType::Identifier, "Expect variant name"));
         __TryIgnore(consume(lex::TokenType::Colon, "Expect ':' after variant name for type"));
@@ -399,8 +421,9 @@ Result<ast::Stmt_id> Parser::enum_declaration()
     std::vector<std::pair<std::string, std::optional<Value>>> variants;
     while (!check(lex::TokenType::RightBrace) && !is_at_end()) {
         skip_newlines();
-        if (check(lex::TokenType::RightBrace))
+        if (check(lex::TokenType::RightBrace)) {
             break;
+        }
 
         auto variant_name = __Try(consume(lex::TokenType::Identifier, "Expect enum variant name"));
         std::optional<Value> value = std::nullopt;
@@ -474,8 +497,9 @@ Result<ast::Function_stmt> Parser::parse_model_method()
     std::vector<ast::Function_param> parameters;
     if (!check(lex::TokenType::RightParen)) {
         do {
-            if (check(lex::TokenType::RightParen))
+            if (check(lex::TokenType::RightParen)) {
                 break;
+            }
             parameters.push_back(__Try(parse_function_parameter(true)));
         } while (match({lex::TokenType::Comma}));
     }
@@ -520,8 +544,9 @@ Result<ast::Stmt_id> Parser::var_declaration()
         } else {
             // let x: T = expr  -- explicit type, optional initializer
             var_type = __Try(parse_type());
-            if (match({lex::TokenType::Assign}))
+            if (match({lex::TokenType::Assign})) {
                 initializer = __Try(expression());
+            }
         }
     } else {
         return std::unexpected(create_error(peek(), "Expect ':' or ':=' after variable name"));
@@ -550,29 +575,38 @@ Result<ast::Stmt_id> Parser::var_declaration()
 Result<ast::Stmt_id> Parser::statement()
 {
     skip_newlines();
-    if (is_at_end())
+    if (is_at_end()) {
         return std::unexpected(create_error(peek(), "Unexpected end of file"));
+    }
 
-    if (match({lex::TokenType::Print}))
+    if (match({lex::TokenType::Print})) {
         return print_statement(ast::Print_stream::STDOUT);
-    if (match({lex::TokenType::PrintErr}))
+    }
+    if (match({lex::TokenType::PrintErr})) {
         return print_statement(ast::Print_stream::STDERR);
-    if (match({lex::TokenType::LeftBrace}))
+    }
+    if (match({lex::TokenType::LeftBrace})) {
         return block_statement();
-    if (match({lex::TokenType::If}))
+    }
+    if (match({lex::TokenType::If})) {
         return if_statement();
-    if (match({lex::TokenType::While}))
+    }
+    if (match({lex::TokenType::While})) {
         return while_statement();
-    if (match({lex::TokenType::Match}))
+    }
+    if (match({lex::TokenType::Match})) {
         return match_statement();
-    if (match({lex::TokenType::Return}))
+    }
+    if (match({lex::TokenType::Return})) {
         return return_statement();
+    }
 
     if (match({lex::TokenType::For})) {
         // "for" "(" ...  ->  C-style for loop
         // "for" IDENT "in" ...  ->  for-in loop
-        if (check(lex::TokenType::LeftParen))
+        if (check(lex::TokenType::LeftParen)) {
             return for_statement();
+        }
         return for_in_statement();
     }
 
@@ -606,8 +640,9 @@ Result<ast::Stmt_id> Parser::print_statement(ast::Print_stream stream)
 
     do {
         // Allow trailing comma: "print(a, b,)"
-        if (check(lex::TokenType::RightParen))
+        if (check(lex::TokenType::RightParen)) {
             break;
+        }
 
         // Peek for named args: sep= or end=
         if (check(lex::TokenType::Identifier) && check_next(lex::TokenType::Assign)) {
@@ -620,23 +655,27 @@ Result<ast::Stmt_id> Parser::print_statement(ast::Print_stream stream)
                 auto val_result = __Try(expression());
 
                 auto *lit = std::get_if<ast::Literal_expr>(&tree_.get(val_result).node);
-                if (!lit || !std::holds_alternative<std::string>(lit->value.payload))
+                if (!lit || !std::holds_alternative<std::string>(lit->value.payload)) {
                     return std::unexpected(create_error(previous(), "'sep' and 'end' must be string literals"));
+                }
 
-                if (name == "sep")
+                if (name == "sep") {
                     sep = std::get<std::string>(lit->value.payload);
-                else
+                } else {
                     end = std::get<std::string>(lit->value.payload);
+                }
             } else {
-                if (seen_named)
+                if (seen_named) {
                     return std::unexpected(create_error(peek(), "Positional arguments cannot appear after named arguments in print()"));
+                }
 
                 auto expr_result = __Try(expression());
                 expressions.push_back(expr_result);
             }
         } else {
-            if (seen_named)
+            if (seen_named) {
                 return std::unexpected(create_error(peek(), "Positional arguments cannot appear after named arguments in print()"));
+            }
 
             auto expr_result = __Try(expression());
             expressions.push_back(expr_result);
@@ -665,10 +704,12 @@ Result<ast::Stmt_id> Parser::block_statement()
 
     while (!check(lex::TokenType::RightBrace) && !is_at_end()) {
         auto stmt_result = declaration();
-        if (!stmt_result)
+        if (!stmt_result) {
             return std::unexpected(stmt_result.error());
-        if (stmt_result.value())
+        }
+        if (stmt_result.value()) {
             statements.push_back(*stmt_result.value());
+        }
     }
 
     __TryIgnore(consume(lex::TokenType::RightBrace, "Expect '}' after block"));
@@ -739,20 +780,21 @@ Result<ast::Stmt_id> Parser::for_statement()
         initializer = __TryOr(expression_statement(), ast::Stmt_id::null());
     }
 
-    if (!check(lex::TokenType::Semicolon))
+    if (!check(lex::TokenType::Semicolon)) {
         condition = __TryOr(expression(), ast::Expr_id::null());
+    }
     __TryIgnore(consume(lex::TokenType::Semicolon, "Expect ';' after loop condition"));
 
-    if (!check(lex::TokenType::RightParen))
+    if (!check(lex::TokenType::RightParen)) {
         increment = __TryOr(expression(), ast::Expr_id::null());
+    }
     __TryIgnore(consume(lex::TokenType::RightParen, "Expect ')' after for clauses"));
 
     // FORCE BLOCK HERE
     __TryIgnore(consume(lex::TokenType::LeftBrace, "Expect '{' after for clauses"));
     auto body = __Try(block_statement());
 
-    return tree_.add_stmt(
-        ast::Stmt{ast::For_stmt{initializer, condition, increment, body, {previous().line, previous().column}}});
+    return tree_.add_stmt(ast::Stmt{ast::For_stmt{initializer, condition, increment, body, {previous().line, previous().column}}});
 }
 
 // for_in_stmt
@@ -788,8 +830,9 @@ Result<ast::Stmt_id> Parser::match_statement()
     std::vector<ast::Match_arm> arms;
     while (!check(lex::TokenType::RightBrace) && !is_at_end()) {
         skip_newlines();
-        if (check(lex::TokenType::RightBrace))
+        if (check(lex::TokenType::RightBrace)) {
             break;
+        }
 
         ast::Match_arm arm;
 
@@ -807,13 +850,15 @@ Result<ast::Stmt_id> Parser::match_statement()
                 arm.pattern = call_node->callee;
 
                 // 2. Validate and extract the payload binding name
-                if (call_node->arguments.size() != 1)
+                if (call_node->arguments.size() != 1) {
                     return std::unexpected(err::msg("Match union payloads can only bind exactly one variable", "parser", loc.l, loc.c));
+                }
 
-                if (auto *var_node = std::get_if<ast::Variable_expr>(&tree_.get(call_node->arguments[0].value).node))
+                if (auto *var_node = std::get_if<ast::Variable_expr>(&tree_.get(call_node->arguments[0].value).node)) {
                     arm.bind_name = var_node->name;
-                else
+                } else {
                     return std::unexpected(err::msg("Match binding payload must be a simple identifier", "parser", loc.l, loc.c));
+                }
             }
         }
 
@@ -844,8 +889,9 @@ Result<ast::Stmt_id> Parser::return_statement()
     size_t column = previous().column;
 
     ast::Expr_id value = ast::Expr_id::null();
-    if (!check(lex::TokenType::Semicolon))
+    if (!check(lex::TokenType::Semicolon)) {
         value = __TryOr(expression(), ast::Expr_id::null());
+    }
 
     __TryIgnore(consume(lex::TokenType::Semicolon, "Expect ';' after return value"));
 
@@ -856,12 +902,14 @@ Result<ast::Stmt_id> Parser::return_statement()
 Result<ast::Stmt_id> Parser::expression_statement()
 {
     auto expr_result = expression();
-    if (!expr_result)
+    if (!expr_result) {
         return std::unexpected(expr_result.error());
+    }
 
     auto semicolon_result = consume(lex::TokenType::Semicolon, "Expect ';' after expression");
-    if (!semicolon_result)
+    if (!semicolon_result) {
         return std::unexpected(semicolon_result.error());
+    }
 
     return tree_.add_stmt(ast::Stmt{ast::Expr_stmt{expr_result.value(), {previous().line, previous().column}}});
 }
@@ -892,28 +940,25 @@ Result<ast::Expr_id> Parser::assignment()
 
         if (auto *var_expr = std::get_if<ast::Variable_expr>(&expr_ref.node)) {
             return tree_.add_expr(
-                ast::Expr{ast::Assignment_expr{var_expr->name, value_result, var_expr->type, {equals.line, equals.column}}}
-            );
+                ast::Expr{ast::Assignment_expr{var_expr->name, value_result, var_expr->type, {equals.line, equals.column}}});
         } else if (auto *field_access_expr = std::get_if<ast::Field_access_expr>(&expr_ref.node)) {
             return tree_.add_expr(
                 ast::Expr{ast::Field_assignment_expr{
                     .object = field_access_expr->object,
                     .field_name = field_access_expr->field_name,
                     .value = value_result,
-                    .type = type_table_.get_void(),
+                    .type = type_table_.get_unknown(),
                     .loc = {equals.line, equals.column},
-                }}
-            );
+                }});
         } else if (auto *array_access_expr = std::get_if<ast::Array_access_expr>(&expr_ref.node)) {
             return tree_.add_expr(
                 ast::Expr{ast::Array_assignment_expr{
                     .array = array_access_expr->array,
                     .index = array_access_expr->index,
                     .value = value_result,
-                    .type = type_table_.get_void(),
+                    .type = type_table_.get_unknown(),
                     .loc = {equals.line, equals.column},
-                }}
-            );
+                }});
         }
 
         return std::unexpected(create_error(equals, "Invalid assignment target"));
@@ -936,7 +981,7 @@ Result<ast::Expr_id> Parser::range_expr()
                 .start = expr,
                 .end = end_expr,
                 .inclusive = inclusive,
-                .type = type_table_.get_void(),
+                .type = type_table_.get_unknown(),
                 .loc = {op.line, op.column},
             }});
     }
@@ -1037,7 +1082,7 @@ Result<ast::Expr_id> Parser::bitwise_and()
                 .left = expr,
                 .op = op.type,
                 .right = right,
-                .type = type_table_.get_void(),
+                .type = type_table_.get_unknown(),
                 .loc = {op.line, op.column},
             }});
     }
@@ -1097,7 +1142,7 @@ Result<ast::Expr_id> Parser::bitwise_shift()
                 .left = expr,
                 .op = op.type,
                 .right = right,
-                .type = type_table_.get_void(),
+                .type = type_table_.get_unknown(),
                 .loc = {op.line, op.column},
             }});
     }
@@ -1117,7 +1162,7 @@ Result<ast::Expr_id> Parser::term()
                 .left = expr,
                 .op = op.type,
                 .right = right,
-                .type = type_table_.get_void(),
+                .type = type_table_.get_unknown(),
                 .loc = {op.line, op.column},
             }});
     }
@@ -1137,7 +1182,7 @@ Result<ast::Expr_id> Parser::factor()
                 .left = expr,
                 .op = op.type,
                 .right = right,
-                .type = type_table_.get_void(),
+                .type = type_table_.get_unknown(),
                 .loc = {op.line, op.column},
             }});
     }
@@ -1172,7 +1217,7 @@ Result<ast::Expr_id> Parser::unary()
             ast::Expr{ast::Unary_expr{
                 .op = op.type,
                 .right = right,
-                .type = type_table_.get_void(),
+                .type = type_table_.get_unknown(),
                 .loc = {op.line, op.column},
             }});
     }
@@ -1190,11 +1235,7 @@ Result<ast::Expr_id> Parser::call()
             auto paren = __Try(consume(lex::TokenType::RightParen, "Expect ')' after arguments"));
 
             expr = tree_.add_expr(
-                ast::Expr{ast::Call_expr{
-                    expr,
-                    arguments,
-                    type_table_.get_void(),
-                    ast::Source_location{paren.line, paren.column}}});
+                ast::Expr{ast::Call_expr{expr, arguments, type_table_.get_unknown(), ast::Source_location{paren.line, paren.column}}});
 
         } else if (match({lex::TokenType::LeftBracket})) {
             auto index_result = __Try(expression());
@@ -1204,7 +1245,7 @@ Result<ast::Expr_id> Parser::call()
                 ast::Expr{ast::Array_access_expr{
                     expr,
                     index_result,
-                    type_table_.get_void(),
+                    type_table_.get_unknown(),
                     ast::Source_location{right_bracket_result.line, right_bracket_result.column}}});
 
         } else if (match({lex::TokenType::Dot})) {
@@ -1219,14 +1260,14 @@ Result<ast::Expr_id> Parser::call()
                         expr,
                         name_result.lexeme,
                         arguments,
-                        type_table_.get_void(),
+                        type_table_.get_unknown(),
                         ast::Source_location{name_result.line, name_result.column}}});
             } else {
                 expr = tree_.add_expr(
                     ast::Expr{ast::Field_access_expr{
                         expr,
                         name_result.lexeme,
-                        type_table_.get_void(),
+                        type_table_.get_unknown(),
                         ast::Source_location{name_result.line, name_result.column}}});
             }
         } else {
@@ -1244,8 +1285,9 @@ Result<ast::Expr_id> Parser::call()
 //          | "(" expr ")"
 Result<ast::Expr_id> Parser::primary()
 {
-    if (peek().type == lex::TokenType::Print)
+    if (peek().type == lex::TokenType::Print) {
         return std::unexpected(create_error(peek(), "print is a statement, not an expression. Did you forget a semicolon?"));
+    }
 
     // implicit enum member expression or anonymous model literal
     if (match({lex::TokenType::Dot})) {
@@ -1256,8 +1298,9 @@ Result<ast::Expr_id> Parser::primary()
 
             if (!check(lex::TokenType::RightBrace)) {
                 do {
-                    if (check(lex::TokenType::RightBrace))
+                    if (check(lex::TokenType::RightBrace)) {
                         break; // handle trailing comma gracefully
+                    }
 
                     std::string field_name;
                     if (check(lex::TokenType::Identifier) && check_next(lex::TokenType::Colon)) {
@@ -1275,7 +1318,7 @@ Result<ast::Expr_id> Parser::primary()
             return tree_.add_expr(
                 ast::Expr{ast::Anon_model_literal_expr{
                     .fields = std::move(fields),
-                    .type = type_table_.get_void(),
+                    .type = type_table_.get_unknown(),
                     .loc = loc,
                 }});
         }
@@ -1285,7 +1328,7 @@ Result<ast::Expr_id> Parser::primary()
             ast::Expr{ast::Enum_member_expr{
                 .member_name = member.lexeme,
                 .loc = loc,
-                .type = type_table_.get_void(),
+                .type = type_table_.get_unknown(),
             }});
     }
 
@@ -1297,7 +1340,7 @@ Result<ast::Expr_id> Parser::primary()
         return tree_.add_expr(
             ast::Expr{ast::Spawn_expr{
                 .call = call_expr,
-                .type = type_table_.get_void(),
+                .type = type_table_.get_unknown(),
                 .loc = loc,
             }});
     }
@@ -1308,7 +1351,7 @@ Result<ast::Expr_id> Parser::primary()
         return tree_.add_expr(
             ast::Expr{ast::Await_expr{
                 .thread = thread,
-                .type = type_table_.get_void(),
+                .type = type_table_.get_unknown(),
                 .loc = loc,
             }});
     }
@@ -1316,41 +1359,46 @@ Result<ast::Expr_id> Parser::primary()
     if (match({lex::TokenType::Yield})) {
         ast::Source_location loc{previous().line, previous().column};
         ast::Expr_id value = ast::Expr_id::null();
-        if (!check(lex::TokenType::Semicolon) && !check(lex::TokenType::RightBrace))
+        if (!check(lex::TokenType::Semicolon) && !check(lex::TokenType::RightBrace)) {
             value = __Try(expression());
+        }
 
         return tree_.add_expr(
             ast::Expr{ast::Yield_expr{
                 .value = value,
-                .type = type_table_.get_void(),
+                .type = type_table_.get_unknown(),
                 .loc = loc,
             }});
     }
 
     // this
     if (match({lex::TokenType::This})) {
-        if (current_model_.empty())
+        if (current_model_.empty()) {
             return std::unexpected(create_error(previous(), "Cannot use 'this' outside of a model method"));
+        }
 
         return tree_.add_expr(
             ast::Expr{ast::Variable_expr{
                 .name = "this",
-                .type = type_table_.get_void(),
+                .type = type_table_.get_unknown(),
                 .loc = {previous().line, previous().column},
             }});
     }
 
     // closure
-    if (peek().type == lex::TokenType::Pipe || peek().type == lex::TokenType::LogicalOr)
+    if (peek().type == lex::TokenType::Pipe || peek().type == lex::TokenType::LogicalOr) {
         return parse_closure_expression();
+    }
 
     // array literal
-    if (match({lex::TokenType::LeftBracket}))
+    if (match({lex::TokenType::LeftBracket})) {
         return parse_array_literal();
+    }
 
     // f-string
-    if (match({lex::TokenType::Fstring}))
+    if (match({lex::TokenType::Fstring})) {
         return parse_fstring(previous());
+    }
 
     // primitives
     if (match({lex::TokenType::Nil})) {
@@ -1419,13 +1467,12 @@ Result<ast::Expr_id> Parser::primary()
         if (match({lex::TokenType::ColonColon})) {
             // Type::Member  or  Union::Variant or Enum::Variant
             auto member = __Try(consume(lex::TokenType::Identifier, "Expect member name after '::'"));
-            auto base_var_expr = tree_.add_expr(
-                ast::Expr{ast::Variable_expr{id.lexeme, type_table_.get_void(), {id.line, id.column}}});
+            auto base_var_expr = tree_.add_expr(ast::Expr{ast::Variable_expr{id.lexeme, type_table_.get_unknown(), {id.line, id.column}}});
             return tree_.add_expr(
                 ast::Expr{ast::Static_path_expr{
                     .base = base_var_expr,
                     .member = member,
-                    .type = type_table_.get_void(),
+                    .type = type_table_.get_unknown(),
                     .loc = {member.line, member.column},
                 }});
         }
@@ -1459,7 +1506,7 @@ Result<ast::Expr_id> Parser::primary()
         return tree_.add_expr(
             ast::Expr{ast::Variable_expr{
                 .name = id.lexeme,
-                .type = type_table_.get_void(),
+                .type = type_table_.get_unknown(),
                 .loc = {id.line, id.column},
             }});
     }
@@ -1493,8 +1540,9 @@ Result<ast::Expr_id> Parser::parse_closure_expression()
     } else if (match({lex::TokenType::Pipe})) {
         if (!check(lex::TokenType::Pipe)) {
             do {
-                if (check(lex::TokenType::Pipe))
+                if (check(lex::TokenType::Pipe)) {
                     break;
+                }
                 parameters.push_back(__Try(parse_function_parameter(false)));
             } while (match({lex::TokenType::Comma}));
         }
@@ -1538,8 +1586,9 @@ Result<ast::Expr_id> Parser::parse_array_literal()
     std::vector<ast::Expr_id> elements;
     if (!check(lex::TokenType::RightBracket)) {
         do {
-            if (check(lex::TokenType::RightBracket))
+            if (check(lex::TokenType::RightBracket)) {
                 break;
+            }
             elements.push_back(__Try(expression()));
         } while (match({lex::TokenType::Comma}));
     }
@@ -1549,7 +1598,7 @@ Result<ast::Expr_id> Parser::parse_array_literal()
     return tree_.add_expr(
         ast::Expr{ast::Array_literal_expr{
             .elements = elements,
-            .type = type_table_.get_void(),
+            .type = type_table_.get_unknown(),
             .loc = {line, column},
         }});
 }
@@ -1562,8 +1611,9 @@ Result<ast::Expr_id> Parser::parse_model_literal(const std::string &model_name)
     std::vector<std::pair<std::string, ast::Expr_id>> fields;
     if (!check(lex::TokenType::RightBrace)) {
         do {
-            if (check(lex::TokenType::RightBrace))
+            if (check(lex::TokenType::RightBrace)) {
                 break; // trailing comma support
+            }
 
             std::string field_name;
             if (check(lex::TokenType::Identifier) && check_next(lex::TokenType::Colon)) {
@@ -1582,7 +1632,7 @@ Result<ast::Expr_id> Parser::parse_model_literal(const std::string &model_name)
         ast::Expr{ast::Model_literal_expr{
             .model_name = model_name,
             .fields = fields,
-            .type = type_table_.get_void(),
+            .type = type_table_.get_unknown(),
             .loc = {brace.line, brace.column},
         }});
 }
@@ -1608,12 +1658,14 @@ Result<ast::Expr_id> Parser::parse_fstring(const lex::Token &tok)
             size_t start = ++i;
             int depth = 1;
             while (i < raw.size() && depth > 0) {
-                if (raw[i] == '{')
+                if (raw[i] == '{') {
                     depth++;
-                else if (raw[i] == '}')
+                } else if (raw[i] == '}') {
                     depth--;
-                if (depth > 0)
+                }
+                if (depth > 0) {
                     i++;
+                }
             }
             std::string inner = raw.substr(start, i - start);
             i++; // Skip the closing '}'
@@ -1629,12 +1681,14 @@ Result<ast::Expr_id> Parser::parse_fstring(const lex::Token &tok)
             inner_parser.parsed_models = parsed_models;
 
             auto inner_expr = inner_parser.expression();
-            if (!inner_expr)
+            if (!inner_expr) {
                 return std::unexpected(create_error(tok, "Invalid expression in f-string: " + inner));
+            }
 
             inner_parser.skip_newlines();
-            if (!inner_parser.is_at_end())
+            if (!inner_parser.is_at_end()) {
                 return std::unexpected(create_error(tok, "Unexpected trailing tokens in f-string expression: " + inner));
+            }
 
             interpolations.push_back(*inner_expr);
         } else if (raw[i] == '}') {
@@ -1690,8 +1744,9 @@ Result<types::Type_id> Parser::parse_type()
         } else if (match({lex::TokenType::Pipe})) {
             if (!check(lex::TokenType::Pipe)) {
                 do {
-                    if (check(lex::TokenType::Pipe))
+                    if (check(lex::TokenType::Pipe)) {
                         break;
+                    }
                     params.push_back(__Try(parse_type()));
                 } while (match({lex::TokenType::Comma}));
             }
@@ -1704,22 +1759,37 @@ Result<types::Type_id> Parser::parse_type()
         current = type_table_.function(params, ret);
     }
     // Primitives
-    else if (match({lex::TokenType::TInt64}))   current = type_table_.get_i64();
-    else if (match({lex::TokenType::TInt32}))   current = type_table_.get_i32();
-    else if (match({lex::TokenType::TInt16}))   current = type_table_.get_i16();
-    else if (match({lex::TokenType::TInt8}))    current = type_table_.get_i8();
-    else if (match({lex::TokenType::TUInt64}))  current = type_table_.get_u64();
-    else if (match({lex::TokenType::TUInt32}))  current = type_table_.get_u32();
-    else if (match({lex::TokenType::TUInt16}))  current = type_table_.get_u16();
-    else if (match({lex::TokenType::TUInt8}))   current = type_table_.get_u8();
-    else if (match({lex::TokenType::TFloat64})) current = type_table_.get_f64();
-    else if (match({lex::TokenType::TFloat32})) current = type_table_.get_f32();
-    else if (match({lex::TokenType::TFloat16})) current = type_table_.get_f16();
-    else if (match({lex::TokenType::TBool}))    current = type_table_.get_bool();
-    else if (match({lex::TokenType::TString}))  current = type_table_.get_string();
-    else if (match({lex::TokenType::TVoid}))    current = type_table_.get_void();
-    else if (match({lex::TokenType::TAny}))     current = type_table_.get_any();
-    else if (match({lex::TokenType::Model})) {
+    else if (match({lex::TokenType::TInt64})) {
+        current = type_table_.get_i64();
+    } else if (match({lex::TokenType::TInt32})) {
+        current = type_table_.get_i32();
+    } else if (match({lex::TokenType::TInt16})) {
+        current = type_table_.get_i16();
+    } else if (match({lex::TokenType::TInt8})) {
+        current = type_table_.get_i8();
+    } else if (match({lex::TokenType::TUInt64})) {
+        current = type_table_.get_u64();
+    } else if (match({lex::TokenType::TUInt32})) {
+        current = type_table_.get_u32();
+    } else if (match({lex::TokenType::TUInt16})) {
+        current = type_table_.get_u16();
+    } else if (match({lex::TokenType::TUInt8})) {
+        current = type_table_.get_u8();
+    } else if (match({lex::TokenType::TFloat64})) {
+        current = type_table_.get_f64();
+    } else if (match({lex::TokenType::TFloat32})) {
+        current = type_table_.get_f32();
+    } else if (match({lex::TokenType::TFloat16})) {
+        current = type_table_.get_f16();
+    } else if (match({lex::TokenType::TBool})) {
+        current = type_table_.get_bool();
+    } else if (match({lex::TokenType::TString})) {
+        current = type_table_.get_string();
+    } else if (match({lex::TokenType::TVoid})) {
+        current = type_table_.get_void();
+    } else if (match({lex::TokenType::TAny})) {
+        current = type_table_.get_any();
+    } else if (match({lex::TokenType::Model})) {
 
         std::vector<std::pair<std::string, Type_id>> fields;
 
@@ -1732,15 +1802,18 @@ Result<types::Type_id> Parser::parse_type()
             auto ty = __Try(parse_type());
             fields.push_back({name.lexeme, ty});
 
-            if (check(lex::TokenType::Semicolon) || check(lex::TokenType::Comma))
+            if (check(lex::TokenType::Semicolon) || check(lex::TokenType::Comma)) {
                 advance();
+            }
         }
 
         __TryIgnore(consume(lex::TokenType::RightBrace, "Expect '}'"));
         current = type_table_.model("", fields); // anonymous
-    }
-    else if (match({lex::TokenType::Identifier})) {
+    } else if (match({lex::TokenType::Identifier})) {
         std::string name = previous().lexeme;
+        if (name == "any") {
+            return std::unexpected(create_error(peek(), "Expected a type, 'any' is not one."));
+        }
         // The parser doesn't attempt to resolve if this is a Model, Union, or Enum!
         // It simply creates an Unresolved_type placeholder. The Type Checker maps it later.
         current = type_table_.unresolved(name);

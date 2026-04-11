@@ -65,17 +65,17 @@ std::string Assembler::serialize(mem::rc_ptr<Closure_value> main_closure)
         for (size_t j = 0; j < chunk->constants.size(); ++j) {
             const auto &val = chunk->constants[j];
             ss << "      @" << j << " = ";
-            if (is_signed_integer(val))
+            if (is_signed_integer(val)) {
                 ss << "int " << get_int(val) << "\n";
-            else if (is_unsigned_integer(val))
+            } else if (is_unsigned_integer(val)) {
                 ss << "uint " << get_uint(val) << "\n";
-            else if (is_float(val))
+            } else if (is_float(val)) {
                 ss << "float " << get_float(val) << "\n";
-            else if (is_bool(val))
+            } else if (is_bool(val)) {
                 ss << "bool " << (get_bool(val) ? "true" : "false") << "\n";
-            else if (is_string(val))
+            } else if (is_string(val)) {
                 ss << "string \"" << get_string(val) << "\"\n";
-            else if (is_closure(val)) {
+            } else if (is_closure(val)) {
                 auto child = get_closure(val);
                 if (!closure_ids.count(child.get())) {
                     closure_ids[child.get()] = closures.size();
@@ -93,8 +93,9 @@ std::string Assembler::serialize(mem::rc_ptr<Closure_value> main_closure)
             if (op == Op_code::Jump || op == Op_code::Jump_if_false || op == Op_code::Jump_if_true || op == Op_code::Loop) {
                 uint16_t jump = static_cast<uint16_t>(chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
                 size_t target = (op == Op_code::Loop) ? (offset + 3 - jump) : (offset + 3 + jump);
-                if (!labels.count(target))
+                if (!labels.count(target)) {
                     labels[target] = ".L" + std::to_string(label_counter++);
+                }
                 offset += 3;
             } else if (
                 op == Op_code::Constant || op == Op_code::Define_global || op == Op_code::Get_global || op == Op_code::Set_global
@@ -116,8 +117,9 @@ std::string Assembler::serialize(mem::rc_ptr<Closure_value> main_closure)
         // MAIN PASS: Generate Code
         ss << "\n  .code:\n";
         for (size_t offset = 0; offset < chunk->code.size();) {
-            if (labels.count(offset))
+            if (labels.count(offset)) {
                 ss << "    " << labels[offset] << ":\n";
+            }
 
             Op_code op = static_cast<Op_code>(chunk->code[offset]);
             std::string mnemonic = mnemonics[op];
@@ -197,18 +199,20 @@ std::string Assembler::serialize(mem::rc_ptr<Closure_value> main_closure)
             }
 
             // Zero-Cost Formatting (No trailing whitespaces on 1-byte instructions)
-            if (comment.empty() && args.empty())
+            if (comment.empty() && args.empty()) {
                 ss << "      " << mnemonic << "\n";
-            else if (comment.empty())
+            } else if (comment.empty()) {
                 ss << std::format("      {:<20} {}\n", mnemonic, args);
-            else if (args.empty())
+            } else if (args.empty()) {
                 ss << std::format("      {:<36} ; {}\n", mnemonic, comment);
-            else
+            } else {
                 ss << std::format("      {:<20} {:<15} ; {}\n", mnemonic, args, comment);
+            }
         }
 
-        if (labels.count(chunk->code.size()))
+        if (labels.count(chunk->code.size())) {
             ss << "    " << labels[chunk->code.size()] << ":\n";
+        }
         ss << ".endfn\n\n";
     }
     return ss.str();
@@ -260,8 +264,9 @@ mem::rc_ptr<Closure_value> Assembler::assemble(const std::string &ir_source)
     ss.seekg(0);
     while (std::getline(ss, line)) {
         line.erase(0, line.find_first_not_of(" \t"));
-        if (line.empty() || line[0] == ';')
+        if (line.empty() || line[0] == ';') {
             continue;
+        }
 
         std::stringstream ls(line);
         std::string tok;
@@ -272,11 +277,11 @@ mem::rc_ptr<Closure_value> Assembler::assemble(const std::string &ir_source)
             ls >> id;
             current_closure = closures[id];
             in_code = false;
-        } else if (tok == ".constants:")
+        } else if (tok == ".constants:") {
             continue;
-        else if (tok == ".code:")
+        } else if (tok == ".code:") {
             in_code = true;
-        else if (tok == ".endfn") {
+        } else if (tok == ".endfn") {
             // Resolve all Jumps for this closure perfectly!
             for (const auto &jump : current_jumps) {
                 if (!current_labels.count(jump.label)) {
@@ -285,10 +290,11 @@ mem::rc_ptr<Closure_value> Assembler::assemble(const std::string &ir_source)
                 }
                 size_t target = current_labels[jump.label];
                 size_t distance;
-                if (jump.is_loop)
+                if (jump.is_loop) {
                     distance = (jump.instruction_offset + 3) - target;
-                else
+                } else {
                     distance = target - (jump.instruction_offset + 3);
+                }
 
                 current_closure->chunk->code[jump.patch_offset] = (distance >> 8) & 0xff;
                 current_closure->chunk->code[jump.patch_offset + 1] = distance & 0xff;
@@ -302,17 +308,17 @@ mem::rc_ptr<Closure_value> Assembler::assemble(const std::string &ir_source)
             std::getline(ls, val);
             val.erase(0, val.find_first_not_of(" \t"));
 
-            if (type == "int")
+            if (type == "int") {
                 current_closure->chunk->add_constant(Value(static_cast<std::int64_t>(std::stoll(val))));
-            else if (type == "uint")
+            } else if (type == "uint") {
                 current_closure->chunk->add_constant(Value(static_cast<std::uint64_t>(std::stoull(val))));
-            else if (type == "float")
+            } else if (type == "float") {
                 current_closure->chunk->add_constant(Value(std::stod(val)));
-            else if (type == "bool")
+            } else if (type == "bool") {
                 current_closure->chunk->add_constant(Value(val == "true"));
-            else if (type == "fn")
+            } else if (type == "fn") {
                 current_closure->chunk->add_constant(Value(closures[std::stoi(val)]));
-            else if (type == "string") {
+            } else if (type == "string") {
                 val = val.substr(1, val.length() - 2);
                 current_closure->chunk->add_constant(Value(val));
             }
@@ -333,8 +339,9 @@ mem::rc_ptr<Closure_value> Assembler::assemble(const std::string &ir_source)
                 continue;
             }
 
-            if (!op_map.count(tok))
+            if (!op_map.count(tok)) {
                 continue;
+            }
 
             Op_code op = op_map[tok];
             current_closure->chunk->write(op, {0, 0});

@@ -83,7 +83,13 @@ int main(int argc, char *argv[])
         auto tokens = lexer.tokenize();
 
         if (!tokens.has_value()) {
-            std::println(stderr, "{}:{}:{}: error: Invalid token: {}", filename, tokens.error().line, tokens.error().column, tokens.error().lexeme);
+            std::println(
+                stderr,
+                "{}:{}:{}: error: Invalid token: {}",
+                filename,
+                tokens.error().line,
+                tokens.error().column,
+                tokens.error().lexeme);
             return 1;
         }
 
@@ -109,8 +115,9 @@ int main(int argc, char *argv[])
         }
 
         if (checked.size() > 0) {
-            for (auto e : checked)
+            for (auto e : checked) {
                 std::println(stderr, "{}:{}", filename, e.format());
+            }
             return 1; // Halt compilation if types are invalid
         }
 

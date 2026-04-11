@@ -25,10 +25,12 @@ std::string Tree_printer::vertical_sym(bool has_next) const
 
 void Tree_printer::indent()
 {
-    for (size_t i = 0; i + 1 < branch_stack.size(); ++i)
+    for (size_t i = 0; i + 1 < branch_stack.size(); ++i) {
         output += vertical_sym(branch_stack[i]);
-    if (!branch_stack.empty())
+    }
+    if (!branch_stack.empty()) {
         output += branch_sym(branch_stack.back());
+    }
 }
 
 void Tree_printer::print_str(const std::string &s)
@@ -39,8 +41,9 @@ void Tree_printer::print_str(const std::string &s)
 std::string Tree_printer::print_statements(const std::vector<Stmt_id> &statements)
 {
     output.clear();
-    for (size_t i = 0; i < statements.size(); ++i)
+    for (size_t i = 0; i < statements.size(); ++i) {
         with_child(i + 1 < statements.size(), [&] { visit(statements[i]); });
+    }
     return output;
 }
 
@@ -308,8 +311,9 @@ void Tree_printer::print_node(const Model_literal_expr &node)
             with_child(i + 1 < node.fields.size(), [&] {
                 indent();
                 print_str("." + node.fields[i].first);
-                if (!node.fields[i].second.is_null())
+                if (!node.fields[i].second.is_null()) {
                     with_child(false, [&] { visit(node.fields[i].second); });
+                }
             });
         }
     });
@@ -361,8 +365,9 @@ void Tree_printer::print_node(const Array_literal_expr &node)
     with_child(false, [&] {
         indent();
         print_str("Elements");
-        for (size_t i = 0; i < node.elements.size(); ++i)
+        for (size_t i = 0; i < node.elements.size(); ++i) {
             with_child(i + 1 < node.elements.size(), [&] { visit(node.elements[i]); });
+        }
     });
 }
 
@@ -390,8 +395,9 @@ void Tree_printer::print_node(const Static_path_expr &node)
 {
     indent();
     std::string base_name = "<unknown>";
-    if (auto *var_expr = std::get_if<Variable_expr>(&tree.get(node.base).node))
+    if (auto *var_expr = std::get_if<Variable_expr>(&tree.get(node.base).node)) {
         base_name = var_expr->name;
+    }
 
     print_str("Static Path: " + base_name + "::" + node.member.lexeme);
     with_child(false, [&] {
@@ -458,8 +464,9 @@ void Tree_printer::print_node(const Fstring_expr &node)
     with_child(false, [&] {
         indent();
         print_str("Interpolations");
-        for (size_t i = 0; i < node.interpolations.size(); ++i)
+        for (size_t i = 0; i < node.interpolations.size(); ++i) {
             with_child(i + 1 < node.interpolations.size(), [&] { visit(node.interpolations[i]); });
+        }
     });
 }
 
@@ -488,8 +495,9 @@ void Tree_printer::print_node(const Anon_model_literal_expr &node)
             with_child(i + 1 < node.fields.size(), [&] {
                 indent();
                 print_str("." + node.fields[i].first);
-                if (!node.fields[i].second.is_null())
+                if (!node.fields[i].second.is_null()) {
                     with_child(false, [&] { visit(node.fields[i].second); });
+                }
             });
         }
     });
@@ -501,8 +509,9 @@ void Tree_printer::print_node(const Return_stmt &node)
 {
     indent();
     print_str("Return");
-    if (!node.expression.is_null())
+    if (!node.expression.is_null()) {
         with_child(false, [&] { visit(node.expression); });
+    }
 }
 
 void Tree_printer::print_node(const Function_stmt &node)
@@ -571,8 +580,9 @@ void Tree_printer::print_node(const Model_stmt &node)
                 print_str("<none>");
             });
         } else {
-            for (size_t i = 0; i < node.methods.size(); ++i)
+            for (size_t i = 0; i < node.methods.size(); ++i) {
                 with_child(i + 1 < node.methods.size(), [&] { visit(node.methods[i]); });
+            }
         }
     });
 }
@@ -622,8 +632,9 @@ void Tree_printer::print_node(const Enum_stmt &node)
                 with_child(i + 1 < node.variants.size(), [&] {
                     indent();
                     std::string text = node.variants[i].first;
-                    if (node.variants[i].second.has_value())
+                    if (node.variants[i].second.has_value()) {
                         text += " = " + value_to_string(node.variants[i].second.value());
+                    }
                     print_str(text);
                 });
             }
@@ -649,8 +660,9 @@ void Tree_printer::print_node(const Print_stmt &node)
     indent();
     print_str(std::string("Print(") + (node.stream == Print_stream::STDOUT ? "stdout" : "stderr") + ")");
     with_child(false, [&] {
-        for (const auto &exp : node.expressions)
+        for (const auto &exp : node.expressions) {
             visit(exp);
+        }
     });
 }
 
@@ -665,8 +677,9 @@ void Tree_printer::print_node(const Block_stmt &node)
 {
     indent();
     print_str("Block");
-    for (size_t i = 0; i < node.statements.size(); ++i)
+    for (size_t i = 0; i < node.statements.size(); ++i) {
         with_child(i + 1 < node.statements.size(), [&] { visit(node.statements[i]); });
+    }
 }
 
 void Tree_printer::print_node(const If_stmt &node)
@@ -793,23 +806,26 @@ std::string Sexpr_printer::print_statements(const std::vector<Stmt_id> &statemen
     std::string res;
     for (size_t i = 0; i < statements.size(); ++i) {
         res += print_stmt(statements[i]);
-        if (i + 1 < statements.size())
+        if (i + 1 < statements.size()) {
             res += "\n";
+        }
     }
     return res;
 }
 
 std::string Sexpr_printer::print_expr(Expr_id expr)
 {
-    if (expr.is_null())
+    if (expr.is_null()) {
         return "()";
+    }
     return std::visit([this](auto const &e) { return this->print_node(e); }, tree.get(expr).node);
 }
 
 std::string Sexpr_printer::print_stmt(Stmt_id stmt)
 {
-    if (stmt.is_null())
+    if (stmt.is_null()) {
         return "()";
+    }
     return std::visit([this](auto const &s) { return this->print_node(s); }, tree.get(stmt).node);
 }
 
@@ -817,8 +833,9 @@ std::string Sexpr_printer::print_stmt(Stmt_id stmt)
 
 std::string Sexpr_printer::print_node(const Literal_expr &node)
 {
-    if (is_string(node.value))
+    if (is_string(node.value)) {
         return "\"" + get_string(node.value) + "\"";
+    }
     return value_to_string(node.value);
 }
 
@@ -842,8 +859,9 @@ std::string Sexpr_printer::print_node(const Call_expr &node)
     std::string res = "(call " + print_expr(node.callee);
     for (const auto &arg : node.arguments) {
         res += " ";
-        if (!arg.name.empty())
+        if (!arg.name.empty()) {
             res += ":" + arg.name + " ";
+        }
         res += print_expr(arg.value);
     }
     return res + ")";
@@ -879,8 +897,9 @@ std::string Sexpr_printer::print_node(const Method_call_expr &node)
     std::string res = "(mcall " + print_expr(node.object) + " " + node.method_name;
     for (const auto &arg : node.arguments) {
         res += " ";
-        if (!arg.name.empty())
+        if (!arg.name.empty()) {
             res += ":" + arg.name + " ";
+        }
         res += print_expr(arg.value);
     }
     return res + ")";
@@ -889,8 +908,9 @@ std::string Sexpr_printer::print_node(const Method_call_expr &node)
 std::string Sexpr_printer::print_node(const Model_literal_expr &node)
 {
     std::string res = "(init " + node.model_name;
-    for (const auto &field : node.fields)
+    for (const auto &field : node.fields) {
         res += " (:" + field.first + " " + (field.second.is_null() ? "default" : print_expr(field.second)) + ")";
+    }
     return res + ")";
 }
 
@@ -899,8 +919,9 @@ std::string Sexpr_printer::print_node(const Closure_expr &node)
     std::string res = "(closure (";
     for (size_t i = 0; i < node.parameters.size(); ++i) {
         res += node.parameters[i].name;
-        if (i + 1 < node.parameters.size())
+        if (i + 1 < node.parameters.size()) {
             res += " ";
+        }
     }
     res += ") " + print_stmt(node.body) + ")";
     return res;
@@ -909,8 +930,9 @@ std::string Sexpr_printer::print_node(const Closure_expr &node)
 std::string Sexpr_printer::print_node(const Array_literal_expr &node)
 {
     std::string res = "(list";
-    for (const auto &elem : node.elements)
+    for (const auto &elem : node.elements) {
         res += " " + print_expr(elem);
+    }
     return res + ")";
 }
 
@@ -948,8 +970,9 @@ std::string Sexpr_printer::print_node(const Yield_expr &node)
 std::string Sexpr_printer::print_node(const Fstring_expr &node)
 {
     std::string res = "(fstring \"" + node.raw_template + "\"";
-    for (auto interp : node.interpolations)
+    for (auto interp : node.interpolations) {
         res += " " + print_expr(interp);
+    }
     return res + ")";
 }
 
@@ -961,8 +984,9 @@ std::string Sexpr_printer::print_node(const Enum_member_expr &node)
 std::string Sexpr_printer::print_node(const Anon_model_literal_expr &node)
 {
     std::string res = "(anon_init";
-    for (const auto &field : node.fields)
+    for (const auto &field : node.fields) {
         res += " (:" + field.first + " " + (field.second.is_null() ? "default" : print_expr(field.second)) + ")";
+    }
     return res + ")";
 }
 
@@ -971,8 +995,9 @@ std::string Sexpr_printer::print_node(const Anon_model_literal_expr &node)
 // TODO: Add types everywhere.
 std::string Sexpr_printer::print_node(const Return_stmt &node)
 {
-    if (!node.expression.is_null())
+    if (!node.expression.is_null()) {
         return "(return " + print_expr(node.expression) + ")";
+    }
     return "(return)";
 }
 
@@ -982,8 +1007,9 @@ std::string Sexpr_printer::print_node(const Function_stmt &node)
     for (size_t i = 0; i < node.parameters.size(); ++i) {
         res += node.parameters[i].name + ": ";
         res += tt.to_string(node.parameters[i].type);
-        if (i + 1 < node.parameters.size())
+        if (i + 1 < node.parameters.size()) {
             res += " ";
+        }
     }
     res += ") " + print_stmt(node.body) + ")";
     return res;
@@ -992,27 +1018,31 @@ std::string Sexpr_printer::print_node(const Function_stmt &node)
 std::string Sexpr_printer::print_node(const Model_stmt &node)
 {
     std::string res = "(model " + node.name + " (fields";
-    for (const auto &f : node.fields)
+    for (const auto &f : node.fields) {
         res += " " + f.name;
+    }
     res += ") (methods";
-    for (const auto &m : node.methods)
+    for (const auto &m : node.methods) {
         res += " " + print_stmt(m);
+    }
     return res + "))";
 }
 
 std::string Sexpr_printer::print_node(const Union_stmt &node)
 {
     std::string res = "(union " + node.name;
-    for (const auto &v : node.variants)
+    for (const auto &v : node.variants) {
         res += " " + v.name;
+    }
     return res + ")";
 }
 
 std::string Sexpr_printer::print_node(const Var_stmt &node)
 {
     std::string kw = node.is_const ? "const" : (node.is_mut ? "mut" : "let");
-    if (!node.initializer.is_null())
+    if (!node.initializer.is_null()) {
         return "(" + kw + " " + node.name + " " + print_expr(node.initializer) + ")";
+    }
     return "(" + kw + " " + node.name + ")";
 }
 
@@ -1020,8 +1050,9 @@ std::string Sexpr_printer::print_node(const Print_stmt &node)
 {
     std::string kw = (node.stream == Print_stream::STDOUT) ? "print" : "eprint";
     std::string res = "(" + kw;
-    for (const auto &exp : node.expressions)
+    for (const auto &exp : node.expressions) {
         res += " " + print_expr(exp);
+    }
     return res + ")";
 }
 
@@ -1033,16 +1064,18 @@ std::string Sexpr_printer::print_node(const Expr_stmt &node)
 std::string Sexpr_printer::print_node(const Block_stmt &node)
 {
     std::string res = "(block";
-    for (const auto s : node.statements)
+    for (const auto s : node.statements) {
         res += " " + print_stmt(s);
+    }
     return res + ")";
 }
 
 std::string Sexpr_printer::print_node(const If_stmt &node)
 {
     std::string res = "(if " + print_expr(node.condition) + " " + print_stmt(node.then_branch);
-    if (!node.else_branch.is_null())
+    if (!node.else_branch.is_null()) {
         res += " " + print_stmt(node.else_branch);
+    }
     return res + ")";
 }
 
@@ -1067,8 +1100,9 @@ std::string Sexpr_printer::print_node(const Match_stmt &node)
     std::string res = "(match " + print_expr(node.subject);
     for (const auto &arm : node.arms) {
         res += " (" + (arm.is_wildcard ? "_" : print_expr(arm.pattern));
-        if (!arm.bind_name.empty())
+        if (!arm.bind_name.empty()) {
             res += " :bind " + arm.bind_name;
+        }
         res += " " + print_stmt(arm.body) + ")";
     }
     return res + ")";
@@ -1077,8 +1111,9 @@ std::string Sexpr_printer::print_node(const Match_stmt &node)
 std::string Sexpr_printer::print_node(const Enum_stmt &node)
 {
     std::string res = "(enum " + node.name;
-    for (const auto &var : node.variants)
+    for (const auto &var : node.variants) {
         res += " " + var.first;
+    }
     return res + ")";
 }
 

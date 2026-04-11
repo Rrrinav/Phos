@@ -10,7 +10,7 @@ namespace phos::types {
 
 struct Type_id
 {
-    uint32_t value;
+    uint32_t value{};
 
     constexpr bool operator==(const Type_id &o) const noexcept
     {
@@ -47,7 +47,9 @@ struct Type_id_hash
     }
 };
 
-enum class Primitive_kind : uint8_t { I8, I16, I32, I64, U8, U16, U32, U64, F16, F32, F64, Bool, String, Void, Any, Nil };
+// Types 'any' and 'unknown' are strictly for internal usage.
+// Using them inside code is not allowed.
+enum class Primitive_kind : uint8_t { I8, I16, I32, I64, U8, U16, U32, U64, F16, F32, F64, Bool, String, Void, Any, Nil, Unknown };
 
 struct Function_type
 {
@@ -133,7 +135,7 @@ public:
     Type_id t_i8, t_i16, t_i32, t_i64;
     Type_id t_u8, t_u16, t_u32, t_u64;
     Type_id t_f16, t_f32, t_f64;
-    Type_id t_bool, t_string, t_void, t_any, t_nil;
+    Type_id t_bool, t_string, t_void, t_any, t_nil, t_unknown;
 
     // intern
     Type_id primitive(Primitive_kind p);
@@ -144,6 +146,7 @@ public:
     Type_id model(const std::string &name, const std::vector<std::pair<std::string, Type_id>> &fields);
     Type_id union_(const std::string &name, const std::vector<std::pair<std::string, Type_id>> &variants);
     Type_id enum_(const std::string &name, Type_id base);
+    Type_id iterator(types::Type_id elem);
     Type_id unresolved(const std::string &name);
 
     // query
@@ -154,51 +157,158 @@ public:
     bool is_function(Type_id id) const;
     bool is_model(Type_id id) const;
     bool is_union(Type_id id) const;
+    bool is_enum(Type_id id) const;
     bool is_iterator(Type_id id) const;
     bool is_unresolved(Type_id id) const;
 
     Primitive_kind get_primitive(Type_id id) const;
     Type_id get_array_elem(Type_id id) const;
+    Type_id get_iter_elem(Type_id id) const;
     Type_id get_optional_base(Type_id id) const;
 
     bool is_optional(Type_id id) const;
     Type_id optional_base(Type_id id) const;
     uint32_t optional_depth(Type_id id) const;
 
-    bool is_nil(Type_id id) const;
-    bool is_any(Type_id id) const;
+    inline Type_id get_i8() const
+    {
+        return t_i8;
+    }
+    inline Type_id get_i16() const
+    {
+        return t_i16;
+    }
+    inline Type_id get_i32() const
+    {
+        return t_i32;
+    }
+    inline Type_id get_i64() const
+    {
+        return t_i64;
+    }
+    inline Type_id get_u8() const
+    {
+        return t_u8;
+    }
+    inline Type_id get_u16() const
+    {
+        return t_u16;
+    }
+    inline Type_id get_u32() const
+    {
+        return t_u32;
+    }
+    inline Type_id get_u64() const
+    {
+        return t_u64;
+    }
+    inline Type_id get_f16() const
+    {
+        return t_f16;
+    }
+    inline Type_id get_f32() const
+    {
+        return t_f32;
+    }
+    inline Type_id get_f64() const
+    {
+        return t_f64;
+    }
+    inline Type_id get_bool() const
+    {
+        return t_bool;
+    }
+    inline Type_id get_string() const
+    {
+        return t_string;
+    }
+    inline Type_id get_void() const
+    {
+        return t_void;
+    }
+    inline Type_id get_any() const
+    {
+        return t_any;
+    }
+    inline Type_id get_nil() const
+    {
+        return t_nil;
+    }
 
-    inline Type_id get_i8()     const { return t_i8; }
-    inline Type_id get_i16()    const { return t_i16; }
-    inline Type_id get_i32()    const { return t_i32; }
-    inline Type_id get_i64()    const { return t_i64; }
-    inline Type_id get_u8()     const { return t_u8; }
-    inline Type_id get_u16()    const { return t_u16; }
-    inline Type_id get_u32()    const { return t_u32; }
-    inline Type_id get_u64()    const { return t_u64; }
-    inline Type_id get_f16()    const { return t_f16; }
-    inline Type_id get_f32()    const { return t_f32; }
-    inline Type_id get_f64()    const { return t_f64; }
-    inline Type_id get_bool()   const { return t_bool; }
-    inline Type_id get_string() const { return t_string; }
-    inline Type_id get_void()   const { return t_void; }
-    inline Type_id get_any()    const { return t_any; }
-    inline Type_id get_nil()    const { return t_nil; }
+    inline Type_id get_unknown() const
+    {
+        return t_unknown;
+    }
 
-    inline bool is_i8(Type_id id)     const { return id == t_i8; }
-    inline bool is_i16(Type_id id)    const { return id == t_i16; }
-    inline bool is_i32(Type_id id)    const { return id == t_i32; }
-    inline bool is_i64(Type_id id)    const { return id == t_i64; }
-    inline bool is_u8(Type_id id)     const { return id == t_u8; }
-    inline bool is_u16(Type_id id)    const { return id == t_u16; }
-    inline bool is_u32(Type_id id)    const { return id == t_u32; }
-    inline bool is_u64(Type_id id)    const { return id == t_u64; }
-    inline bool is_f16(Type_id id)    const { return id == t_f16; }
-    inline bool is_f32(Type_id id)    const { return id == t_f32; }
-    inline bool is_f64(Type_id id)    const { return id == t_f64; }
-    inline bool is_bool(Type_id id)   const { return id == t_bool; }
-    inline bool is_string(Type_id id) const { return id == t_string; }
-    inline bool is_void(Type_id id)   const { return id == t_void; }
+    inline bool is_i8(Type_id id) const
+    {
+        return id == t_i8;
+    }
+    inline bool is_i16(Type_id id) const
+    {
+        return id == t_i16;
+    }
+    inline bool is_i32(Type_id id) const
+    {
+        return id == t_i32;
+    }
+    inline bool is_i64(Type_id id) const
+    {
+        return id == t_i64;
+    }
+    inline bool is_u8(Type_id id) const
+    {
+        return id == t_u8;
+    }
+    inline bool is_u16(Type_id id) const
+    {
+        return id == t_u16;
+    }
+    inline bool is_u32(Type_id id) const
+    {
+        return id == t_u32;
+    }
+    inline bool is_u64(Type_id id) const
+    {
+        return id == t_u64;
+    }
+    inline bool is_f16(Type_id id) const
+    {
+        return id == t_f16;
+    }
+    inline bool is_f32(Type_id id) const
+    {
+        return id == t_f32;
+    }
+    inline bool is_f64(Type_id id) const
+    {
+        return id == t_f64;
+    }
+    inline bool is_bool(Type_id id) const
+    {
+        return id == t_bool;
+    }
+    inline bool is_string(Type_id id) const
+    {
+        return id == t_string;
+    }
+    inline bool is_void(Type_id id) const
+    {
+        return id == t_void;
+    }
+    inline bool is_nil(Type_id id) const
+    {
+        return id == t_nil;
+    }
+    inline bool is_any(Type_id id) const
+    {
+        return id == t_any;
+    }
+
+    inline bool is_unknown(Type_id id) const
+    {
+        return id == t_unknown;
+    }
 
     inline bool is_integer_primitive(Type_id k) const
     {
@@ -266,20 +376,38 @@ public:
             return params == o.params && ret == o.ret;
         }
     };
+    // AI generated
     struct Fn_hash
     {
         size_t operator()(const Fn_key &k) const
         {
             size_t h = std::hash<uint32_t>{}(k.ret.value);
-            for (auto p : k.params)
+            for (auto p : k.params) {
                 h ^= std::hash<uint32_t>{}(p.value) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            }
             return h;
+        }
+    };
+    struct Iter_key
+    {
+        Type_id elem;
+        bool operator==(const Iter_key &o) const
+        {
+            return elem == o.elem;
+        }
+    };
+    struct Iter_hash
+    {
+        size_t operator()(const Iter_key &k) const
+        {
+            return std::hash<uint32_t>{}(k.elem.value);
         }
     };
 
     std::unordered_map<Fn_key, Type_id, Fn_hash> fn_cache_;
     std::unordered_map<Arr_key, Type_id, Arr_hash> arr_cache_;
     std::unordered_map<Opt_key, Type_id, Opt_hash> opt_cache_;
+    std::unordered_map<Iter_key, Type_id, Iter_hash> iter_cache_;
     std::unordered_map<std::string, Type_id> model_cache_;
     std::unordered_map<std::string, Type_id> union_cache_;
     std::unordered_map<std::string, Type_id> enum_cache_;

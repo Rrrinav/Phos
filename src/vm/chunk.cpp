@@ -25,8 +25,9 @@ std::string Chunk::format_instruction(size_t offset, const std::string &mnemonic
 void Chunk::disassemble(std::ostream &out, const std::string &name)
 {
     out << std::format("\n=== {} ===\n", name);
-    for (size_t offset = 0; offset < code.size();)
+    for (size_t offset = 0; offset < code.size();) {
         offset = disassemble_instruction(out, offset);
+    }
     out << "\n";
 }
 
@@ -133,8 +134,9 @@ size_t Chunk::constant_instruction(std::ostream &out, const std::string &mnemoni
 {
     uint8_t constant_idx = code[offset + 1];
     std::string val_str = value_to_string(constants[constant_idx]);
-    if (val_str.length() > 30)
+    if (val_str.length() > 30) {
         val_str = val_str.substr(0, 27) + "...";
+    }
     out << format_instruction(offset, mnemonic, std::format("#{}", constant_idx), "'" + val_str + "'");
     return offset + 2;
 }
