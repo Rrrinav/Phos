@@ -240,6 +240,7 @@ Result<ast::Stmt_id> Parser::function_declaration()
     __TryIgnore(consume(lex::TokenType::RightParen, "Expect ')' after parameters"));
 
     types::Type_id return_type{};
+
     if (match({lex::TokenType::Arrow})) {
         return_type = __Try(parse_type());
     }
@@ -388,9 +389,7 @@ Result<ast::Stmt_id> Parser::enum_declaration()
 
     if (match({lex::TokenType::Colon})) {
         base_type = __Try(parse_type());
-        if (!(type_table_.is_primitive(base_type)
-              && (types::is_integer_primitive(type_table_.get_primitive(base_type))
-                  || type_table_.get_primitive(base_type) == types::Primitive_kind::String))) {
+        if (!(type_table_.is_primitive(base_type) && (type_table_.is_integer_primitive(base_type) || type_table_.is_string(base_type)))) {
             return std::unexpected(create_error(previous(), "Enum base type must be an integer type or 'string'"));
         }
     }
@@ -407,7 +406,7 @@ Result<ast::Stmt_id> Parser::enum_declaration()
         std::optional<Value> value = std::nullopt;
 
         if (match({lex::TokenType::Assign})) {
-            if (type_table_.is_primitive(base_type) && types::is_integer_primitive(type_table_.get_primitive(base_type))) {
+            if (type_table_.is_primitive(base_type) && type_table_.is_integer_primitive(base_type)) {
                 auto val_tok = __Try(consume(lex::TokenType::Integer32, "Expect integer value after '=' in integer enum"));
                 auto coerced = coerce_numeric_literal(val_tok.literal, type_table_.get_primitive(base_type));
 
@@ -483,7 +482,7 @@ Result<ast::Function_stmt> Parser::parse_model_method()
 
     __TryIgnore(consume(lex::TokenType::RightParen, "Expect ')' after parameters"));
 
-    types::Type_id return_type = type_table_.primitive(types::Primitive_kind::Void);
+    types::Type_id return_type = type_table_.get_void();
     if (match({lex::TokenType::Arrow})) {
         return_type = __Try(parse_type());
     }
@@ -901,7 +900,7 @@ Result<ast::Expr_id> Parser::assignment()
                     .object = field_access_expr->object,
                     .field_name = field_access_expr->field_name,
                     .value = value_result,
-                    .type = type_table_.primitive(types::Primitive_kind::Void),
+                    .type = type_table_.get_void(),
                     .loc = {equals.line, equals.column},
                 }}
             );
@@ -911,7 +910,7 @@ Result<ast::Expr_id> Parser::assignment()
                     .array = array_access_expr->array,
                     .index = array_access_expr->index,
                     .value = value_result,
-                    .type = type_table_.primitive(types::Primitive_kind::Void),
+                    .type = type_table_.get_void(),
                     .loc = {equals.line, equals.column},
                 }}
             );
@@ -937,7 +936,7 @@ Result<ast::Expr_id> Parser::range_expr()
                 .start = expr,
                 .end = end_expr,
                 .inclusive = inclusive,
-                .type = type_table_.primitive(types::Primitive_kind::Void),
+                .type = type_table_.get_void(),
                 .loc = {op.line, op.column},
             }});
     }
@@ -958,7 +957,7 @@ Result<ast::Expr_id> Parser::logical_or()
                 .left = expr,
                 .op = op.type,
                 .right = right,
-                .type = type_table_.primitive(types::Primitive_kind::Bool),
+                .type = type_table_.get_bool(),
                 .loc = {op.line, op.column},
             }});
     }
@@ -978,7 +977,7 @@ Result<ast::Expr_id> Parser::logical_and()
                 .left = expr,
                 .op = op.type,
                 .right = right,
-                .type = type_table_.primitive(types::Primitive_kind::Bool),
+                .type = type_table_.get_bool(),
                 .loc = {op.line, op.column},
             }});
     }
@@ -998,7 +997,7 @@ Result<ast::Expr_id> Parser::bitwise_or()
                 .left = expr,
                 .op = op.type,
                 .right = right,
-                .type = type_table_.primitive(types::Primitive_kind::Bool),
+                .type = type_table_.get_bool(),
                 .loc = {op.line, op.column},
             }});
     }
@@ -1018,7 +1017,7 @@ Result<ast::Expr_id> Parser::bitwise_xor()
                 .left = expr,
                 .op = op.type,
                 .right = right,
-                .type = type_table_.primitive(types::Primitive_kind::Bool),
+                .type = type_table_.get_bool(),
                 .loc = {op.line, op.column},
             }});
     }
@@ -1038,7 +1037,7 @@ Result<ast::Expr_id> Parser::bitwise_and()
                 .left = expr,
                 .op = op.type,
                 .right = right,
-                .type = type_table_.primitive(types::Primitive_kind::Void),
+                .type = type_table_.get_void(),
                 .loc = {op.line, op.column},
             }});
     }
@@ -1058,7 +1057,7 @@ Result<ast::Expr_id> Parser::equality()
                 .left = expr,
                 .op = op.type,
                 .right = right,
-                .type = type_table_.primitive(types::Primitive_kind::Bool),
+                .type = type_table_.get_bool(),
                 .loc = {op.line, op.column},
             }});
     }
@@ -1078,7 +1077,7 @@ Result<ast::Expr_id> Parser::comparison()
                 .left = expr,
                 .op = op.type,
                 .right = right,
-                .type = type_table_.primitive(types::Primitive_kind::Bool),
+                .type = type_table_.get_bool(),
                 .loc = {op.line, op.column},
             }});
     }
@@ -1098,7 +1097,7 @@ Result<ast::Expr_id> Parser::bitwise_shift()
                 .left = expr,
                 .op = op.type,
                 .right = right,
-                .type = type_table_.primitive(types::Primitive_kind::Void),
+                .type = type_table_.get_void(),
                 .loc = {op.line, op.column},
             }});
     }
@@ -1118,7 +1117,7 @@ Result<ast::Expr_id> Parser::term()
                 .left = expr,
                 .op = op.type,
                 .right = right,
-                .type = type_table_.primitive(types::Primitive_kind::Void),
+                .type = type_table_.get_void(),
                 .loc = {op.line, op.column},
             }});
     }
@@ -1138,7 +1137,7 @@ Result<ast::Expr_id> Parser::factor()
                 .left = expr,
                 .op = op.type,
                 .right = right,
-                .type = type_table_.primitive(types::Primitive_kind::Void),
+                .type = type_table_.get_void(),
                 .loc = {op.line, op.column},
             }});
     }
@@ -1173,7 +1172,7 @@ Result<ast::Expr_id> Parser::unary()
             ast::Expr{ast::Unary_expr{
                 .op = op.type,
                 .right = right,
-                .type = type_table_.primitive(types::Primitive_kind::Void),
+                .type = type_table_.get_void(),
                 .loc = {op.line, op.column},
             }});
     }
@@ -1194,7 +1193,7 @@ Result<ast::Expr_id> Parser::call()
                 ast::Expr{ast::Call_expr{
                     expr,
                     arguments,
-                    type_table_.primitive(types::Primitive_kind::Void),
+                    type_table_.get_void(),
                     ast::Source_location{paren.line, paren.column}}});
 
         } else if (match({lex::TokenType::LeftBracket})) {
@@ -1205,7 +1204,7 @@ Result<ast::Expr_id> Parser::call()
                 ast::Expr{ast::Array_access_expr{
                     expr,
                     index_result,
-                    type_table_.primitive(types::Primitive_kind::Void),
+                    type_table_.get_void(),
                     ast::Source_location{right_bracket_result.line, right_bracket_result.column}}});
 
         } else if (match({lex::TokenType::Dot})) {
@@ -1220,14 +1219,14 @@ Result<ast::Expr_id> Parser::call()
                         expr,
                         name_result.lexeme,
                         arguments,
-                        type_table_.primitive(types::Primitive_kind::Void),
+                        type_table_.get_void(),
                         ast::Source_location{name_result.line, name_result.column}}});
             } else {
                 expr = tree_.add_expr(
                     ast::Expr{ast::Field_access_expr{
                         expr,
                         name_result.lexeme,
-                        type_table_.primitive(types::Primitive_kind::Void),
+                        type_table_.get_void(),
                         ast::Source_location{name_result.line, name_result.column}}});
             }
         } else {
@@ -1276,7 +1275,7 @@ Result<ast::Expr_id> Parser::primary()
             return tree_.add_expr(
                 ast::Expr{ast::Anon_model_literal_expr{
                     .fields = std::move(fields),
-                    .type = type_table_.primitive(types::Primitive_kind::Void),
+                    .type = type_table_.get_void(),
                     .loc = loc,
                 }});
         }
@@ -1286,7 +1285,7 @@ Result<ast::Expr_id> Parser::primary()
             ast::Expr{ast::Enum_member_expr{
                 .member_name = member.lexeme,
                 .loc = loc,
-                .type = type_table_.primitive(types::Primitive_kind::Void),
+                .type = type_table_.get_void(),
             }});
     }
 
@@ -1298,7 +1297,7 @@ Result<ast::Expr_id> Parser::primary()
         return tree_.add_expr(
             ast::Expr{ast::Spawn_expr{
                 .call = call_expr,
-                .type = type_table_.primitive(types::Primitive_kind::Void),
+                .type = type_table_.get_void(),
                 .loc = loc,
             }});
     }
@@ -1309,7 +1308,7 @@ Result<ast::Expr_id> Parser::primary()
         return tree_.add_expr(
             ast::Expr{ast::Await_expr{
                 .thread = thread,
-                .type = type_table_.primitive(types::Primitive_kind::Void),
+                .type = type_table_.get_void(),
                 .loc = loc,
             }});
     }
@@ -1323,7 +1322,7 @@ Result<ast::Expr_id> Parser::primary()
         return tree_.add_expr(
             ast::Expr{ast::Yield_expr{
                 .value = value,
-                .type = type_table_.primitive(types::Primitive_kind::Void),
+                .type = type_table_.get_void(),
                 .loc = loc,
             }});
     }
@@ -1336,7 +1335,7 @@ Result<ast::Expr_id> Parser::primary()
         return tree_.add_expr(
             ast::Expr{ast::Variable_expr{
                 .name = "this",
-                .type = type_table_.primitive(types::Primitive_kind::Void),
+                .type = type_table_.get_void(),
                 .loc = {previous().line, previous().column},
             }});
     }
@@ -1358,7 +1357,7 @@ Result<ast::Expr_id> Parser::primary()
         return tree_.add_expr(
             ast::Expr{ast::Literal_expr{
                 .value = Value(nullptr),
-                .type = type_table_.primitive(types::Primitive_kind::Nil),
+                .type = type_table_.get_nil(),
                 .loc = {previous().line, previous().column},
             }});
     }
@@ -1367,7 +1366,7 @@ Result<ast::Expr_id> Parser::primary()
         return tree_.add_expr(
             ast::Expr{ast::Literal_expr{
                 .value = Value(std::get<bool>(previous().literal.payload)),
-                .type = type_table_.primitive(types::Primitive_kind::Bool),
+                .type = type_table_.get_bool(),
                 .loc = {previous().line, previous().column},
             }});
     }
@@ -1394,7 +1393,7 @@ Result<ast::Expr_id> Parser::primary()
         return tree_.add_expr(
             ast::Expr{ast::Literal_expr{
                 .value = Value(std::get<std::string>(previous().literal.payload)),
-                .type = type_table_.primitive(types::Primitive_kind::String),
+                .type = type_table_.get_string(),
                 .loc = {previous().line, previous().column},
             }});
     }
@@ -1421,12 +1420,12 @@ Result<ast::Expr_id> Parser::primary()
             // Type::Member  or  Union::Variant or Enum::Variant
             auto member = __Try(consume(lex::TokenType::Identifier, "Expect member name after '::'"));
             auto base_var_expr = tree_.add_expr(
-                ast::Expr{ast::Variable_expr{id.lexeme, type_table_.primitive(types::Primitive_kind::Void), {id.line, id.column}}});
+                ast::Expr{ast::Variable_expr{id.lexeme, type_table_.get_void(), {id.line, id.column}}});
             return tree_.add_expr(
                 ast::Expr{ast::Static_path_expr{
                     .base = base_var_expr,
                     .member = member,
-                    .type = type_table_.primitive(types::Primitive_kind::Void),
+                    .type = type_table_.get_void(),
                     .loc = {member.line, member.column},
                 }});
         }
@@ -1460,7 +1459,7 @@ Result<ast::Expr_id> Parser::primary()
         return tree_.add_expr(
             ast::Expr{ast::Variable_expr{
                 .name = id.lexeme,
-                .type = type_table_.primitive(types::Primitive_kind::Void),
+                .type = type_table_.get_void(),
                 .loc = {id.line, id.column},
             }});
     }
@@ -1502,7 +1501,7 @@ Result<ast::Expr_id> Parser::parse_closure_expression()
         __TryIgnore(consume(lex::TokenType::Pipe, "Expect '|' after closure parameters"));
     }
 
-    types::Type_id return_type = type_table_.primitive(types::Primitive_kind::Void);
+    types::Type_id return_type = type_table_.get_void();
 
     if (match({lex::TokenType::Arrow})) {
         return_type = __Try(parse_type());
@@ -1550,7 +1549,7 @@ Result<ast::Expr_id> Parser::parse_array_literal()
     return tree_.add_expr(
         ast::Expr{ast::Array_literal_expr{
             .elements = elements,
-            .type = type_table_.primitive(types::Primitive_kind::Void),
+            .type = type_table_.get_void(),
             .loc = {line, column},
         }});
 }
@@ -1583,7 +1582,7 @@ Result<ast::Expr_id> Parser::parse_model_literal(const std::string &model_name)
         ast::Expr{ast::Model_literal_expr{
             .model_name = model_name,
             .fields = fields,
-            .type = type_table_.primitive(types::Primitive_kind::Void),
+            .type = type_table_.get_void(),
             .loc = {brace.line, brace.column},
         }});
 }
@@ -1656,7 +1655,7 @@ Result<ast::Expr_id> Parser::parse_fstring(const lex::Token &tok)
         ast::Expr{ast::Fstring_expr{
             .raw_template = raw,
             .interpolations = std::move(interpolations),
-            .type = type_table_.primitive(types::Primitive_kind::String),
+            .type = type_table_.get_string(),
             .loc = loc,
         }});
 }
@@ -1705,21 +1704,21 @@ Result<types::Type_id> Parser::parse_type()
         current = type_table_.function(params, ret);
     }
     // Primitives
-    else if (match({lex::TokenType::TInt64}))   current = type_table_.primitive(Primitive_kind::I64);
-    else if (match({lex::TokenType::TInt32}))   current = type_table_.primitive(Primitive_kind::I32);
-    else if (match({lex::TokenType::TInt16}))   current = type_table_.primitive(Primitive_kind::I16);
-    else if (match({lex::TokenType::TInt8}))    current = type_table_.primitive(Primitive_kind::I8);
-    else if (match({lex::TokenType::TUInt64}))  current = type_table_.primitive(Primitive_kind::U64);
-    else if (match({lex::TokenType::TUInt32}))  current = type_table_.primitive(Primitive_kind::U32);
-    else if (match({lex::TokenType::TUInt16}))  current = type_table_.primitive(Primitive_kind::U16);
-    else if (match({lex::TokenType::TUInt8}))   current = type_table_.primitive(Primitive_kind::U8);
-    else if (match({lex::TokenType::TFloat64})) current = type_table_.primitive(Primitive_kind::F64);
-    else if (match({lex::TokenType::TFloat32})) current = type_table_.primitive(Primitive_kind::F32);
-    else if (match({lex::TokenType::TFloat16})) current = type_table_.primitive(Primitive_kind::F16);
-    else if (match({lex::TokenType::TBool}))    current = type_table_.primitive(Primitive_kind::Bool);
-    else if (match({lex::TokenType::TString}))  current = type_table_.primitive(Primitive_kind::String);
-    else if (match({lex::TokenType::TVoid}))    current = type_table_.primitive(Primitive_kind::Void);
-    else if (match({lex::TokenType::TAny}))     current = type_table_.primitive(Primitive_kind::Any);
+    else if (match({lex::TokenType::TInt64}))   current = type_table_.get_i64();
+    else if (match({lex::TokenType::TInt32}))   current = type_table_.get_i32();
+    else if (match({lex::TokenType::TInt16}))   current = type_table_.get_i16();
+    else if (match({lex::TokenType::TInt8}))    current = type_table_.get_i8();
+    else if (match({lex::TokenType::TUInt64}))  current = type_table_.get_u64();
+    else if (match({lex::TokenType::TUInt32}))  current = type_table_.get_u32();
+    else if (match({lex::TokenType::TUInt16}))  current = type_table_.get_u16();
+    else if (match({lex::TokenType::TUInt8}))   current = type_table_.get_u8();
+    else if (match({lex::TokenType::TFloat64})) current = type_table_.get_f64();
+    else if (match({lex::TokenType::TFloat32})) current = type_table_.get_f32();
+    else if (match({lex::TokenType::TFloat16})) current = type_table_.get_f16();
+    else if (match({lex::TokenType::TBool}))    current = type_table_.get_bool();
+    else if (match({lex::TokenType::TString}))  current = type_table_.get_string();
+    else if (match({lex::TokenType::TVoid}))    current = type_table_.get_void();
+    else if (match({lex::TokenType::TAny}))     current = type_table_.get_any();
     else if (match({lex::TokenType::Model})) {
 
         std::vector<std::pair<std::string, Type_id>> fields;

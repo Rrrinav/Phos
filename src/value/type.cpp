@@ -2,7 +2,28 @@
 
 namespace phos::types {
 
-Type_table::Type_table() = default;
+Type_table::Type_table()
+{
+    this->t_i8     = primitive(Primitive_kind::I8);
+    this->t_i16    = primitive(Primitive_kind::I16);
+    this->t_i32    = primitive(Primitive_kind::I32);
+    this->t_i64    = primitive(Primitive_kind::I64);
+
+    this->t_u8     = primitive(Primitive_kind::U8);
+    this->t_u16    = primitive(Primitive_kind::U16);
+    this->t_u32    = primitive(Primitive_kind::U32);
+    this->t_u64    = primitive(Primitive_kind::U64);
+
+    this->t_f16    = primitive(Primitive_kind::F16);
+    this->t_f32    = primitive(Primitive_kind::F32);
+    this->t_f64    = primitive(Primitive_kind::F64);
+
+    this->t_bool   = primitive(Primitive_kind::Bool);
+    this->t_string = primitive(Primitive_kind::String);
+    this->t_void   = primitive(Primitive_kind::Void);
+    this->t_any    = primitive(Primitive_kind::Any);
+    this->t_nil    = primitive(Primitive_kind::Nil);
+}
 
 Type_id Type_table::primitive(Primitive_kind p)
 {
@@ -174,15 +195,6 @@ uint32_t Type_table::optional_depth(Type_id id) const
         ++d;
     }
     return d;
-}
-
-bool Type_table::is_nil(Type_id id) const
-{
-    return is_primitive(id) && get_primitive(id) == Primitive_kind::Nil;
-}
-bool Type_table::is_any(Type_id id) const
-{
-    return is_primitive(id) && get_primitive(id) == Primitive_kind::Any;
 }
 
 bool is_integer_primitive(Primitive_kind k)

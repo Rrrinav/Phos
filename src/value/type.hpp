@@ -28,6 +28,15 @@ struct Type_id
     {
         return value;
     }
+
+    constexpr bool is_null() const noexcept
+    {
+        return value == 0xFFFFFFFF;
+    }
+    static constexpr Type_id null() noexcept
+    {
+        return {0xFFFFFFFF};
+    }
 };
 
 struct Type_id_hash
@@ -82,7 +91,6 @@ struct Enum_type
     uint32_t variant_table_id = 0;
 };
 
-// A placeholder for types the parser sees but hasn't resolved yet
 struct Unresolved_type
 {
     std::string name;
@@ -119,6 +127,15 @@ class Type_table
 public:
     Type_table();
 
+    // =========================================================================
+    // Pre-interned Primitives (For ultra-fast O(1) access)
+    // =========================================================================
+    Type_id t_i8, t_i16, t_i32, t_i64;
+    Type_id t_u8, t_u16, t_u32, t_u64;
+    Type_id t_f16, t_f32, t_f64;
+    Type_id t_bool, t_string, t_void, t_any, t_nil;
+
+    // intern
     Type_id primitive(Primitive_kind p);
     Type_id array(Type_id elem);
     Type_id optional(Type_id base);
@@ -138,7 +155,7 @@ public:
     bool is_model(Type_id id) const;
     bool is_union(Type_id id) const;
     bool is_iterator(Type_id id) const;
-    bool is_unresolved(Type_id id) const; // NEW
+    bool is_unresolved(Type_id id) const;
 
     Primitive_kind get_primitive(Type_id id) const;
     Type_id get_array_elem(Type_id id) const;
@@ -150,6 +167,59 @@ public:
 
     bool is_nil(Type_id id) const;
     bool is_any(Type_id id) const;
+
+    inline Type_id get_i8()     const { return t_i8; }
+    inline Type_id get_i16()    const { return t_i16; }
+    inline Type_id get_i32()    const { return t_i32; }
+    inline Type_id get_i64()    const { return t_i64; }
+    inline Type_id get_u8()     const { return t_u8; }
+    inline Type_id get_u16()    const { return t_u16; }
+    inline Type_id get_u32()    const { return t_u32; }
+    inline Type_id get_u64()    const { return t_u64; }
+    inline Type_id get_f16()    const { return t_f16; }
+    inline Type_id get_f32()    const { return t_f32; }
+    inline Type_id get_f64()    const { return t_f64; }
+    inline Type_id get_bool()   const { return t_bool; }
+    inline Type_id get_string() const { return t_string; }
+    inline Type_id get_void()   const { return t_void; }
+    inline Type_id get_any()    const { return t_any; }
+    inline Type_id get_nil()    const { return t_nil; }
+
+    inline bool is_i8(Type_id id)     const { return id == t_i8; }
+    inline bool is_i16(Type_id id)    const { return id == t_i16; }
+    inline bool is_i32(Type_id id)    const { return id == t_i32; }
+    inline bool is_i64(Type_id id)    const { return id == t_i64; }
+    inline bool is_u8(Type_id id)     const { return id == t_u8; }
+    inline bool is_u16(Type_id id)    const { return id == t_u16; }
+    inline bool is_u32(Type_id id)    const { return id == t_u32; }
+    inline bool is_u64(Type_id id)    const { return id == t_u64; }
+    inline bool is_f16(Type_id id)    const { return id == t_f16; }
+    inline bool is_f32(Type_id id)    const { return id == t_f32; }
+    inline bool is_f64(Type_id id)    const { return id == t_f64; }
+    inline bool is_bool(Type_id id)   const { return id == t_bool; }
+    inline bool is_string(Type_id id) const { return id == t_string; }
+    inline bool is_void(Type_id id)   const { return id == t_void; }
+
+    inline bool is_integer_primitive(Type_id k) const
+    {
+        return k == t_i8 || k == t_i16 || k == t_i32 || k == t_i64 || k == t_u8 || k == t_u16 || k == t_u32 || k == t_u64;
+    }
+    inline bool is_unsigned_integer_primitive(Type_id k) const
+    {
+        return k == t_u8 || k == t_u16 || k == t_u32 || k == t_u64;
+    }
+    inline bool is_signed_integer_primitive(Type_id k) const
+    {
+        return k == t_i8 || k == t_i16 || k == t_i32 || k == t_i64;
+    }
+    inline bool is_float_primitive(Type_id k) const
+    {
+        return k == t_f16 || k == t_f32 || k == t_f64;
+    }
+    inline bool is_numeric_primitive(Type_id k) const
+    {
+        return is_integer_primitive(k) || is_float_primitive(k);
+    }
 
     std::string to_string(Type_id id) const;
 
