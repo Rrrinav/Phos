@@ -11,15 +11,15 @@ namespace phos::vm {
 
 struct Call_frame
 {
-    // 1. The function we are currently executing
+    // The function we are currently executing
     // (This holds the instruction array and the constants pool!)
     phos::Closure_data *closure = nullptr;
 
-    // 2. The Instruction Pointer (IP)
+    // The Instruction Pointer (IP)
     // Tracks exactly which 32-bit instruction we are about to execute
     std::size_t ip = 0;
 
-    // 3. The Register Window Base
+    // The Register Window Base
     // Where this function's R0 starts in the Green Thread's register stack
     std::size_t frame_base = 0;
 

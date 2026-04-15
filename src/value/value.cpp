@@ -4,7 +4,6 @@
 
 #include <cstring>
 #include <limits>
-#include <new>
 #include <format>
 
 namespace phos {
@@ -76,7 +75,6 @@ Value Value::make_closure_native(
     closure->name = name;
     closure->arity = arity;
     closure->signature = std::move(sig);
-    closure->chunk_ptr = nullptr;
     closure->native_func = func;
     closure->upvalue_count = 0;
     closure->upvalues = nullptr;

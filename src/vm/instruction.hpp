@@ -34,6 +34,7 @@ Notes:
 */
 
 #include <cstdint>
+#include <string>
 
 namespace phos::vm {
 
@@ -50,6 +51,20 @@ enum class Opcode : uint8_t {
     Add_i64,            // dst, src_a, src_b
     Add_u64,            // dst, src_a, src_b
     Add_f64,            // dst, src_a, src_b
+    Sub_i64,            // dst, src_a, src_b
+    Sub_u64,            // dst, src_a, src_b
+    Sub_f64,            // dst, src_a, src_b
+
+    Mul_i64,            // dst, src_a, src_b
+    Mul_u64,            // dst, src_a, src_b
+    Mul_f64,            // dst, src_a, src_b
+    Div_i64,            // dst, src_a, src_b
+    Div_u64,            // dst, src_a, src_b
+    Div_f64,            // dst, src_a, src_b
+
+    Mod_i64,            // dst, src_a, src_b
+    Mod_u64,            // dst, src_a, src_b
+    Mod_f64,            // dst, src_a, src_b
 
     // Control flow
     Jump,               // imm_s16           : IP += offset
@@ -89,8 +104,7 @@ union Instruction {
         int16_t imm;
     } rs;
 
-    // --- Constructors for compiler/codegen ---
-    static Instruction make_rrr(Opcode op, uint8_t dst, uint8_t a, uint8_t b)
+    inline static Instruction make_rrr(Opcode op, uint8_t dst, uint8_t a, uint8_t b)
     {
         Instruction i{};
         i.rrr.op    = op;
@@ -100,7 +114,7 @@ union Instruction {
         return i;
     }
 
-    static Instruction make_ri(Opcode op, uint8_t dst, uint16_t imm)
+    inline static Instruction make_ri(Opcode op, uint8_t dst, uint16_t imm)
     {
         Instruction i{};
         i.ri.op  = op;
@@ -109,7 +123,7 @@ union Instruction {
         return i;
     }
 
-    static Instruction make_rs(Opcode op, uint8_t dst, int16_t imm)
+    inline static Instruction make_rs(Opcode op, uint8_t dst, int16_t imm)
     {
         Instruction i{};
         i.rs.op  = op;
@@ -118,6 +132,8 @@ union Instruction {
         return i;
     }
 };
+
+std::string opcode_to_string(Opcode code);
 
 static_assert(sizeof(Instruction) == 4, "Instruction must be 32-bit");
 

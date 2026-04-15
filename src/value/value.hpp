@@ -9,6 +9,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <stdfloat>
 
 // Forward declare your Arena
 namespace phos::mem {
@@ -88,35 +89,40 @@ struct Upvalue_data
 
 struct Closure_data
 {
-    String_data *name;
-    size_t arity;
-    types::Function_type signature;
+    String_data *name{};
+    std::size_t arity{};
+    types::Function_type signature{};
 
-    vm::Instruction *code;
-    size_t code_count;
+    vm::Instruction *code{nullptr};
+    std::size_t code_count{0};
 
-    Value *constants;
-    size_t constant_count;
+    Value *constants{nullptr};
+    std::size_t constant_count{0};
 
-    std::optional<Native_fn> native_func;
+    std::optional<Native_fn> native_func{std::nullopt};
 
-    size_t upvalue_count;
-    Upvalue_data **upvalues;
+    std::size_t upvalue_count{0};
+    Upvalue_data **upvalues{nullptr};
 };
 
 struct Green_thread_data
 {
-    // The stack of Call Frames (How deep the function calls go)
-    vm::Call_frame *frames;
-    size_t frame_capacity;
-    size_t frame_count;
+    // CONTROL FLOW
+    // The history of active function calls (The Call Stack)
+    vm::Call_frame *call_stack;
+    size_t call_stack_capacity;
+    size_t call_stack_count;
 
-    // The giant flat array of Registers (The "Stack")
-    struct Value *stack;
-    size_t stack_capacity;
+    // DATA
+    // The flat array of raw memory where all variables and math live.
+    struct Value *value_stack;
+    size_t value_stack_capacity;
 
+    // LIFECYCLE
+    // Is this thread completely finished executing?
     bool is_completed;
 
+    // Variables that need to be saved to the heap before a function returns.
     Upvalue_data **open_upvalues;
     size_t open_upvalue_count;
 };
