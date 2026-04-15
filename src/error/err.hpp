@@ -11,8 +11,8 @@ enum Phase { Parsing, TypeChecking, Runtime };
 
 struct msg
 {
-    std::string message;
-    std::string phase;
+    std::string message{""};
+    std::string phase{""};
     size_t line = 0;
     size_t column = 0;
     std::string filename = "";

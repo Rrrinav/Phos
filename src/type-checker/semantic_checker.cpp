@@ -78,7 +78,7 @@ std::optional<Scope_symbol> Semantic_checker::lookup(const std::string &name, co
         return Scope_symbol{*type_id, false, 0};
     }
 
-    type_error(loc, "Undefined variable, function, or type '" + name + "'.");
+    type_error(loc, std::format("Undefined variable, function, or type '{}'", name));
     return std::nullopt;
 }
 
@@ -158,7 +158,7 @@ types::Type_id Semantic_checker::promote_numeric_type(types::Type_id left, types
     return env.tt.primitive(types::primitive_bit_width(left_kind) >= types::primitive_bit_width(right_kind) ? left_kind : right_kind);
 }
 
-// ITERATORS
+// Iterators
 bool Semantic_checker::is_iterator_protocol_type(types::Type_id type) const
 {
     if (env.tt.is_iterator(type)) {
@@ -332,14 +332,14 @@ void Semantic_checker::validate_function_defaults(const ast::Function_stmt &stmt
             continue;
         }
         if (default_expr_uses_forbidden_names(param.default_value, forbidden_names)) {
-            type_error(param.loc, "Default argument for parameter '" + param.name + "' cannot reference 'this' or another parameter.");
+            type_error(param.loc, std::format("Default argument for parameter '{}' cannot reference 'this' or another parameter.", param.name));
         } else {
             auto default_type = check_expr(param.default_value, param.type);
             if (!is_compatible(param.type, default_type)) {
                 type_error(
                     param.loc,
-                    "Default argument mismatch. Expected '" + env.tt.to_string(param.type) + "', got '" + env.tt.to_string(default_type)
-                        + "'.");
+                    std::format("Default argument mismatch in function.\n   Expected: '{}'\n   Got: '{}'", env.tt.to_string(param.type), env.tt.to_string(default_type))
+                );
             }
         }
     }
@@ -356,14 +356,14 @@ void Semantic_checker::validate_model_defaults(const ast::Model_stmt &stmt)
             continue;
         }
         if (default_expr_uses_forbidden_names(field.default_value, forbidden_names)) {
-            type_error(field.loc, "Default value for field '" + field.name + "' cannot reference 'this' or another member.");
+            type_error(field.loc, std::format("Default value for field '{}' cannot reference 'this' or another member.", field.name));
         } else {
             auto default_type = check_expr(field.default_value, field.type);
             if (!is_compatible(field.type, default_type)) {
                 type_error(
                     field.loc,
-                    "Default argument mismatch. Expected '" + env.tt.to_string(field.type) + "', got '" + env.tt.to_string(default_type)
-                        + "'.");
+                    std::format("Default argument mismatch in model.\n   Expected: '{}'\n   Got: '{}'", env.tt.to_string(field.type), env.tt.to_string(default_type))
+                );
             }
         }
     }
@@ -380,58 +380,116 @@ void Semantic_checker::validate_union_defaults(const ast::Union_stmt &stmt)
             continue;
         }
         if (default_expr_uses_forbidden_names(variant.default_value, forbidden_names)) {
-            type_error(variant.loc, "Default value for variant '" + variant.name + "' cannot reference another member.");
+            type_error(variant.loc, std::format("Default value for variant '{}' cannot reference another member.", variant.name));
         }
         if (variant.type == env.tt.get_void()) {
-            type_error(variant.loc, "Variant '" + variant.name + "' does not take a payload, cannot declare default.");
+            type_error(variant.loc, std::format("Variant '{}' does not take a payload, cannot declare default.", variant.name));
             continue;
         }
         auto default_type = check_expr(variant.default_value, variant.type);
         if (!is_compatible(variant.type, default_type)) {
             type_error(
                 variant.loc,
-                "Default argument mismatch. Expected '" + env.tt.to_string(variant.type) + "', got '" + env.tt.to_string(default_type)
-                    + "'.");
+                std::format("Default argument mismatch in model.\n   Expected: '{}'\n   Got: '{}'",
+                    env.tt.to_string(variant.type),
+                    env.tt.to_string(default_type)
+                )
+            );
         }
     }
 }
 
 // Nil Tracking
-void Semantic_checker::collect_nil_check_from_optional_method(const ast::Method_call_expr &expr, bool target_truthy_branch, std::unordered_set<std::string> &out)
+std::optional<Semantic_checker::Access_path> Semantic_checker::extract_access_path(ast::Expr_id expr_id) const
+{
+    if (expr_id.is_null()) {
+        return std::nullopt;
+    }
+
+    auto &node = tree.get(expr_id).node;
+
+    if (auto *v = std::get_if<ast::Variable_expr>(&node)) {
+        return Access_path{v->name, {}};
+    }
+    if (auto *f = std::get_if<ast::Field_access_expr>(&node)) {
+        auto base_path = extract_access_path(f->object);
+        if (!base_path) {
+            return std::nullopt;
+        }
+
+        base_path->projections.push_back(Projection{.kind = Projection_kind::Field, .name_val = f->field_name});
+        return base_path;
+    }
+    if (auto *a = std::get_if<ast::Array_access_expr>(&node)) {
+        auto base_path = extract_access_path(a->array);
+        if (!base_path) {
+            return std::nullopt;
+        }
+
+        auto &idx_node = tree.get(a->index).node;
+
+        // Semantic check 1: Is the index a variable like `i`?
+        if (auto *index_var = std::get_if<ast::Variable_expr>(&idx_node)) {
+            base_path->projections.push_back(Projection{.kind = Projection_kind::Var_Index, .name_val = index_var->name});
+            return base_path;
+        }
+        // Semantic check 2: Is the index a hardcoded literal like `0`?
+        if (auto *l = std::get_if<ast::Literal_expr>(&idx_node)) {
+            if (std::holds_alternative<std::int64_t>(l->value.payload)) {
+                base_path->projections.push_back(
+                    Projection{.kind = Projection_kind::Int_Index, .name_val = "", .int_val = std::get<std::int64_t>(l->value.payload)});
+                return base_path;
+            }
+            if (std::holds_alternative<std::uint64_t>(l->value.payload)) {
+                base_path->projections.push_back(
+                    Projection{.kind = Projection_kind::Uint_Index, .name_val = "", .uint_val = std::get<std::uint64_t>(l->value.payload)});
+                return base_path;
+            }
+        }
+
+        // If it's a complex math operation (like x[i+1]), it's unsafe to track.
+        return std::nullopt;
+    }
+
+    return std::nullopt;
+}
+
+void Semantic_checker::collect_nil_check_from_optional_method(const ast::Method_call_expr &expr, bool target_truthy_branch, std::unordered_set<Access_path, Access_path_hash> &out)
 {
     if (!expr.arguments.empty()) {
         return;
     }
-    auto *var_expr = std::get_if<ast::Variable_expr>(&tree.get(expr.object).node);
-    if (!var_expr || !env.tt.is_optional(ast::get_type(tree.get(expr.object).node))) {
+    if (!env.tt.is_optional(ast::get_type(tree.get(expr.object).node))) {
         return;
     }
-    bool narrows_when_truthy = (expr.method_name == "has_value" || expr.method_name == "is_some");
-    bool narrows_when_falsey = (expr.method_name == "is_none");
+
+    bool narrows_when_truthy = (expr.method_name == "has_val" || expr.method_name == "is_val");
+    bool narrows_when_falsey = (expr.method_name == "is_nil");
     if ((target_truthy_branch && narrows_when_truthy) || (!target_truthy_branch && narrows_when_falsey)) {
-        out.insert(var_expr->name);
+        if (auto path = extract_access_path(expr.object)) {
+            out.insert(*path);
+        }
     }
 }
 
-void Semantic_checker::collect_nil_check_from_comparison(
-    const ast::Binary_expr &expr, lex::TokenType target_op, std::unordered_set<std::string> &out)
+void Semantic_checker::collect_nil_check_from_comparison(const ast::Binary_expr &expr, lex::TokenType target_op, std::unordered_set<Access_path, Access_path_hash> &out)
 {
-    const ast::Variable_expr *var_expr = nullptr;
-    if (auto *left_var = std::get_if<ast::Variable_expr>(&tree.get(expr.left).node)) {
-        if (env.tt.is_nil(ast::get_type(tree.get(expr.right).node))) {
-            var_expr = left_var;
-        }
-    } else if (auto *right_var = std::get_if<ast::Variable_expr>(&tree.get(expr.right).node)) {
-        if (env.tt.is_nil(ast::get_type(tree.get(expr.left).node))) {
-            var_expr = right_var;
-        }
+    if (expr.op != target_op) {
+        return;
     }
-    if (var_expr && expr.op == target_op) {
-        out.insert(var_expr->name);
+
+    if (env.tt.is_nil(ast::get_type(tree.get(expr.right).node))) {
+        if (auto path = extract_access_path(expr.left)) {
+            out.insert(*path);
+        }
+    } else if (env.tt.is_nil(ast::get_type(tree.get(expr.left).node))) {
+        if (auto path = extract_access_path(expr.right)) {
+            out.insert(*path);
+        }
     }
 }
 
-void Semantic_checker::collect_nil_checked_vars_for_then(ast::Expr_id expr_id, std::unordered_set<std::string> &out)
+void Semantic_checker::collect_nil_checked_vars_for_then(ast::Expr_id expr_id, std::unordered_set<Access_path, Access_path_hash> &out)
 {
     if (expr_id.is_null()) {
         return;
@@ -457,14 +515,14 @@ void Semantic_checker::collect_nil_checked_vars_for_then(ast::Expr_id expr_id, s
         collect_nil_check_from_optional_method(*method_expr, true, out);
         return;
     }
-    if (auto *var_expr = std::get_if<ast::Variable_expr>(&node)) {
-        if (env.tt.is_optional(var_expr->type)) {
-            out.insert(var_expr->name);
+    if (env.tt.is_optional(ast::get_type(node))) {
+        if (auto path = extract_access_path(expr_id)) {
+            out.insert(*path);
         }
     }
 }
 
-void Semantic_checker::collect_nil_checked_vars_for_else(ast::Expr_id expr_id, std::unordered_set<std::string> &out)
+void Semantic_checker::collect_nil_checked_vars_for_else(ast::Expr_id expr_id, std::unordered_set<Access_path, Access_path_hash> &out)
 {
     if (expr_id.is_null()) {
         return;
@@ -658,7 +716,9 @@ Semantic_checker::Bound_call_arguments Semantic_checker::bind_call_arguments(
                     "Argument type mismatch for parameter '{}'. Expected '{}' but got '{}'.",
                     parameters[target_index].name,
                     env.tt.to_string(parameters[target_index].type),
-                    env.tt.to_string(arg_type)));
+                    env.tt.to_string(arg_type)
+                )
+            );
             result.ok = false;
         }
 
@@ -681,7 +741,7 @@ Semantic_checker::Bound_call_arguments Semantic_checker::bind_call_arguments(
 }
 
 Semantic_checker::Bound_native_arguments Semantic_checker::try_bind_native_arguments(
-    const std::vector<Native_param> &parameters,
+    const std::vector<types::Native_param> &parameters,
     const std::vector<ast::Call_argument> &arguments,
     std::optional<types::Type_id> receiver_type)
 {
@@ -801,17 +861,28 @@ types::Type_id Semantic_checker::check_expr(ast::Expr_id expr_id, std::optional<
     }
 
     // 2. Standard Expression Evaluation
-    types::Type_id actual_type =
-        std::visit([this, context_type](auto &e) -> types::Type_id { return check_expr_node(e, context_type); }, expr.node);
+    types::Type_id actual_type = std::visit([this, context_type](auto &e) -> types::Type_id { return check_expr_node(e, context_type); }, expr.node);
 
-    // 3. Auto-Lifting Logic
+    // 3. Path-Based Nil Narrowing (Checks structurally!)
+    if (env.tt.is_optional(actual_type)) {
+        if (auto path = extract_access_path(expr_id)) {
+            for (const auto &scope : m_nil_checked_vars_stack) {
+                if (scope.count(*path)) {
+                    actual_type = env.tt.get_optional_base(actual_type);
+                    break;
+                }
+            }
+        }
+    }
+
+    // 4. Auto-Lifting Logic
     if (context_type) {
         int expected_depth = env.tt.optional_depth(*context_type);
         int actual_depth = env.tt.optional_depth(actual_type);
 
         if (expected_depth > actual_depth) {
             types::Type_id expected_base = env.tt.optional_base(*context_type);
-            types::Type_id actual_base = env.tt.optional_base(actual_type);
+            types::Type_id actual_base   = env.tt.optional_base(actual_type);
 
             if (env.tt.is_nil(actual_base) || env.tt.is_unknown(actual_base)) {
                 expr.auto_wrap_depth = 0;
@@ -870,7 +941,7 @@ void Semantic_checker::check_stmt_node(ast::Var_stmt &stmt)
         }
         stmt.type = init_type;
     } else if (!stmt.initializer.is_null() && !initializer_failed && !is_compatible(stmt.type, init_type)) {
-        type_error(stmt.loc, "Initializer type '" + env.tt.to_string(init_type) + "' does not match variable type.");
+        type_error(stmt.loc, std::format("Initializer type '{}' does not match variable type.", env.tt.to_string(init_type)));
     }
     declare(stmt.name, stmt.type, stmt.is_mut, stmt.loc);
 }
@@ -911,33 +982,39 @@ void Semantic_checker::check_stmt_node(ast::Expr_stmt &stmt)
 void Semantic_checker::check_stmt_node(ast::If_stmt &stmt)
 {
     auto condition_type = check_expr(stmt.condition);
+
     if (!env.tt.is_bool(condition_type) && !env.tt.is_optional(condition_type) && !env.tt.is_unknown(condition_type)) {
         type_error(ast::get_loc(tree.get(stmt.condition).node), "If condition must be a boolean or optional.");
     }
 
-    std::unordered_set<std::string> narrowed_in_then, narrowed_in_else;
+    std::unordered_set<Access_path, Access_path_hash> narrowed_in_then, narrowed_in_else;
     collect_nil_checked_vars_for_then(stmt.condition, narrowed_in_then);
     collect_nil_checked_vars_for_else(stmt.condition, narrowed_in_else);
 
     variables.begin_scope();
     m_nil_checked_vars_stack.emplace_back();
-    for (const auto &name : narrowed_in_then) {
-        m_nil_checked_vars_stack.back().insert(name);
+
+    for (const auto &path : narrowed_in_then) {
+        m_nil_checked_vars_stack.back().insert(path);
     }
+
     if (!stmt.then_branch.is_null()) {
         check_stmt(stmt.then_branch);
     }
+
     m_nil_checked_vars_stack.pop_back();
     variables.end_scope();
 
     variables.begin_scope();
     m_nil_checked_vars_stack.emplace_back();
-    for (const auto &name : narrowed_in_else) {
-        m_nil_checked_vars_stack.back().insert(name);
+    for (const auto &path : narrowed_in_else) {
+        m_nil_checked_vars_stack.back().insert(path);
     }
+
     if (!stmt.else_branch.is_null()) {
         check_stmt(stmt.else_branch);
     }
+
     m_nil_checked_vars_stack.pop_back();
     variables.end_scope();
 }
@@ -1194,7 +1271,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Model_literal_expr &expr, 
 
         auto it = std::find_if(union_t.variants.begin(), union_t.variants.end(), [&](const auto &v) { return v.first == variant_name; });
         if (it == union_t.variants.end()) {
-            type_error(expr.loc, "Union has no variant named '" + variant_name + "'.");
+            type_error(expr.loc, std::format("Union has no variant named '{}'.", variant_name));
             return expr.type = env.tt.get_unknown();
         }
 
@@ -1252,7 +1329,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Model_literal_expr &expr, 
                     expr.fields.push_back({expected_field.first, model_data_ptr->field_defaults.at(expected_field.first)});
                     provided_fields.insert(expected_field.first);
                 } else {
-                    type_error(expr.loc, "Missing required field '" + expected_field.first + "'.");
+                    type_error(expr.loc, std::format("Missing required field '{}'.", expected_field.first));
                 }
             }
         }
@@ -1262,7 +1339,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Model_literal_expr &expr, 
             auto it =
                 std::find_if(model_type.fields.begin(), model_type.fields.end(), [&](const auto &f) { return f.first == field_name; });
             if (it == model_type.fields.end()) {
-                type_error(expr.loc, "Unknown field '" + field_name + "'.");
+                type_error(expr.loc, std::format("Unknown field '{}'.", field_name));
                 continue;
             }
             auto expected_type = it->second;
@@ -1274,7 +1351,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Model_literal_expr &expr, 
         return expr.type = resolved_type;
     }
 
-    type_error(expr.loc, "'" + expr.model_name + "' is not a model or a union.");
+    type_error(expr.loc, std::format("'{}' is not a model or a union.", expr.model_name));
     return expr.type = env.tt.get_unknown();
 }
 
@@ -1320,7 +1397,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Anon_model_literal_expr &e
             return v.first == variant_name;
         });
         if (it == expected_union.variants.end()) {
-            type_error(expr.loc, "Union has no variant named '" + variant_name + "'.");
+            type_error(expr.loc, std::format("Union has no variant named '{}'.", variant_name));
             return expr.type = env.tt.get_unknown();
         }
 
@@ -1399,7 +1476,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Anon_model_literal_expr &e
                 ordered.push_back({expected_field.first, model_data_ptr->field_defaults.at(expected_field.first)});
                 continue;
             }
-            type_error(expr.loc, "Missing required field '" + expected_field.first + "'.");
+            type_error(expr.loc, std::format("Missing required field '{}'.", expected_field.first));
         }
         expr.fields = std::move(ordered);
         return expr.type = is_ctx_optional ? *context_type : expected_type;
@@ -1446,15 +1523,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Variable_expr &expr, std::
         return expr.type = env.tt.get_unknown();
     }
 
-    auto actual_type = type_res->type;
-    for (const auto &scope : m_nil_checked_vars_stack) {
-        if (scope.count(expr.name)) {
-            if (env.tt.is_optional(actual_type)) {
-                return expr.type = env.tt.get_optional_base(actual_type);
-            }
-        }
-    }
-    return expr.type = actual_type;
+    return expr.type = type_res->type;
 }
 
 types::Type_id Semantic_checker::check_expr_node(ast::Binary_expr &expr, std::optional<types::Type_id> context_type)
@@ -1634,7 +1703,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Call_expr &expr, std::opti
                 return expr.type = parse_type_string(signatures[sig_index].ret_type_str, bound.generics);
             }
         }
-        type_error(expr.loc, "Arguments do not match any native signature for function '" + ffi_callee_name + "'.");
+        type_error(expr.loc, std::format("Arguments do not match any native signature for function '{}'.",ffi_callee_name));
         return expr.type = env.tt.get_unknown();
     }
 
@@ -1695,13 +1764,13 @@ types::Type_id Semantic_checker::check_expr_node(ast::Call_expr &expr, std::opti
 
                 return expr.type = sig.ret;
             } else {
-                type_error(static_path->loc, "Model '" + model_t.name + "' has no static method '" + static_path->member.lexeme + "'.");
+                type_error(static_path->loc, std::format("Model '{}' has no static method '{}'.", model_t.name, static_path->member.lexeme));
                 return expr.type = env.tt.get_unknown();
             }
         }
     }
 
-    // --- STEP 4: STANDARD FUNCTION / CLOSURE CALLS ---
+    // STEP 4: Standard Function / Closure Calls
     auto callee_type = check_expr(expr.callee);
     if (env.tt.is_unknown(callee_type)) {
         return expr.type = env.tt.get_unknown();
@@ -1748,6 +1817,10 @@ types::Type_id Semantic_checker::check_expr_node(ast::Cast_expr &expr, std::opti
     auto original_type = check_expr(expr.expression);
     auto target_type = expr.target_type;
 
+    if (env.tt.is_unknown(original_type)) {
+        return target_type;
+    }
+
     if (is_compatible(target_type, original_type)) {
         return target_type;
     }
@@ -1788,10 +1861,12 @@ types::Type_id Semantic_checker::check_expr_node(ast::Cast_expr &expr, std::opti
 
     if (env.tt.is_optional(original_type) && !env.tt.is_optional(target_type)) {
         auto base_type = env.tt.get_optional_base(original_type);
-        if (auto *var_expr = std::get_if<ast::Variable_expr>(&tree.get(expr.expression).node)) {
+
+        // Use the path extractor here!
+        if (auto path = extract_access_path(expr.expression)) {
             bool is_checked = false;
             for (const auto &scope : m_nil_checked_vars_stack) {
-                if (scope.count(var_expr->name)) {
+                if (scope.count(*path)) {
                     is_checked = true;
                     break;
                 }
@@ -1800,26 +1875,25 @@ types::Type_id Semantic_checker::check_expr_node(ast::Cast_expr &expr, std::opti
                 type_error(expr.loc, "Cannot cast optional type to non-optional type without a nil check.");
                 return expr.target_type = env.tt.get_unknown();
             }
-            if (!is_compatible(target_type, base_type) && !(env.tt.is_numeric_primitive(base_type) && env.tt.is_numeric_primitive(target_type))) {
+            if (!is_compatible(target_type, base_type)
+                && !(env.tt.is_numeric_primitive(base_type) && env.tt.is_numeric_primitive(target_type))) {
                 type_error(
                     expr.loc,
                     std::format(
                         "Cannot cast unwrapped payload.\n    optional base: '{}'\n    casted type: '{}'",
                         env.tt.to_string(base_type),
-                        env.tt.to_string(target_type)
-                    )
-                );
+                        env.tt.to_string(target_type)));
                 return expr.target_type = env.tt.get_unknown();
             }
             return target_type;
         }
+
         type_error(
             expr.loc,
             std::format(
                 "Cannot explicitly cast a complex optional expression.\n    optional base: '{}'\n    casted type: '{}'",
                 env.tt.to_string(base_type),
-                env.tt.to_string(target_type))
-        );
+                env.tt.to_string(target_type)));
         return expr.target_type = env.tt.get_unknown();
     }
 
@@ -1830,7 +1904,8 @@ types::Type_id Semantic_checker::check_expr_node(ast::Cast_expr &expr, std::opti
 
     type_error(
         expr.loc,
-        "Invalid cast. Cannot cast from '" + env.tt.to_string(original_type) + "' to '" + env.tt.to_string(target_type) + "'.");
+        std::format("Invalid cast. Cannot cast from '{}' to '{}'.", env.tt.to_string(original_type), env.tt.to_string(target_type))
+    );
     return expr.target_type = env.tt.get_unknown();
 }
 
@@ -1872,7 +1947,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Field_access_expr &expr, s
     if (env.tt.is_union(obj_type)) {
         auto &union_t = std::get<types::Union_type>(env.tt.get(obj_type).data);
         if (!contains_key(union_t.variants, expr.field_name)) {
-            type_error(expr.loc, "Union has no variant named '" + expr.field_name + "'");
+            type_error(expr.loc, std::format("Union has no variant named '{}'", expr.field_name));
             return expr.type = env.tt.get_unknown();
         }
         return expr.type = find_by_key(union_t.variants, expr.field_name)->second;
@@ -1887,7 +1962,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Field_access_expr &expr, s
             const auto &method = find_by_key(model_t.methods, expr.field_name)->second;
             return expr.type = env.tt.function(method.params, method.ret);
         }
-        type_error(expr.loc, "Model has no member '" + expr.field_name + "'");
+        type_error(expr.loc, std::format("Model has no member '{}'", expr.field_name));
     } else {
         type_error(expr.loc, "Can only access fields on model instances");
     }
@@ -1903,7 +1978,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Static_path_expr &expr, st
     if (env.tt.is_union(base_type)) {
         auto &union_t = std::get<types::Union_type>(env.tt.get(base_type).data);
         if (!contains_key(union_t.variants, expr.member.lexeme)) {
-            type_error(expr.loc, "Union has no variant '" + expr.member.lexeme + "'.");
+            type_error(expr.loc, std::format("Union has no variant '{}'.", expr.member.lexeme));
             return expr.type = env.tt.get_unknown();
         }
         auto variant_type = find_by_key(union_t.variants, expr.member.lexeme)->second;
@@ -1925,7 +2000,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Static_path_expr &expr, st
             fparams.insert(fparams.end(), sig.params.begin(), sig.params.end());
             return expr.type = env.tt.function(fparams, sig.ret);
         }
-        type_error(expr.loc, "Model has no method '" + expr.member.lexeme + "'.");
+        type_error(expr.loc, std::format("Model has no method '{}'.", expr.member.lexeme));
         return expr.type = env.tt.get_unknown();
     } else if (env.tt.is_enum(base_type)) {
         auto enum_data_ptr = env.get_enum(std::get<types::Enum_type>(env.tt.get(base_type).data).name);
@@ -1943,7 +2018,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Static_path_expr &expr, st
 types::Type_id Semantic_checker::check_expr_node(ast::Enum_member_expr &expr, std::optional<types::Type_id> context_type)
 {
     if (!context_type) {
-        type_error(expr.loc, "Cannot infer enum type for '." + expr.member_name + "'. Context is missing.");
+        type_error(expr.loc, std::format("Cannot infer enum type for '{}.'. Context is missing.", expr.member_name));
         return expr.type = env.tt.get_unknown();
     }
 
@@ -1959,7 +2034,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Enum_member_expr &expr, st
 
     auto enum_data_ptr = env.get_enum(std::get<types::Enum_type>(env.tt.get(expected_type).data).name);
     if (!enum_data_ptr->variants.contains(expr.member_name)) {
-        type_error(expr.loc, "Enum has no variant '" + expr.member_name + "'.");
+        type_error(expr.loc, std::format("Enum has no variant '{}'.", expr.member_name));
         return expr.type = env.tt.get_unknown();
     }
 
@@ -2033,7 +2108,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Method_call_expr &expr, st
                         type_error(ast::get_loc(*arg_expr_node), "Argument to .has() must be a variant of the same union type.");
                     }
                     if (!contains_key(union_t.variants, static_path->member.lexeme)) {
-                        type_error(ast::get_loc(*arg_expr_node), "Union has no variant named '" + static_path->member.lexeme + "'");
+                        type_error(ast::get_loc(*arg_expr_node), std::format("Union has no variant named '{}'", static_path->member.lexeme));
                     }
                 } else {
                     type_error(ast::get_loc(*arg_expr_node), "Argument to .has() must be a static-like variant access.");
@@ -2094,7 +2169,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Method_call_expr &expr, st
                 return expr.type = parse_type_string(signatures[sig_index].ret_type_str, bound.generics);
             }
         }
-        type_error(expr.loc, "Arguments do not match any native signature for method '" + expr.method_name + "'.");
+        type_error(expr.loc, std::format("Arguments do not match any native signature for method '{}'.", expr.method_name));
         return expr.type = env.tt.get_unknown();
     }
 
@@ -2184,7 +2259,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Method_call_expr &expr, st
         }
     }
 
-    type_error(expr.loc, "No method or closure field named '" + expr.method_name + "'.");
+    type_error(expr.loc, std::format("No method or closure field named '{}'.", expr.method_name));
     return expr.type = env.tt.get_unknown();
 }
 

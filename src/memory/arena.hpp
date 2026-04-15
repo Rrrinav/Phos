@@ -85,6 +85,21 @@ public:
         return reinterpret_cast<T *>(ptr);
     }
 
+    void *allocate_bytes(std::size_t bytes, std::size_t alignment = 8)
+    {
+        std::size_t aligned = (bytes + alignment - 1) & ~(alignment - 1);
+
+        _block *back = this->blocks_.back();
+        if (back->size + aligned > back->capacity) {
+            add_block(aligned);
+            back = this->blocks_.back();
+        }
+
+        char *ptr = back->data + back->size;
+        back->size += aligned;
+        return ptr;
+    }
+
     template <typename T, typename... Args>
     T *create(Args &&...args)
     {

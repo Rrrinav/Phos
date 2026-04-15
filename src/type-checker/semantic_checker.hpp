@@ -17,17 +17,71 @@ namespace phos {
 // Strictly decoupled from declaration tracking.
 class Semantic_checker
 {
+    // --- Structural Access Path (Place Expression) ---
+    enum class Projection_kind { Field, Var_Index, Int_Index, Uint_Index };
+
+    struct Projection
+    {
+        Projection_kind kind;
+        std::string name_val; // Used for Field names and Variable indices (e.g. "i")
+        std::int64_t int_val = 0;
+        std::uint64_t uint_val = 0;
+
+        bool operator==(const Projection &o) const
+        {
+            if (kind != o.kind) {
+                return false;
+            }
+            if (kind == Projection_kind::Field || kind == Projection_kind::Var_Index) {
+                return name_val == o.name_val;
+            }
+            if (kind == Projection_kind::Int_Index) {
+                return int_val == o.int_val;
+            }
+            return uint_val == o.uint_val;
+        }
+    };
+
+    struct Access_path
+    {
+        std::string base_variable;
+        std::vector<Projection> projections;
+
+        bool operator==(const Access_path &o) const
+        {
+            return base_variable == o.base_variable && projections == o.projections;
+        }
+    };
+
+    struct Access_path_hash
+    {
+        size_t operator()(const Access_path &p) const
+        {
+            size_t h = std::hash<std::string>{}(p.base_variable);
+            for (const auto &proj : p.projections) {
+                h ^= std::hash<int>{}(static_cast<int>(proj.kind)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+                if (proj.kind == Projection_kind::Field || proj.kind == Projection_kind::Var_Index) {
+                    h ^= std::hash<std::string>{}(proj.name_val) + 0x9e3779b9 + (h << 6) + (h >> 2);
+                } else if (proj.kind == Projection_kind::Int_Index) {
+                    h ^= std::hash<std::int64_t>{}(proj.int_val) + 0x9e3779b9 + (h << 6) + (h >> 2);
+                } else {
+                    h ^= std::hash<std::uint64_t>{}(proj.uint_val) + 0x9e3779b9 + (h << 6) + (h >> 2);
+                }
+            }
+            return h;
+        }
+    };
+
 public:
     Semantic_checker(ast::Ast_tree &tree, Type_environment &env);
 
     std::vector<err::msg> check(const std::vector<ast::Stmt_id> &statements);
 
-private:
     ast::Ast_tree &tree;
     Type_environment &env;
     Scope_tracker variables;
 
-    std::vector<std::unordered_set<std::string>> m_nil_checked_vars_stack;
+    std::vector<std::unordered_set<Access_path, Access_path_hash>> m_nil_checked_vars_stack;
     std::optional<types::Type_id> current_return_type;
     std::optional<types::Type_id> current_model_type;
 
@@ -49,11 +103,12 @@ private:
     void validate_model_defaults(const ast::Model_stmt &stmt);
     void validate_union_defaults(const ast::Union_stmt &stmt);
 
-    void collect_nil_check_from_comparison(const ast::Binary_expr &expr, lex::TokenType target_op, std::unordered_set<std::string> &out);
-    void collect_nil_check_from_optional_method(
-        const ast::Method_call_expr &expr, bool target_truthy_branch, std::unordered_set<std::string> &out);
-    void collect_nil_checked_vars_for_then(ast::Expr_id expr, std::unordered_set<std::string> &out);
-    void collect_nil_checked_vars_for_else(ast::Expr_id expr, std::unordered_set<std::string> &out);
+    std::optional<Access_path> extract_access_path(ast::Expr_id expr_id) const;
+
+    void collect_nil_check_from_comparison(const ast::Binary_expr &expr, lex::TokenType target_op, std::unordered_set<Access_path, Access_path_hash> &out);
+    void collect_nil_check_from_optional_method(const ast::Method_call_expr &expr, bool target_truthy_branch, std::unordered_set<Access_path, Access_path_hash> &out);
+    void collect_nil_checked_vars_for_then(ast::Expr_id expr, std::unordered_set<Access_path, Access_path_hash> &out);
+    void collect_nil_checked_vars_for_else(ast::Expr_id expr, std::unordered_set<Access_path, Access_path_hash> &out);
 
     // --- Binders & FFI ---
     struct Bound_call_arguments
@@ -77,13 +132,12 @@ private:
         const std::string &call_name);
 
     Bound_native_arguments try_bind_native_arguments(
-        const std::vector<Native_param> &parameters,
+        const std::vector<types::Native_param> &parameters,
         const std::vector<ast::Call_argument> &arguments,
         std::optional<types::Type_id> receiver_type = std::nullopt);
 
     types::Type_id parse_type_string(std::string str, const std::unordered_map<std::string, types::Type_id> &generics) const;
-    bool
-    match_ffi_type(std::string expected_str, types::Type_id actual_type, std::unordered_map<std::string, types::Type_id> &generics) const;
+    bool match_ffi_type(std::string expected_str, types::Type_id actual_type, std::unordered_map<std::string, types::Type_id> &generics) const;
 
     // --- Iterator Protocol ---
     bool is_iterator_protocol_type(types::Type_id type) const;
