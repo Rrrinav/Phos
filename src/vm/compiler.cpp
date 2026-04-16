@@ -6,7 +6,7 @@
 
 namespace phos::vm {
 
-Compiler::Compiler(const ast::Ast_tree &tree, const Type_environment &env) : tree(tree), env(env)
+Compiler::Compiler(const ast::Ast_tree &tree, const Type_environment &env, mem::Arena& arena_) : tree(tree), env(env), arena(arena_)
 {}
 
 Closure_data Compiler::compile(const std::vector<ast::Stmt_id> &statements)
@@ -22,10 +22,17 @@ Closure_data Compiler::compile(const std::vector<ast::Stmt_id> &statements)
     // For now, we rely on the caller to keep the Compiler object alive
     // while the VM executes, or change Closure_data to own the vectors.
     Closure_data data{};
-    data.code = code_.data();
     data.code_count = code_.size();
-    data.constants = constants_.data();
+    if (data.code_count > 0) {
+        data.code = arena.allocate<vm::Instruction>(data.code_count);
+        std::copy(code_.begin(), code_.end(), data.code);
+    }
+
     data.constant_count = constants_.size();
+    if (data.constant_count > 0) {
+        data.constants = arena.allocate<Value>(data.constant_count);
+        std::copy(constants_.begin(), constants_.end(), data.constants);
+    }
 
     return data;
 }
@@ -58,9 +65,6 @@ uint16_t Compiler::add_constant(Value val)
     constants_.push_back(val);
     return static_cast<uint16_t>(constants_.size() - 1);
 }
-
-// STATEMENTS
-
 void Compiler::compile_stmt(ast::Stmt_id stmt_id)
 {
     if (stmt_id.is_null()) {
@@ -78,16 +82,13 @@ void Compiler::compile_stmt(ast::Stmt_id stmt_id)
 
             } else if constexpr (std::is_same_v<T, ast::Var_stmt>) {
                 compile_stmt_node(s);
-
+            // Added the 'else' so it only prints if nothing matched!
+            } else {
+                std::println(std::cerr, "Unimplemented stmt node");
             }
-
-            std::println(std::cerr, "Unimplemented stmt node");
         },
         tree.get(stmt_id).node
     );
-
-    // Reclaim hardware after the statement finishes
-    reset_registers();
 }
 
 uint8_t Compiler::compile_expr(ast::Expr_id expr_id)

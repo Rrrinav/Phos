@@ -91,10 +91,6 @@ void Virtual_machine::execute(Green_thread_data *thread)
         }
         // CONTROL FLOW
         case Opcode::Return: {
-            // NOTE: This is just for current debugging purposes.
-            Value result = registers[base + inst.rrr.dst];
-            std::cout << "Execution Finished. Result: " << result.to_debug_string() << "\n";
-
             thread->is_completed = true;
             frame->ip = ip;
             return;

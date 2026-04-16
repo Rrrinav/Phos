@@ -138,6 +138,7 @@ union Instruction {
 };
 
 std::string opcode_to_string(Opcode code);
+Opcode string_to_opcode(std::string code);
 
 static_assert(sizeof(Instruction) == 4, "Instruction must be 32-bit");
 

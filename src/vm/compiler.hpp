@@ -5,6 +5,8 @@
 #include "../vm/instruction.hpp"
 #include "../value/value.hpp"
 
+#include "../memory/arena.hpp"
+
 #include <vector>
 
 namespace phos::vm {
@@ -13,8 +15,9 @@ class Compiler
 
     const ast::Ast_tree &tree;
     const Type_environment &env;
+    mem::Arena& arena;
 public:
-    Compiler(const ast::Ast_tree &tree, const Type_environment &env);
+    Compiler(const ast::Ast_tree &tree, const Type_environment &env, mem::Arena& arena_);
     Closure_data compile(const std::vector<ast::Stmt_id> &statements);
     uint8_t allocate_register();
     void reset_registers();

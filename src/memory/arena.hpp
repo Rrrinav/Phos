@@ -48,6 +48,11 @@ public:
         add_block(this->DEF_BLOCK_SIZE);
     }
 
+    explicit Arena(std::size_t initial_size)
+    {
+        add_block(initial_size);
+    }
+
     Arena(const Arena &) = delete;
     Arena &operator=(const Arena &) = delete;
 

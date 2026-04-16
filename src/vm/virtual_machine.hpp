@@ -40,6 +40,7 @@ public:
     {
         std::ostream &out = std::cout;
         std::ostream &err = std::cerr;
+        bool trace_execution = false;
         std::function<void(const std::string &)> panic_handler;
     };
 
