@@ -2,8 +2,9 @@
 #include "lexer/token.hpp"
 #include "memory/arena.hpp"
 #include "parser/ast-printer.hpp"
+#include "parser/ast.hpp"
 #include "parser/parser.hpp"
-#include "type-checker/type-checker.hpp"
+#include "semantic-checker/semantic_checker.hpp"
 
 #include <cstdlib>
 #include <fstream>
@@ -13,9 +14,8 @@
 #include <string>
 
 // --- VM Integrations ---
-#include "vm/assembler.hpp"
+#include "value/value.hpp"
 #include "vm/compiler.hpp"
-#include "vm/core_library.hpp"
 #include "vm/virtual_machine.hpp"
 
 #define CL_IMPLEMENTATION
@@ -24,12 +24,9 @@
 int main(int argc, char *argv[])
 {
     if (argc == 1) {
+        // TODO: Fix
         std::println(stderr, "REPL currently not properly working");
         return 1;
-        // TODO: start REPL
-        // Phos_repl repl;
-        // repl.run();
-        // return 0;
     }
 
     cl::Parser p("Phos", "Phos interpreted programming language");
@@ -62,23 +59,12 @@ int main(int argc, char *argv[])
     std::string source = buffer.str();
     file.close();
 
-    // 1. Initialize the VM
-    phos::vm::Virtual_machine vm;
-
-    // 2. Direct Assembly Execution Path!
-    if (filename.ends_with(".phosasm")) {
-        auto res_main = phos::vm::Assembler::assemble(source);
-        auto res = vm.interpret(res_main);
-        if (!res) {
-            std::println(stderr, "Runtime error: {}", res.error().format());
-            return 1;
-        }
-        return 0;
-    }
-
     phos::mem::Arena arena;
+    phos::vm::Virtual_machine vm(arena);
     phos::types::Type_table type_table{};
-    phos::lex::Lexer lexer(source);
+    phos::lex::Lexer lexer(source, arena);
+    phos::ast::Ast_tree ast_tree;
+
     try {
         auto tokens = lexer.tokenize();
 
@@ -93,7 +79,7 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        phos::Parser parser(*tokens, type_table, arena);
+        phos::Parser parser(*tokens, type_table, ast_tree, arena);
         auto parse_result = parser.parse();
 
         if (!parse_result) {
@@ -101,16 +87,15 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        // 3. Register Core Library & Type Check
-        phos::Type_checker type_checker;
-        phos::vm::core::register_core_library(vm, type_checker);
+        phos::Type_environment env(type_table);
+        phos::Semantic_checker checker{ast_tree, env, arena};
 
-        auto checked = type_checker.check(parse_result.value());
+        auto checked = checker.check(parse_result.value());
 
         if (print_ast) {
-            phos::ast::AstPrinter printer;
+            phos::ast::Tree_printer printer(ast_tree, type_table);
             printer.use_unicode = print_use_unicode;
-            printer.print_statements(parse_result.value());
+            std::println("{}", printer.print_statements(parse_result.value()));
             std::cout.flush();
         }
 
@@ -122,32 +107,44 @@ int main(int argc, char *argv[])
         }
 
         // 4. Compile to Bytecode
-        phos::vm::Compiler compiler{&type_checker};
-        auto chunk_result = compiler.compile(parse_result.value());
-        if (!chunk_result) {
-            std::println(stderr, "Compile error: {}", chunk_result.error().format());
-            return 1;
-        }
+        phos::vm::Compiler compiler{ast_tree, env};
+        auto main_function = compiler.compile(parse_result.value());
+
+
+        //if (!chunk_result) {
+        //    std::println(stderr, "Compile error: {}", chunk_result.error().format());
+        //    return 1;
+        //}
 
         // 5. Output IR if requested
-        if (print_ir) {
-            auto ir = phos::vm::Assembler::serialize(chunk_result.value());
-            std::ofstream out_file(ir_out_file);
-            if (out_file.is_open()) {
-                out_file << ir;
-                out_file.close();
-                std::println("IR successfully written to {}", ir_out_file);
-            } else {
-                std::println(stderr, "Failed to write to {}. Printing to stdout:\n{}", ir_out_file, ir);
-            }
-        }
+        //if (print_ir) {
+        //    auto ir = phos::vm::Assembler::serialize(chunk_result.value());
+        //    std::ofstream out_file(ir_out_file);
+        //    if (out_file.is_open()) {
+        //        out_file << ir;
+        //        out_file.close();
+        //        std::println("IR successfully written to {}", ir_out_file);
+        //    } else {
+        //        std::println(stderr, "Failed to write to {}. Printing to stdout:\n{}", ir_out_file, ir);
+        //    }
+        //}
+
+        phos::vm::Call_frame frames[10];
+        frames[0] = phos::vm::Call_frame(&main_function, 0);
+        std::vector<phos::Value> thread_memory(256);
+        phos::Green_thread_data main_thread{};
+        main_thread.call_stack = frames;
+        main_thread.call_stack_count = 1;
+        main_thread.call_stack_capacity = 10;
+
+        main_thread.value_stack = thread_memory.data();
+        main_thread.value_stack_capacity = thread_memory.size();
+        main_thread.is_completed = false;
 
         // 6. Execute the compiled script!
-        auto res = vm.interpret(chunk_result.value());
-        if (!res) {
-            std::println(stderr, "Runtime error: {}", res.error().format());
-            return 1;
-        }
+        phos::vm::Virtual_machine vm{arena};
+        vm.execute(&main_thread);
+
     } catch (const std::exception &e) {
         std::cerr << "Unexpected error: " << e.what() << std::endl;
         return 1;

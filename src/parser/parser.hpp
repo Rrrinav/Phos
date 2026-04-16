@@ -4,6 +4,7 @@
 #include "../error/result.hpp"
 #include "../lexer/token.hpp"
 #include "ast.hpp"
+#include "../memory/arena.hpp"
 
 #include <optional>
 #include <string>
@@ -16,8 +17,8 @@ namespace phos {
 class Parser
 {
 public:
-    explicit Parser(std::vector<lex::Token> tokens, phos::types::Type_table &type_table, ast::Ast_tree &tree)
-        : tree_(tree), type_table_(type_table), tokens_(std::move(tokens))
+    explicit Parser(std::vector<lex::Token> tokens, phos::types::Type_table &type_table, ast::Ast_tree &tree, phos::mem::Arena& arena)
+        : tree_(tree), type_table_(type_table), tokens_(std::move(tokens)), arena_(arena)
     {}
 
     Result<std::vector<ast::Stmt_id>> parse();
@@ -26,6 +27,7 @@ private:
     ast::Ast_tree &tree_;
     phos::types::Type_table &type_table_;
     std::vector<lex::Token> tokens_;
+    phos::mem::Arena& arena_;
     size_t current_ = 0;
     std::string stage_ = "parser";
 

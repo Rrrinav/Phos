@@ -26,7 +26,7 @@ void Parser::skip_newlines()
 const lex::Token &Parser::peek() const
 {
     if (current_ >= tokens_.size()) {
-        static lex::Token eof_token(lex::TokenType::Eof, "", std::monostate{}, 0, 0);
+        static lex::Token eof_token(lex::TokenType::Eof, "", Value(), 0, 0);
         return eof_token;
     }
     return tokens_[current_];
@@ -440,7 +440,7 @@ Result<ast::Stmt_id> Parser::enum_declaration()
                 value = coerced.value();
             } else {
                 auto val_tok = __Try(consume(lex::TokenType::String, "Expect string value after '=' in string enum"));
-                value = Value(std::get<std::string>(val_tok.literal.payload));
+                value = val_tok.literal;
             }
         }
 
@@ -655,14 +655,14 @@ Result<ast::Stmt_id> Parser::print_statement(ast::Print_stream stream)
                 auto val_result = __Try(expression());
 
                 auto *lit = std::get_if<ast::Literal_expr>(&tree_.get(val_result).node);
-                if (!lit || !std::holds_alternative<std::string>(lit->value.payload)) {
+                if (!lit || !lit->value.is_string()) {
                     return std::unexpected(create_error(previous(), "'sep' and 'end' must be string literals"));
                 }
 
                 if (name == "sep") {
-                    sep = std::get<std::string>(lit->value.payload);
+                    sep = lit->value.as_string();
                 } else {
-                    end = std::get<std::string>(lit->value.payload);
+                    end = lit->value.as_string();
                 }
             } else {
                 if (seen_named) {
@@ -1413,7 +1413,7 @@ Result<ast::Expr_id> Parser::primary()
     if (match({lex::TokenType::Bool})) {
         return tree_.add_expr(
             ast::Expr{ast::Literal_expr{
-                .value = Value(std::get<bool>(previous().literal.payload)),
+                .value = previous().literal,
                 .type = type_table_.get_bool(),
                 .loc = {previous().line, previous().column},
             }});
@@ -1440,7 +1440,7 @@ Result<ast::Expr_id> Parser::primary()
     if (match({lex::TokenType::String})) {
         return tree_.add_expr(
             ast::Expr{ast::Literal_expr{
-                .value = Value(std::get<std::string>(previous().literal.payload)),
+                .value = previous().literal,
                 .type = type_table_.get_string(),
                 .loc = {previous().line, previous().column},
             }});
@@ -1642,7 +1642,7 @@ Result<ast::Expr_id> Parser::parse_model_literal(const std::string &model_name)
 Result<ast::Expr_id> Parser::parse_fstring(const lex::Token &tok)
 {
     ast::Source_location loc{tok.line, tok.column};
-    const std::string &raw = std::get<std::string>(tok.literal.payload);
+    const std::string raw = std::string(tok.literal.as_string());
 
     std::vector<ast::Expr_id> interpolations;
 
@@ -1670,11 +1670,11 @@ Result<ast::Expr_id> Parser::parse_fstring(const lex::Token &tok)
             std::string inner = raw.substr(start, i - start);
             i++; // Skip the closing '}'
 
-            lex::Lexer inner_lexer(inner);
+            lex::Lexer inner_lexer(inner, arena_);
             auto inner_tokens = inner_lexer.tokenize();
 
             // Passing type_table_ and tree_ properly to the new instance
-            Parser inner_parser(std::move(inner_tokens).value(), type_table_, tree_);
+            Parser inner_parser(std::move(inner_tokens).value(), type_table_, tree_, arena_);
 
             inner_parser.current_model_ = current_model_;
             inner_parser.function_types_ = function_types_;

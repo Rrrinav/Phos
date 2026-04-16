@@ -6,7 +6,7 @@
 
 namespace phos {
 
-Resolver::Resolver(ast::Ast_tree &tree, Type_environment &env) : tree(tree), env(env)
+Resolver::Resolver(ast::Ast_tree &tree, Type_environment &env, mem::Arena& arena) : tree(tree), env(env), arena_(arena)
 {}
 
 void Resolver::resolver_error(const ast::Source_location &loc, const std::string &message)
@@ -363,10 +363,10 @@ void Resolver::populate_signatures(const std::vector<ast::Stmt_id> &statements)
 
                 if (variant.second.has_value()) {
                     val = variant.second.value();
-                    if (is_signed_integer(val)) {
-                        current_signed_value = get_int(val) + 1;
-                    } else if (is_unsigned_integer(val)) {
-                        current_unsigned_value = get_uint(val) + 1;
+                    if (val.is_s_integer()) {
+                        current_signed_value = val.as_int() + 1;
+                    } else if (val.is_u_integer()) {
+                        current_unsigned_value = val.is_u_integer() + 1;
                     }
                 } else {
                     if (env.tt.is_primitive(enum_stmt->base_type) && env.tt.is_integer_primitive(enum_stmt->base_type)) {
@@ -382,7 +382,7 @@ void Resolver::populate_signatures(const std::vector<ast::Stmt_id> &statements)
                             val = coerced.value();
                         }
                     } else {
-                        val = Value(variant.first);
+                        val = Value::make_string(arena_, variant.first);
                     }
                 }
 
@@ -395,7 +395,7 @@ void Resolver::populate_signatures(const std::vector<ast::Stmt_id> &statements)
                     if (existing_val == val) {
                         resolver_error(
                             enum_stmt->loc,
-                            "Enum variant value " + value_to_string(val) + " is already used by variant '" + existing_name + "'.");
+                            "Enum variant value " + std::string(val.to_string()) + " is already used by variant '" + existing_name + "'.");
                     }
                 }
                 enum_var_map[variant.first] = val;

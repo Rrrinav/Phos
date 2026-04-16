@@ -10,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <stdfloat>
+#include <cstring>
 
 // Forward declare your Arena
 namespace phos::mem {
@@ -49,9 +50,7 @@ struct Value;
 // Raw C-style function pointer for native FFI (VM context passed as void* for now)
 using Native_fn = Value (*)(void *vm_context, uint8_t arg_count);
 
-// ============================================================================
 // 1. THE RAW DATA STRUCTS (Zero OOP, Zero Std Lib, Arena Allocated)
-// ============================================================================
 
 struct String_data
 {
@@ -149,10 +148,7 @@ struct Iterator_data
     } state;
 };
 
-// ============================================================================
 // 2. THE VALUE API (Strictly 16-Bytes, Safe, Modern C++)
-// ============================================================================
-
 enum class Value_tag : uint8_t {
     Nil, Bool,
     I8, I16, I32, I64,
@@ -234,7 +230,6 @@ private:
     }
 
 public:
-    // --- Arena Factories (The only way to create heap objects safely) ---
     static Value make_string(mem::Arena &arena, std::string_view text, uint8_t depth = 0);
     static Value make_array(mem::Arena &arena, uint32_t capacity, uint8_t depth = 0);
     static Value make_model(mem::Arena &arena, types::Model_type sig, uint32_t field_count, uint8_t depth = 0);
@@ -242,7 +237,6 @@ public:
     static Value
     make_closure_native(mem::Arena &arena, String_data *name, size_t arity, types::Function_type sig, Native_fn func, uint8_t depth = 0);
 
-    // --- Fast Inline Constructors ---
     Value() = default;
     Value(std::nullptr_t)
     {}
@@ -285,7 +279,6 @@ public:
         as.u64 = v;
     }
 
-    // Floats
     Value(numeric::float16_t v, uint8_t d = 0) : tag_(Value_tag::F16), option_depth_(d)
     {
         as.f16 = v;
@@ -322,6 +315,17 @@ public:
     {
         return tag_ >= Value_tag::I8 && tag_ <= Value_tag::U64;
     }
+
+    bool is_u_integer() const
+    {
+        return tag_ >= Value_tag::U8 && tag_ <= Value_tag::U64;
+    }
+
+    bool is_s_integer() const
+    {
+        return tag_ >= Value_tag::I8 && tag_ <= Value_tag::I64;
+    }
+
     bool is_float() const
     {
         return tag_ >= Value_tag::F16 && tag_ <= Value_tag::F64;
@@ -360,7 +364,6 @@ public:
         return tag_ == Value_tag::Green_thread;
     }
 
-    // --- Elegant Safe Accessors ---
     std::string_view as_string() const
     {
         return std::string_view(as.str->chars, as.str->length);
@@ -385,12 +388,10 @@ public:
         return as.boolean;
     }
 
-    // Automatic Upcasting (e.g. i8 safely upcasts to i64 here)
     int64_t as_int() const;
     uint64_t as_uint() const;
     double as_float() const;
 
-    // --- Safe Conversions ---
     std::optional<std::int64_t> try_as_i64() const;
     std::optional<std::uint64_t> try_as_u64() const;
 
@@ -398,11 +399,9 @@ public:
     std::optional<Value> cast_numeric(types::Primitive_kind target_type) const;
     std::optional<Value> coerce_literal(types::Primitive_kind target_type) const;
 
-    // --- Utility ---
     std::string to_string() const;
     std::string to_debug_string() const;
 
-    // --- Operators ---
     bool operator==(const Value &other) const;
     bool operator!=(const Value &other) const
     {
@@ -411,5 +410,8 @@ public:
 };
 
 static_assert(sizeof(Value) == 16, "Value struct must be exactly 16 bytes for L1 Cache alignment.");
+
+types::Primitive_kind numeric_type_of(const Value& literal);
+std::optional<Value> coerce_numeric_literal(const Value &literal, types::Primitive_kind target_type);
 
 } // namespace phos

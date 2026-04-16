@@ -15,7 +15,7 @@ namespace phos {
 class Resolver
 {
 public:
-    Resolver(ast::Ast_tree &tree, Type_environment &env);
+    Resolver(ast::Ast_tree &tree, Type_environment &env, mem::Arena& arena);
 
     std::vector<err::msg> resolve(const std::vector<ast::Stmt_id> &statements);
 
@@ -32,6 +32,7 @@ public:
 private:
     ast::Ast_tree &tree;
     Type_environment &env;
+    phos::mem::Arena& arena_;
     std::vector<err::msg> errors;
     std::string phase = "resolution";
 

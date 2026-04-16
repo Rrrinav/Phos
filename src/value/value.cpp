@@ -435,4 +435,74 @@ bool Value::operator==(const Value &other) const
     return false;
 }
 
+
+types::Primitive_kind numeric_type_of(const Value& literal) {
+    if (literal.is_float()) {
+        return types::Primitive_kind::F64;
+    }
+    return types::Primitive_kind::I32;
+}
+
+std::optional<Value> coerce_numeric_literal(const Value &literal, types::Primitive_kind target_type)
+{
+    // We only coerce integers for enums
+    if (!literal.is_integer()) {
+        return std::nullopt;
+    }
+
+    int64_t raw_val = literal.as_int();
+
+    switch (target_type) {
+    case types::Primitive_kind::I8:
+        if (raw_val >= std::numeric_limits<int8_t>::min() && raw_val <= std::numeric_limits<int8_t>::max()) {
+            return literal;
+        }
+        break;
+
+    case types::Primitive_kind::I16:
+        if (raw_val >= std::numeric_limits<int16_t>::min() && raw_val <= std::numeric_limits<int16_t>::max()) {
+            return literal;
+        }
+        break;
+
+    case types::Primitive_kind::I32:
+        if (raw_val >= std::numeric_limits<int32_t>::min() && raw_val <= std::numeric_limits<int32_t>::max()) {
+            return literal;
+        }
+        break;
+
+    case types::Primitive_kind::I64:
+        return literal;
+
+    case types::Primitive_kind::U8:
+        if (raw_val >= 0 && raw_val <= std::numeric_limits<uint8_t>::max()) {
+            return literal;
+        }
+        break;
+
+    case types::Primitive_kind::U16:
+        if (raw_val >= 0 && raw_val <= std::numeric_limits<uint16_t>::max()) {
+            return literal;
+        }
+        break;
+
+    case types::Primitive_kind::U32:
+        if (raw_val >= 0 && raw_val <= std::numeric_limits<uint32_t>::max()) {
+            return literal;
+        }
+        break;
+
+    case types::Primitive_kind::U64:
+        if (raw_val >= 0) {
+            return literal;
+        }
+        break;
+
+    default:
+        return std::nullopt;
+    }
+
+    return std::nullopt;
+}
+
 } // namespace phos

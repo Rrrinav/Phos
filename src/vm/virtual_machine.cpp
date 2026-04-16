@@ -100,6 +100,12 @@ void Virtual_machine::execute(Green_thread_data *thread)
             return;
         }
 
+        case Opcode::Print: {
+            Value result = registers[base + inst.rrr.dst];
+            std::cout << result.to_debug_string() << "\n";
+            break;
+        }
+
         default: {
             panic("Unrecognized or unimplemented Opcode: {}", opcode_to_string(inst.rrr.op));
             break;

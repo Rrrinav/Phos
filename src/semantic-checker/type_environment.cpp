@@ -9,7 +9,7 @@ Type_environment::Type_environment(types::Type_table &tt) : tt(tt)
 
 void Type_environment::define_native(const std::string &name, const std::vector<std::string> &params, const std::string &ret)
 {
-    std::vector<Native_param> native_params;
+    std::vector<types::Native_param> native_params;
     native_params.reserve(params.size());
 
     for (const auto &param : params) {
@@ -19,7 +19,7 @@ void Type_environment::define_native(const std::string &name, const std::vector<
     native_signatures[name].push_back({native_params, ret});
 }
 
-void Type_environment::define_native(const std::string &name, const std::vector<Native_param> &params, const std::string &ret)
+void Type_environment::define_native(const std::string &name, const std::vector<types::Native_param> &params, const std::string &ret)
 {
     native_signatures[name].push_back({params, ret});
 }
@@ -45,7 +45,7 @@ bool Type_environment::is_function_defined(const std::string &name) const
     return functions.find(name) != functions.end();
 }
 
-const Function_data *Type_environment::get_function(const std::string &name) const
+const types::Function_type_data *Type_environment::get_function(const std::string &name) const
 {
     auto it = functions.find(name);
     if (it != functions.end()) {
@@ -60,7 +60,7 @@ bool Type_environment::is_model_defined(const std::string &name) const
     return model_data.find(name) != model_data.end();
 }
 
-const Model_data *Type_environment::get_model(const std::string &name) const
+const types::Model_type_data *Type_environment::get_model(const std::string &name) const
 {
     auto it = model_data.find(name);
     if (it != model_data.end()) {
@@ -69,7 +69,7 @@ const Model_data *Type_environment::get_model(const std::string &name) const
     return nullptr;
 }
 
-const Function_data *Type_environment::get_model_method(const std::string &model_name, const std::string &method_name) const
+const types::Function_type_data *Type_environment::get_model_method(const std::string &model_name, const std::string &method_name) const
 {
     auto model_it = model_data.find(model_name);
     if (model_it == model_data.end()) {
@@ -84,7 +84,8 @@ const Function_data *Type_environment::get_model_method(const std::string &model
     return nullptr;
 }
 
-const Function_data *Type_environment::get_model_static_method(const std::string &model_name, const std::string &method_name) const
+const types::Function_type_data *
+Type_environment::get_model_static_method(const std::string &model_name, const std::string &method_name) const
 {
     auto model_it = model_data.find(model_name);
     if (model_it == model_data.end()) {
@@ -120,7 +121,7 @@ bool Type_environment::is_union_defined(const std::string &name) const
     return union_data.find(name) != union_data.end();
 }
 
-const Union_data *Type_environment::get_union(const std::string &name) const
+const types::Union_type_data *Type_environment::get_union(const std::string &name) const
 {
     auto it = union_data.find(name);
     if (it != union_data.end()) {
@@ -151,7 +152,7 @@ bool Type_environment::is_enum_defined(const std::string &name) const
     return enum_data.find(name) != enum_data.end();
 }
 
-const Enum_data *Type_environment::get_enum(const std::string &name) const
+const types::Enum_type_data *Type_environment::get_enum(const std::string &name) const
 {
     auto it = enum_data.find(name);
     if (it != enum_data.end()) {
@@ -181,7 +182,7 @@ bool Type_environment::is_native_defined(const std::string &name) const
     return native_signatures.find(name) != native_signatures.end();
 }
 
-const std::vector<Native_sig> *Type_environment::get_native_signatures(const std::string &name) const
+const std::vector<types::Native_sig> *Type_environment::get_native_signatures(const std::string &name) const
 {
     auto it = native_signatures.find(name);
     if (it != native_signatures.end()) {

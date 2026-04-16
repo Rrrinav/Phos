@@ -19,7 +19,7 @@ static bool contains_key(const Vec &vec, const std::string &key)
     return find_by_key(vec, key) != vec.end();
 }
 
-Semantic_checker::Semantic_checker(ast::Ast_tree &tree, Type_environment &env) : tree(tree), env(env)
+Semantic_checker::Semantic_checker(ast::Ast_tree &tree, Type_environment &env, mem::Arena& arena) : tree(tree), env(env), arena_(arena)
 {}
 
 void Semantic_checker::type_error(const ast::Source_location &loc, const std::string &message)
@@ -435,14 +435,14 @@ std::optional<Semantic_checker::Access_path> Semantic_checker::extract_access_pa
         }
         // Semantic check 2: Is the index a hardcoded literal like `0`?
         if (auto *l = std::get_if<ast::Literal_expr>(&idx_node)) {
-            if (std::holds_alternative<std::int64_t>(l->value.payload)) {
+            if (l->value.is_integer()) {
                 base_path->projections.push_back(
-                    Projection{.kind = Projection_kind::Int_Index, .name_val = "", .int_val = std::get<std::int64_t>(l->value.payload)});
+                    Projection{.kind = Projection_kind::Int_Index, .name_val = "", .int_val = l->value.as_int()});
                 return base_path;
             }
-            if (std::holds_alternative<std::uint64_t>(l->value.payload)) {
+            if (l->value.is_u_integer()) {
                 base_path->projections.push_back(
-                    Projection{.kind = Projection_kind::Uint_Index, .name_val = "", .uint_val = std::get<std::uint64_t>(l->value.payload)});
+                    Projection{.kind = Projection_kind::Uint_Index, .name_val = "", .uint_val = l->value.as_uint()});
                 return base_path;
             }
         }
@@ -1276,6 +1276,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Model_literal_expr &expr, 
         }
 
         auto expected_payload_type = it->second;
+
         if (payload_expr.is_null()) {
             if (expected_payload_type == env.tt.get_void()) {
                 return expr.type = resolved_type;
@@ -2060,7 +2061,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Field_assignment_expr &exp
 
 types::Type_id Semantic_checker::check_expr_node(ast::Literal_expr &expr, std::optional<types::Type_id> context_type)
 {
-    if (std::holds_alternative<std::nullptr_t>(expr.value.payload)) {
+    if (expr.value.is_nil()) {
         return expr.type = env.tt.get_nil();
     }
 

@@ -3,6 +3,7 @@
 #include "../error/err.hpp"
 #include "../parser/ast.hpp"
 #include "../value/type.hpp"
+#include "../memory/arena.hpp"
 #include "scope_tracker.hpp"
 #include "type_environment.hpp"
 
@@ -73,12 +74,13 @@ class Semantic_checker
     };
 
 public:
-    Semantic_checker(ast::Ast_tree &tree, Type_environment &env);
+    Semantic_checker(ast::Ast_tree &tree, Type_environment &env, mem::Arena& arena);
 
     std::vector<err::msg> check(const std::vector<ast::Stmt_id> &statements);
 
     ast::Ast_tree &tree;
     Type_environment &env;
+    phos::mem::Arena& arena_;
     Scope_tracker variables;
 
     std::vector<std::unordered_set<Access_path, Access_path_hash>> m_nil_checked_vars_stack;
@@ -129,7 +131,8 @@ public:
         const std::vector<ast::Call_argument> &arguments,
         const ast::Source_location &call_loc,
         const std::string &call_kind,
-        const std::string &call_name);
+        const std::string &call_name
+    );
 
     Bound_native_arguments try_bind_native_arguments(
         const std::vector<types::Native_param> &parameters,

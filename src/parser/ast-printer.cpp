@@ -84,7 +84,7 @@ void Tree_printer::visit(Stmt_id stmt)
 void Tree_printer::print_node(const Literal_expr &node)
 {
     indent();
-    print_str("Literal: " + value_to_string(node.value));
+    print_str("Literal: " + node.value.to_string());
     with_child(false, [&] {
         indent();
         print_str("Type: " + tt.to_string(node.type));
@@ -633,7 +633,7 @@ void Tree_printer::print_node(const Enum_stmt &node)
                     indent();
                     std::string text = node.variants[i].first;
                     if (node.variants[i].second.has_value()) {
-                        text += " = " + value_to_string(node.variants[i].second.value());
+                        text += " = " + node.variants[i].second.value().to_string();
                     }
                     print_str(text);
                 });
@@ -833,10 +833,10 @@ std::string Sexpr_printer::print_stmt(Stmt_id stmt)
 
 std::string Sexpr_printer::print_node(const Literal_expr &node)
 {
-    if (is_string(node.value)) {
-        return "\"" + get_string(node.value) + "\"";
+    if (node.value.is_string()) {
+        return "\"" + std::string(node.value.as_string()) + "\"";
     }
-    return value_to_string(node.value);
+    return std::string(node.value.as_string());
 }
 
 std::string Sexpr_printer::print_node(const Variable_expr &node)

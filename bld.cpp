@@ -18,12 +18,12 @@
 
 inline auto &cfg = bld::Config::get();
 
-const std::string SRC    = "./src/";
-const std::string BIN    = "./bin/";
+const std::string SRC = "./src/";
+const std::string BIN = "./bin/";
 const std::string TARGET = BIN + "phos";
 
-const std::vector<std::string> COMMON_FLAGS  = {"--std=c++23", "-pthread"};
-const std::vector<std::string> DEBUG_FLAGS   = {"-ggdb", "-O0"};
+const std::vector<std::string> COMMON_FLAGS = {"--std=c++23", "-pthread"};
+const std::vector<std::string> DEBUG_FLAGS = {"-ggdb", "-O0"};
 const std::vector<std::string> RELEASE_FLAGS = {"-O2", "-DNDEBUG"};
 
 struct Progress
@@ -47,15 +47,17 @@ struct Progress
 
     void print(size_t cur, const std::string &label = "") const
     {
-        if (total == 0)
+        if (total == 0) {
             return;
+        }
         constexpr int BAR = 40;
         int filled = static_cast<int>((cur * BAR) / total);
         int pct = static_cast<int>((cur * 100) / total);
 
         std::string bar(filled, '=');
-        if (filled < BAR)
+        if (filled < BAR) {
             bar += '>';
+        }
         bar.resize(BAR, ' ');
 
         std::string lbl = label.size() > 30 ? "..." + label.substr(label.size() - 27) : label;
@@ -63,8 +65,9 @@ struct Progress
         std::fprintf(stderr, "\r  [%s] %3d%% (%zu/%zu)  %-33s", bar.c_str(), pct, cur, total, lbl.c_str());
         std::fflush(stderr);
 
-        if (cur >= total)
+        if (cur >= total) {
             std::fprintf(stderr, "\n");
+        }
     }
 };
 
@@ -89,14 +92,18 @@ static std::string string_diff(const std::string &got, const std::string &expect
 
 static void add_mode_flags(bld::Command &cmd, bool release)
 {
-    for (auto &f : COMMON_FLAGS)
+    for (auto &f : COMMON_FLAGS) {
         cmd.add_parts(f);
-    if (release)
-        for (auto &f : RELEASE_FLAGS)
+    }
+    if (release) {
+        for (auto &f : RELEASE_FLAGS) {
             cmd.add_parts(f);
-    else
-        for (auto &f : DEBUG_FLAGS)
+        }
+    } else {
+        for (auto &f : DEBUG_FLAGS) {
             cmd.add_parts(f);
+        }
+    }
 }
 
 void build_interpreter(bool release = false, bool force = false)
@@ -128,20 +135,23 @@ void build_interpreter(bool release = false, bool force = false)
         if (!needs) {
             // main.cpp: check all headers; others: check paired header only
             if (f.find("main.cpp") != std::string::npos) {
-                for (auto &h : hpp_files)
+                for (auto &h : hpp_files) {
                     if (bld::is_executable_outdated(h, out_p)) {
                         needs = true;
                         break;
                     }
+                }
             } else {
                 std::string hdr = bld::str::replace(f, ".cpp", ".hpp");
-                if (exists(hdr) && bld::is_executable_outdated(hdr, out_p))
+                if (exists(hdr) && bld::is_executable_outdated(hdr, out_p)) {
                     needs = true;
+                }
             }
         }
 
-        if (needs)
+        if (needs) {
             files_to_build.push_back(f);
+        }
     }
 
     if (files_to_build.empty()) {
@@ -166,35 +176,40 @@ void build_interpreter(bool release = false, bool force = false)
             if (p) {
                 procs.push_back(p);
                 labels.push_back(bld::fs::get_file_name(f));
-            } else
+            } else {
                 bld::log(bld::Log_type::ERR, "Failed to start: " + f);
+            }
         }
 
         std::vector<bool> done(procs.size(), false);
         size_t remaining = procs.size();
         while (remaining > 0) {
             for (size_t i = 0; i < procs.size(); ++i) {
-                if (done[i])
+                if (done[i]) {
                     continue;
+                }
                 auto ws = bld::try_wait_nb(procs[i]);
                 if (ws.exited) {
                     done[i] = true;
                     --remaining;
                     progress.tick(labels[i]);
-                    if (!ws.normal || ws.exit_code != 0)
+                    if (!ws.normal || ws.exit_code != 0) {
                         bld::log(bld::Log_type::ERR, "Compilation failed: " + files_to_build[i]);
+                    }
                     bld::cleanup_process(procs[i]);
                 }
             }
-            if (remaining > 0)
+            if (remaining > 0) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
         }
     }
 
     bld::log(bld::Log_type::INFO, "Linking -> " + TARGET);
     bld::Command link_cmd = {"g++", "-o", TARGET};
-    for (auto &o : objs)
+    for (auto &o : objs) {
         link_cmd.add_parts(o);
+    }
     add_mode_flags(link_cmd, release);
 
     if (!bld::execute(link_cmd)) {
@@ -234,8 +249,9 @@ void build_custom_interpreter(bool release = false, bool force = false)
         bool needs = force || bld::is_executable_outdated(src_file, out_p);
         if (!needs) {
             std::string hdr = bld::str::replace(src_file, ".cpp", ".hpp");
-            if (exists(hdr) && bld::is_executable_outdated(hdr, out_p))
+            if (exists(hdr) && bld::is_executable_outdated(hdr, out_p)) {
                 needs = true;
+            }
         }
 
         if (needs) {
@@ -257,27 +273,31 @@ void build_custom_interpreter(bool release = false, bool force = false)
         size_t remaining = procs.size();
         while (remaining > 0) {
             for (size_t i = 0; i < procs.size(); ++i) {
-                if (done[i])
+                if (done[i]) {
                     continue;
+                }
                 auto ws = bld::try_wait_nb(procs[i]);
                 if (ws.exited) {
                     done[i] = true;
                     --remaining;
                     progress.tick(labels[i]);
-                    if (!ws.normal || ws.exit_code != 0)
+                    if (!ws.normal || ws.exit_code != 0) {
                         bld::log(bld::Log_type::ERR, "Compilation failed: " + labels[i]);
+                    }
                     bld::cleanup_process(procs[i]);
                 }
             }
-            if (remaining > 0)
+            if (remaining > 0) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
         }
     }
 
     bld::log(bld::Log_type::INFO, "Linking -> " + TARGET);
     bld::Command link_cmd = {"g++", "-o", TARGET};
-    for (auto &o : objs_to_link)
+    for (auto &o : objs_to_link) {
         link_cmd.add_parts(o);
+    }
     add_mode_flags(link_cmd, release);
 
     if (!bld::execute(link_cmd)) {
@@ -297,8 +317,9 @@ std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::str
         std::exit(EXIT_FAILURE);
     }
 
-    if (!std::filesystem::exists(TARGET))
+    if (!std::filesystem::exists(TARGET)) {
         build_interpreter();
+    }
 
     auto files = bld::fs::get_all_files_with_extensions(dir, {"phos"});
 
@@ -328,10 +349,11 @@ std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::str
             std::exit(EXIT_FAILURE);
         }
 
-        if (output == expected)
+        if (output == expected) {
             passed.push_back(f);
-        else
+        } else {
             failed.push_back({f, string_diff(output, expected)});
+        }
 
         progress.tick(bld::fs::get_file_name(f));
     }
@@ -350,16 +372,21 @@ auto compile_custom(std::string ip, std::string op = "./new")
     cmd.add_parts("g++", "-o", op, ip, "-Wall", "--std=c++23", "-lm", "-pthread", "-ggdb", "-O0");
 
     bld::fs::walk_directory(BIN, [ip, op, &cmd](bld::fs::Walk_fn_opt &opt) -> bool {
-        if (stdfs::is_directory(opt.path))
+        if (stdfs::is_directory(opt.path)) {
             return true;
-        if (stdfs::equivalent(opt.path, "./bin/main.o"))
+        }
+        if (stdfs::equivalent(opt.path, "./bin/main.o")) {
             return true;
-        if (stdfs::equivalent(opt.path, "./bin/phos"))
+        }
+        if (stdfs::equivalent(opt.path, "./bin/phos")) {
             return true;
-        if (stdfs::equivalent(opt.path, "./bin/new"))
+        }
+        if (stdfs::equivalent(opt.path, "./bin/new")) {
             return true;
-        if (stdfs::equivalent(opt.path, op))
+        }
+        if (stdfs::equivalent(opt.path, op)) {
             return true;
+        }
         cmd.add_parts(opt.path.string());
         return true;
     });
@@ -384,7 +411,7 @@ int main(int argc, char *argv[])
     cfg.add_option("objs", "", "Comma-separated source files for custom build");
 
     bool release = static_cast<bool>(cfg["rel"]);
-    bool force   = static_cast<bool>(cfg["force"]);
+    bool force = static_cast<bool>(cfg["force"]);
 
     if (cfg["clean"]) {
         bld::log(bld::Log_type::INFO, "Cleaning " + BIN);
@@ -398,10 +425,11 @@ int main(int argc, char *argv[])
 
     if (cfg["compile"]) {
         std::string file{""};
-        if (cfg["o"])
+        if (cfg["o"]) {
             file = std::string(cfg["o"]);
-        else
+        } else {
             file = "./bin/new";
+        }
 
         compile_custom(cfg["compile"], file);
         bld::log(bld::Log_type::INFO, "Build complete -> " + file);

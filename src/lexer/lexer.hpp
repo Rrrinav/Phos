@@ -1,6 +1,7 @@
 #pragma once
 
 #include "./token.hpp"
+#include "../memory/arena.hpp"
 
 #include <cctype>
 #include <expected>
@@ -14,7 +15,7 @@ namespace phos::lex {
 class Lexer
 {
 public:
-    explicit Lexer(std::string_view src) : source(src)
+    explicit Lexer(std::string_view src, phos::mem::Arena& arena) : source(src), arena_(arena)
     {}
 
     std::expected<std::vector<Token>, Token> tokenize()
@@ -28,7 +29,7 @@ public:
                 tokens.push_back(std::move(*tok));
             }
         }
-        tokens.emplace_back(TokenType::Eof, "", std::monostate{}, line, column);
+        tokens.emplace_back(TokenType::Eof, "", Value(), line, column);
         return tokens;
     }
 
@@ -38,6 +39,7 @@ private:
     size_t line = 1;
     size_t column = 1;
 
+    phos::mem::Arena& arena_;
     const std::unordered_map<std::string_view, TokenType> keywords = token_keywords;
 
     //  primitives
@@ -248,7 +250,7 @@ private:
                 return scan_identifier(start_col);
             }
 
-            return Token(TokenType::Invalid, std::string(1, c), std::monostate{}, line, start_col);
+            return Token(TokenType::Invalid, std::string(1, c), Value(), line, start_col);
         }
     }
 
@@ -295,11 +297,12 @@ private:
         }
 
         if (is_at_end()) {
-            return Token(TokenType::Invalid, "Unterminated string", std::string("Unterminated string"), line, start_col);
+            return Token(TokenType::Invalid, std::string("Unterminated string"), Value(), line, start_col);
         }
 
         advance(); // closing "
-        return Token(TokenType::String, std::format("\"{}\"", value), std::move(value), line, start_col);
+        Value str_val = Value::make_string(arena_, value);
+        return Token(TokenType::String, std::format("\"{}\"", value), str_val, line, start_col);
     }
 
     //  f-string scanner
@@ -316,7 +319,8 @@ private:
 
             if (c == '"' && depth == 0) {
                 // closing " outside an interpolation — done
-                return Token(TokenType::Fstring, std::format("f\"{}\"", raw), std::move(raw), line, start_col);
+                Value fstr_val = Value::make_string(arena_, raw);
+                return Token(TokenType::Fstring, std::format("f\"{}\"", raw), fstr_val, line, start_col);
             }
 
             if (c == '\n') {
@@ -375,7 +379,7 @@ private:
             raw += c;
         }
 
-        return Token(TokenType::Invalid, "Unterminated f-string", std::string("Unterminated f-string"), line, start_col);
+        return Token(TokenType::Invalid, std::string("Unterminated f-string"), Value(), line, start_col);
     }
 
     //  number scanner
@@ -440,7 +444,7 @@ private:
 
             auto coerced = coerce_numeric_literal(default_value, *suffix_kind);
             if (!coerced) {
-                return Token(TokenType::Invalid, lexeme, std::string("Invalid numeric literal suffix"), line, start_col);
+                return Token(TokenType::Invalid, lexeme, Value(), line, start_col);
             }
 
             return Token(token_type, lexeme, coerced.value(), line, start_col);
@@ -480,7 +484,7 @@ private:
         if (source[start] == '0' && (peek() == 'x' || peek() == 'X')) {
             advance(); // consume 'x'
             if (!consume_digits([](char c) { return std::isxdigit(static_cast<unsigned char>(c)); })) {
-                return Token(TokenType::Invalid, "Invalid hex literal", std::string("Invalid hex literal"), line, start_col);
+                return Token(TokenType::Invalid, std::string("Invalid hex literal"), Value(), line, start_col);
             }
             std::string cleaned = strip_underscores(source.substr(start, current - start));
             int32_t val = std::stoll(cleaned, nullptr, 16);
@@ -491,7 +495,7 @@ private:
         if (source[start] == '0' && (peek() == 'b' || peek() == 'B')) {
             advance(); // consume 'b'
             if (!consume_digits([](char c) { return c == '0' || c == '1'; })) {
-                return Token(TokenType::Invalid, "Invalid binary literal", std::string("Invalid binary literal"), line, start_col);
+                return Token(TokenType::Invalid, std::string("Invalid binary literal"), Value(), line, start_col);
             }
             std::string cleaned = strip_underscores(source.substr(start, current - start));
             int32_t val = std::stoll(cleaned.substr(2), nullptr, 2);
@@ -502,7 +506,7 @@ private:
         if (source[start] == '0' && (peek() == 'o' || peek() == 'O')) {
             advance(); // consume 'o'
             if (!consume_digits([](char c) { return c >= '0' && c <= '7'; })) {
-                return Token(TokenType::Invalid, "Invalid octal literal", std::string("Invalid octal literal"), line, start_col);
+                return Token(TokenType::Invalid, std::string("Invalid octal literal"), Value(), line, start_col);
             }
             std::string cleaned = strip_underscores(source.substr(start, current - start));
             int32_t val = std::stoll(cleaned.substr(2), nullptr, 8);
@@ -554,19 +558,19 @@ private:
         auto it = keywords.find(lexeme);
         TokenType type = (it != keywords.end()) ? it->second : TokenType::Identifier;
 
-        Value literal = std::string(lexeme); // default
+        Value literal = Value();
         if (type == TokenType::Bool) {
-            literal = (lexeme == "true");
+            literal = Value(lexeme == "true");
         }
 
-        return Token(type, std::string(lexeme), std::move(literal), line, start_col);
+        return Token(type, std::string(lexeme), literal, line, start_col);
     }
 
     //  factory
 
     Token make(TokenType type, std::string_view lexeme, size_t start_col) const
     {
-        return Token(type, std::string(lexeme), std::monostate{}, line, start_col);
+        return Token(type, std::string(lexeme), Value(), line, start_col);
     }
 };
 

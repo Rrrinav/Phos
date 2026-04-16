@@ -66,6 +66,10 @@ enum class Opcode : uint8_t {
     Mod_u64,            // dst, src_a, src_b
     Mod_f64,            // dst, src_a, src_b
 
+    // Print
+    Print,
+
+
     // Control flow
     Jump,               // imm_s16           : IP += offset
     Jump_if_false,      // dst, imm_s16      : if (!R(dst)) IP += offset
