@@ -1,5 +1,7 @@
 #include "virtual_machine.hpp"
 
+#include "assembler.hpp"
+
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -7,7 +9,8 @@
 
 namespace phos::vm {
 
-void Virtual_machine::execute(Green_thread_data *thread)
+template <bool Is_Tracing>
+void Virtual_machine::execute_loop(Green_thread_data *thread)
 {
     // Safety check: is there actually code to run?
     if (thread->call_stack_count == 0 || thread->is_completed) {
@@ -24,18 +27,25 @@ void Virtual_machine::execute(Green_thread_data *thread)
     size_t base = frame->frame_base;
 
     while (true) {
-        // Fetch and Decode the 32-bit instruction
-        Instruction inst = code[ip++];
+        // Fetch the 32-bit instruction
+        Instruction inst = code[ip];
+
+        // --- ZERO OVERHEAD TRACER ---
+        if constexpr (Is_Tracing) {
+            std::string disassembled = Assembler::disassemble_instruction(inst, frame->closure);
+            std::println(cfg.out, "TRACE: {:04} | {}", ip, disassembled);
+        }
+
+        ip++;
 
         // Dispatch based on the Opcode
         switch (inst.rrr.op) {
         // CONSTANTS
         case Opcode::Load_const: {
-            // RI Format: dst, imm
-            // R(dst) = K[imm]
             registers[base + inst.ri.dst] = constants[inst.ri.imm];
             break;
         }
+
         // BINARY OPERATIONS
         case Opcode::Add_i64:
         case Opcode::Sub_i64:
@@ -50,10 +60,10 @@ void Virtual_machine::execute(Green_thread_data *thread)
             }
 
             int64_t result = this->bini64_op(a, b, inst.rrr.op);
-
             registers[base + inst.rrr.dst] = Value(result);
             break;
         }
+
         case Opcode::Add_u64:
         case Opcode::Sub_u64:
         case Opcode::Mul_u64:
@@ -67,7 +77,6 @@ void Virtual_machine::execute(Green_thread_data *thread)
             }
 
             uint64_t result = this->binu64_op(a, b, inst.rrr.op);
-
             registers[base + inst.rrr.dst] = Value(result);
             break;
         }
@@ -85,11 +94,23 @@ void Virtual_machine::execute(Green_thread_data *thread)
             }
 
             double result = this->binf64_op(a, b, inst.rrr.op);
-
             registers[base + inst.rrr.dst] = Value(result);
             break;
         }
+
         // CONTROL FLOW
+        case Opcode::Jump: {
+            ip = inst.ri.imm;
+            break;
+        }
+
+        case Opcode::Jump_if_false: {
+            if (!registers[base + inst.ri.dst].as_bool()) {
+                ip = inst.ri.imm;
+            }
+            break;
+        }
+
         case Opcode::Return: {
             thread->is_completed = true;
             frame->ip = ip;
@@ -123,7 +144,6 @@ auto Virtual_machine::bini64_op(int64_t a, int64_t b, Opcode op) -> int64_t
         return a / b;
     case Opcode::Mod_i64:
         return a % b;
-
     default:
         std::unreachable();
     }
@@ -142,7 +162,6 @@ auto Virtual_machine::binu64_op(uint64_t a, uint64_t b, Opcode op) -> uint64_t
         return a / b;
     case Opcode::Mod_u64:
         return a % b;
-
     default:
         std::unreachable();
     }
@@ -161,10 +180,13 @@ auto Virtual_machine::binf64_op(double a, double b, Opcode op) -> double
         return a / b;
     case Opcode::Mod_f64:
         return fmod(a, b);
-
     default:
         std::unreachable();
     }
 };
+
+// Explicit template instantiations so the linker can find both versions
+template void Virtual_machine::execute_loop<true>(Green_thread_data *);
+template void Virtual_machine::execute_loop<false>(Green_thread_data *);
 
 } // namespace phos::vm
