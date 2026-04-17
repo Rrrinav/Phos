@@ -120,15 +120,42 @@ uint8_t Compiler::compile_expr(ast::Expr_id expr_id)
     );
 }
 
+// TODO: Optimize
+// PERF: Slow becuase of multiple print calls, do buffering or soemthing.
 void Compiler::compile_stmt_node(const ast::Print_stmt &stmt)
 {
-    for (auto expr_id : stmt.expressions) {
-        // 1. Run the math
-        uint8_t result_reg = compile_expr(expr_id);
+    // Stream flag: 0 for STDOUT, 1 for STDERR
+    uint8_t stream_flag = (stmt.stream == ast::Print_stream::STDERR) ? 1 : 0;
 
-        // 2. Print the result
-        // Note: Make sure Opcode::Print is in your instruction.hpp and vm.cpp loop!
-        emit(vm::Instruction::make_rrr(vm::Opcode::Print, result_reg, 0, 0));
+    // Load the separator string into a register (if we have multiple expressions)
+    uint8_t sep_reg = 0;
+    bool has_sep = !stmt.sep.empty() && stmt.expressions.size() > 1;
+    if (has_sep) {
+        sep_reg = allocate_register();
+        uint16_t sep_idx = add_constant(Value::make_string(arena, stmt.sep));
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, sep_reg, sep_idx));
+    }
+
+    // 1. Print all the expressions with separators
+    for (size_t i = 0; i < stmt.expressions.size(); ++i) {
+        // Print the separator BEFORE the 2nd, 3rd, 4th items...
+        if (i > 0 && has_sep) {
+            emit(vm::Instruction::make_rrr(vm::Opcode::Print, sep_reg, stream_flag, 0));
+        }
+
+        // Run the math for the actual expression
+        uint8_t result_reg = compile_expr(stmt.expressions[i]);
+
+        // Print the expression
+        emit(vm::Instruction::make_rrr(vm::Opcode::Print, result_reg, stream_flag, 0));
+    }
+
+    if (!stmt.end.empty()) {
+        uint8_t end_reg = allocate_register();
+        uint16_t end_idx = add_constant(Value::make_string(arena, stmt.end));
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, end_reg, end_idx));
+
+        emit(vm::Instruction::make_rrr(vm::Opcode::Print, end_reg, stream_flag, 0));
     }
 }
 
@@ -150,6 +177,22 @@ void Compiler::compile_stmt_node(const ast::Var_stmt &stmt)
     }
 
     locals_.push_back({stmt.name, target_reg});
+}
+
+void Compiler::compile_stmt_node(const ast::Block_stmt &stmt)
+{
+    auto prev_locals_size = this->locals_.size();
+
+    for (const auto& st : stmt.statements) {
+        compile_stmt(st);
+    }
+
+    this->locals_.resize(prev_locals_size);
+}
+
+void Compiler::compile_stmt_node(const ast::If_stmt &stmt)
+{
+
 }
 
 // EXPRESSIONS
@@ -204,6 +247,24 @@ uint8_t Compiler::compile_expr_node(const ast::Binary_expr &expr)
         break;
     case lex::TokenType::Percent:
         opcode = is_float ? vm::Opcode::Mod_f64 : vm::Opcode::Mod_i64;
+        break;
+    case lex::TokenType::Equal:
+        opcode = is_float ? vm::Opcode::Eq_f64 : vm::Opcode::Eq_i64;
+        break;
+    case lex::TokenType::NotEqual:
+        opcode = is_float ? vm::Opcode::Neq_f64 : vm::Opcode::Neq_i64;
+        break;
+    case lex::TokenType::Less:
+        opcode = is_float ? vm::Opcode::Lt_f64 : vm::Opcode::Lt_i64;
+        break;
+    case lex::TokenType::LessEqual:
+        opcode = is_float ? vm::Opcode::Lte_f64 : vm::Opcode::Lte_i64;
+        break;
+    case lex::TokenType::Greater:
+        opcode = is_float ? vm::Opcode::Gt_f64 : vm::Opcode::Gt_i64;
+        break;
+    case lex::TokenType::GreaterEqual:
+        opcode = is_float ? vm::Opcode::Gte_f64 : vm::Opcode::Gte_i64;
         break;
     default: {
         std::println(std::cerr, "Unsupported binary operator in compiler");

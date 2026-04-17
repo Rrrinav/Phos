@@ -48,27 +48,17 @@ enum class Opcode : uint8_t {
     Move,               // dst, src_a        : R(dst) = R(src_a)
 
     // Arithmetic
-    Add_i64,            // dst, src_a, src_b
-    Add_u64,            // dst, src_a, src_b
-    Add_f64,            // dst, src_a, src_b
-    Sub_i64,            // dst, src_a, src_b
-    Sub_u64,            // dst, src_a, src_b
-    Sub_f64,            // dst, src_a, src_b
+    Add_i64, Add_u64, Add_f64, Sub_i64, Sub_u64, Sub_f64, // dst, src_a, src_b
+    Mul_i64, Mul_u64, Mul_f64, Div_i64, Div_u64, Div_f64, // dst, src_a, src_b
 
-    Mul_i64,            // dst, src_a, src_b
-    Mul_u64,            // dst, src_a, src_b
-    Mul_f64,            // dst, src_a, src_b
-    Div_i64,            // dst, src_a, src_b
-    Div_u64,            // dst, src_a, src_b
-    Div_f64,            // dst, src_a, src_b
+    Mod_i64, Mod_u64, Mod_f64, // dst, src_a, src_b
 
-    Mod_i64,            // dst, src_a, src_b
-    Mod_u64,            // dst, src_a, src_b
-    Mod_f64,            // dst, src_a, src_b
+    // Comparison
+    Eq_i64, Neq_i64, Lt_i64, Lte_i64, Gt_i64, Gte_i64, // dest, src_a, src_b
+    Eq_f64, Neq_f64, Lt_f64, Lte_f64, Gt_f64, Gte_f64, // dest, src_a, src_b
 
     // Print
     Print,
-
 
     // Control flow
     Jump,               // imm_s16           : IP += offset

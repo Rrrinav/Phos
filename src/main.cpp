@@ -1,6 +1,7 @@
 #include "lexer/lexer.hpp"
 #include "memory/arena.hpp"
 #include "parser/ast.hpp"
+#include "parser/ast-printer.hpp"
 #include "parser/parser.hpp"
 #include "semantic-checker/semantic_checker.hpp"
 
@@ -119,7 +120,17 @@ int main(int argc, char *argv[])
                         out_file << ir;
                     }
                 }
+
+                if (print_ast) {
+                    phos::ast::Tree_printer printer(ast_tree, type_table, print_use_unicode);
+                    std::println("{}", printer.print_statements(parse_result.value()));
+                }
                 return EXIT_FAILURE;
+            }
+
+            if (print_ast) {
+                phos::ast::Tree_printer printer(ast_tree, type_table, print_use_unicode);
+                std::println("{}", printer.print_statements(parse_result.value()));
             }
 
             phos::vm::Compiler compiler{ast_tree, env, arena};

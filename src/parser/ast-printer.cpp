@@ -3,6 +3,31 @@
 #include "../utility/utility.hpp"
 
 #include <format>
+#include <string>
+#include <ranges>
+
+static auto escape_view(std::string_view input)
+{
+    return input | std::views::transform([](char c) {
+        switch (c) {
+        case '\n': return std::string("\\n");
+        case '\t': return std::string("\\t");
+        case '\r': return std::string("\\r");
+        case '\\': return std::string("\\\\");
+        case '\"': return std::string("\\\"");
+        default:   return std::string(1, c);
+        }
+    });
+}
+
+static std::string escape(std::string_view input)
+{
+    std::string out;
+    for (auto &&s : escape_view(input)) {
+        out += s;
+    }
+    return out;
+}
 
 namespace phos::ast {
 
@@ -658,7 +683,11 @@ void Tree_printer::print_node(const Var_stmt &node)
 void Tree_printer::print_node(const Print_stmt &node)
 {
     indent();
-    print_str(std::string("Print(") + (node.stream == Print_stream::STDOUT ? "stdout" : "stderr") + ")");
+    print_str(std::string(
+        "Print(") + (node.stream == Print_stream::STDOUT ? "stdout" : "stderr") +
+        ", sep=\"" + escape(node.sep) + "\", end=\"" + escape(node.end) + "\")"
+    );
+
     with_child(false, [&] {
         for (const auto &exp : node.expressions) {
             visit(exp);

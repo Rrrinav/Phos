@@ -193,7 +193,7 @@ static const std::unordered_map<std::string_view, TokenType> token_keywords = {
 
     // built-ins
     {"print", TokenType::Print},
-    {"print_err", TokenType::PrintErr},
+    {"eprint", TokenType::PrintErr},
     {"as", TokenType::As},
     {"this", TokenType::This},
     {"nil", TokenType::Nil},

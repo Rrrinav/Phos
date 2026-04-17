@@ -4,7 +4,6 @@
 
 #include <cmath>
 #include <cstdlib>
-#include <iostream>
 #include <utility>
 
 namespace phos::vm {
@@ -96,6 +95,52 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             registers[base + inst.rrr.dst] = Value(result);
             break;
         }
+        case Opcode::Eq_i64:
+        case Opcode::Neq_i64:
+        case Opcode::Lt_i64:
+        case Opcode::Lte_i64:
+        case Opcode::Gt_i64:
+        case Opcode::Gte_i64: {
+            int64_t a = registers[base + inst.rrr.src_a].as_int();
+            int64_t b = registers[base + inst.rrr.src_b].as_int();
+
+            bool result = false;
+            switch (inst.rrr.op) {
+            case Opcode::Eq_i64:  result = (a == b); break;
+            case Opcode::Neq_i64: result = (a != b); break;
+            case Opcode::Lt_i64:  result = (a < b);  break;
+            case Opcode::Lte_i64: result = (a <= b); break;
+            case Opcode::Gt_i64:  result = (a > b);  break;
+            case Opcode::Gte_i64: result = (a >= b); break;
+            default: std::unreachable();
+            }
+            registers[base + inst.rrr.dst] = Value(result);
+            break;
+        }
+
+        case Opcode::Eq_f64:
+        case Opcode::Neq_f64:
+        case Opcode::Lt_f64:
+        case Opcode::Lte_f64:
+        case Opcode::Gt_f64:
+        case Opcode::Gte_f64: {
+            double a = registers[base + inst.rrr.src_a].as_float();
+            double b = registers[base + inst.rrr.src_b].as_float();
+
+            bool result = false;
+            switch (inst.rrr.op) {
+            case Opcode::Eq_f64:  result = (a == b); break;
+            case Opcode::Neq_f64: result = (a != b); break;
+            case Opcode::Lt_f64:  result = (a < b);  break;
+            case Opcode::Lte_f64: result = (a <= b); break;
+            case Opcode::Gt_f64:  result = (a > b);  break;
+            case Opcode::Gte_f64: result = (a >= b); break;
+            default: std::unreachable();
+            }
+
+            registers[base + inst.rrr.dst] = Value(result);
+            break;
+        }
 
         case Opcode::Jump: {
             ip = inst.ri.imm;
@@ -117,7 +162,15 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
 
         case Opcode::Print: {
             Value result = registers[base + inst.rrr.dst];
-            std::cout << result.to_debug_string() << "\n";
+            uint8_t stream_flag = inst.rrr.src_a;
+
+            std::string text_to_print = result.to_string();
+
+            if (stream_flag == 1) {
+                this->cfg.err << text_to_print;
+            } else {
+                this->cfg.out << text_to_print;
+            }
             break;
         }
 

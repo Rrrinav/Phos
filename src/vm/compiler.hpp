@@ -29,6 +29,8 @@ public:
     void compile_stmt_node(const ast::Print_stmt &stmt);
     void compile_stmt_node(const ast::Expr_stmt &stmt);
     void compile_stmt_node(const ast::Var_stmt &stmt);
+    void compile_stmt_node(const ast::Block_stmt &stmt);
+    void compile_stmt_node(const ast::If_stmt &stmt);
 
     // Expression traversal
     uint8_t compile_expr(ast::Expr_id expr_id);

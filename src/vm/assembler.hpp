@@ -7,6 +7,7 @@
 
 namespace phos::vm {
 
+// TODO: Espace strings de/serialization
 class Assembler {
 public:
     // Exports the Closure to deterministic text
