@@ -437,7 +437,8 @@ std::optional<Semantic_checker::Access_path> Semantic_checker::extract_access_pa
         if (auto *l = std::get_if<ast::Literal_expr>(&idx_node)) {
             if (l->value.is_integer()) {
                 base_path->projections.push_back(
-                    Projection{.kind = Projection_kind::Int_Index, .name_val = "", .int_val = l->value.as_int()});
+                    Projection{.kind = Projection_kind::Int_Index, .name_val = "", .int_val = l->value.as_int()}
+                );
                 return base_path;
             }
             if (l->value.is_u_integer()) {
@@ -1598,17 +1599,24 @@ types::Type_id Semantic_checker::check_expr_node(ast::Binary_expr &expr, std::op
         }
         return expr.type = env.tt.get_f64();
 
-    case lex::TokenType::Percent:
-        if (!env.tt.is_integer_primitive(left_type) || !env.tt.is_integer_primitive(right_type)) {
-            report_error("Operands for '%' must be integers.");
+    case lex::TokenType::Percent: {
+        bool both_ints = env.tt.is_integer_primitive(left_type) && env.tt.is_integer_primitive(right_type);
+        bool both_floats = env.tt.is_float_primitive(left_type) && env.tt.is_float_primitive(right_type);
+
+        if (!both_ints && !both_floats) {
+            report_error("Operands for '%' must be either both integers or both floats.");
             return expr.type = env.tt.get_unknown();
         }
+
         expr.type = promote_numeric_type(left_type, right_type);
-        if (env.tt.is_any(expr.type)) {
-            report_error("Mixed signed and unsigned integer modulo requires an explicit cast.");
+
+        if (env.tt.is_any(expr.type) || env.tt.is_unknown(expr.type)) {
+            report_error("Mixed signed and unsigned modulo requires an explicit cast.");
             return expr.type = env.tt.get_unknown();
         }
+
         return expr.type;
+    }
 
     case lex::TokenType::Greater:
     case lex::TokenType::GreaterEqual:

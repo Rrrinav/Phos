@@ -84,20 +84,42 @@ int main(int argc, char *argv[])
             phos::lex::Lexer lexer(source, arena);
             auto tokens = lexer.tokenize();
             if (!tokens.has_value()) {
-                return 1;
+                auto err = tokens.error();
+                std::println(std::cerr, "{}:{}:{} Invalid token: {}", filename, err.line, err.column, err.lexeme);
+                return EXIT_FAILURE;
             }
 
             phos::Parser parser(*tokens, type_table, ast_tree, arena);
             auto parse_result = parser.parse();
             if (!parse_result) {
-                return 1;
+                std::println(std::cerr, "{}", parse_result.error().format());
+
+                if (print_ir) {
+                    auto ir = phos::vm::Assembler::serialize(main_function);
+                    std::ofstream out_file(ir_out_file);
+                    if (out_file.is_open()) {
+                        out_file << ir;
+                    }
+                }
+                return EXIT_FAILURE;
             }
 
             phos::Type_environment env(type_table);
             phos::Semantic_checker checker{ast_tree, env, arena};
             auto checked = checker.check(parse_result.value());
+
             if (checked.size() > 0) {
-                return 1;
+                for (auto& e : checked)
+                    std::println(std::cerr, "{}", e.format());
+
+                if (print_ir) {
+                    auto ir = phos::vm::Assembler::serialize(main_function);
+                    std::ofstream out_file(ir_out_file);
+                    if (out_file.is_open()) {
+                        out_file << ir;
+                    }
+                }
+                return EXIT_FAILURE;
             }
 
             phos::vm::Compiler compiler{ast_tree, env, arena};
@@ -109,6 +131,7 @@ int main(int argc, char *argv[])
                 if (out_file.is_open()) {
                     out_file << ir;
                 }
+                return 0;
             }
         }
 
@@ -118,6 +141,7 @@ int main(int argc, char *argv[])
         std::vector<phos::Value> thread_memory(256);
 
         phos::Green_thread_data main_thread{};
+
         main_thread.call_stack = frames;
         main_thread.call_stack_count = 1;
         main_thread.call_stack_capacity = 10;
@@ -126,6 +150,7 @@ int main(int argc, char *argv[])
         main_thread.is_completed = false;
 
         vm.execute(&main_thread);
+
     } catch (const std::exception &e) {
         std::println(stderr, "Unexpected error: {}", e.what());
         return 1;

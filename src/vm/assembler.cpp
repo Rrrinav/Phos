@@ -26,15 +26,15 @@ std::string Assembler::disassemble_instruction(Instruction inst, const Closure_d
     // Decode using LLVM-style Sigils: % (Register) and $ (Constant/Immediate)
     switch (op) {
     case Opcode::Load_const:
-        asm_str = std::format("{:<14} %r{}, $K{:03}", name, inst.ri.dst, inst.ri.imm);
+        asm_str = std::format("{:<14} %R{}, $K{:03}", name, inst.ri.dst, inst.ri.imm);
         if (closure && inst.ri.imm < closure->constant_count) {
             Value val = closure->constants[inst.ri.imm];
             if (val.is_integer()) {
-                comment = std::format("%r{} = {}", inst.ri.dst, val.as_int());
+                comment = std::format("%R{} = {}", inst.ri.dst, val.as_int());
             } else if (val.is_float()) {
-                comment = std::format("%r{} = {}", inst.ri.dst, val.as_float());
+                comment = std::format("%R{} = {}", inst.ri.dst, val.as_float());
             } else if (val.is_string()) {
-                comment = std::format("%r{} = \"{}\"", inst.ri.dst, val.as_string());
+                comment = std::format("%R{} = \"{}\"", inst.ri.dst, val.as_string());
             }
         }
         break;

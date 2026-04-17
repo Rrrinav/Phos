@@ -30,7 +30,6 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         // Fetch the 32-bit instruction
         Instruction inst = code[ip];
 
-        // --- ZERO OVERHEAD TRACER ---
         if constexpr (Is_Tracing) {
             std::string disassembled = Assembler::disassemble_instruction(inst, frame->closure);
             std::println(cfg.out, "TRACE: {:04} | {}", ip, disassembled);
@@ -98,7 +97,6 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             break;
         }
 
-        // CONTROL FLOW
         case Opcode::Jump: {
             ip = inst.ri.imm;
             break;

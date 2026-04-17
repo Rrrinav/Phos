@@ -434,12 +434,12 @@ private:
             return std::nullopt;
         };
 
-        auto finish_numeric_token = [&](Value default_value, TokenType token_type) -> Token {
+        auto finish_numeric_token = [&](Value default_value, TokenType default_token_type) -> Token {
             auto suffix_kind = consume_numeric_suffix();
             std::string lexeme(source.substr(start, current - start));
 
             if (!suffix_kind) {
-                return Token(token_type, lexeme, default_value, line, start_col);
+                return Token(default_token_type, lexeme, default_value, line, start_col);
             }
 
             auto coerced = coerce_numeric_literal(default_value, *suffix_kind);
@@ -447,7 +447,24 @@ private:
                 return Token(TokenType::Invalid, lexeme, Value(), line, start_col);
             }
 
-            return Token(token_type, lexeme, coerced.value(), line, start_col);
+            TokenType final_type = default_token_type;
+            switch (*suffix_kind) {
+                case types::Primitive_kind::I8:  final_type = TokenType::TInt8; break;
+                case types::Primitive_kind::I16: final_type = TokenType::TInt16; break;
+                case types::Primitive_kind::I32: final_type = TokenType::TInt32; break;
+                case types::Primitive_kind::I64: final_type = TokenType::TInt64; break;
+                case types::Primitive_kind::U8:  final_type = TokenType::TUInt8; break;
+                case types::Primitive_kind::U16: final_type = TokenType::TUInt16; break;
+                case types::Primitive_kind::U32: final_type = TokenType::TUInt32; break;
+                case types::Primitive_kind::U64: final_type = TokenType::TUInt64; break;
+                case types::Primitive_kind::F16: final_type = TokenType::TFloat16; break;
+                case types::Primitive_kind::F32: final_type = TokenType::TFloat32; break;
+                case types::Primitive_kind::F64: final_type = TokenType::TFloat64; break;
+                default:
+                     return Token(TokenType::Invalid, lexeme, Value(), line, start_col);
+            }
+
+            return Token(final_type, lexeme, coerced.value(), line, start_col);
         };
 
         auto strip_underscores = [](std::string_view text) -> std::string {

@@ -17,6 +17,29 @@
 
 namespace phos {
 
+static types::Type_id map_token_to_type(lex::TokenType token_type, types::Type_table& tt) {
+    switch (token_type) {
+        case lex::TokenType::TInt8:      return tt.get_i8();
+        case lex::TokenType::TInt16:     return tt.get_i16();
+        case lex::TokenType::Integer32:  // Deault to i32
+        case lex::TokenType::TInt32:     return tt.get_i32();
+        case lex::TokenType::TInt64:     return tt.get_i64();
+
+        case lex::TokenType::TUInt8:     return tt.get_u8();
+        case lex::TokenType::TUInt16:    return tt.get_u16();
+        case lex::TokenType::TUInt32:    return tt.get_u32();
+        case lex::TokenType::TUInt64:    return tt.get_u64();
+        case lex::TokenType::TFloat16:   return tt.get_f16();
+        case lex::TokenType::TFloat32:   return tt.get_f32();
+        case lex::TokenType::Float64:    // Deault to f64
+        case lex::TokenType::TFloat64:   return tt.get_f64();
+
+        case lex::TokenType::Bool:       return tt.get_bool();
+        case lex::TokenType::String:     return tt.get_string();
+        default:                         return tt.get_unknown();
+    }
+}
+
 // Utility
 void Parser::skip_newlines()
 {
@@ -1419,22 +1442,28 @@ Result<ast::Expr_id> Parser::primary()
             }});
     }
 
-    if (match({lex::TokenType::Integer32})) {
-        return tree_.add_expr(
-            ast::Expr{ast::Literal_expr{
-                .value = previous().literal,
-                .type = type_table_.primitive(numeric_type_of(previous().literal)),
-                .loc = {previous().line, previous().column},
-            }});
-    }
+    auto is_numeric_literal = [](const lex::Token &t) {
+        if (t.type == lex::TokenType::Integer32 || t.type == lex::TokenType::Float64) {
+            return true;
+        }
 
-    if (match({lex::TokenType::Float64})) {
-        return tree_.add_expr(
-            ast::Expr{ast::Literal_expr{
-                .value = previous().literal,
-                .type = type_table_.primitive(numeric_type_of(previous().literal)),
-                .loc = {previous().line, previous().column},
-            }});
+        bool is_sized_type = (
+                t.type == lex::TokenType::TInt8    || t.type == lex::TokenType::TInt16  || t.type == lex::TokenType::TInt32
+             || t.type == lex::TokenType::TInt64   || t.type == lex::TokenType::TUInt8  || t.type == lex::TokenType::TUInt16
+             || t.type == lex::TokenType::TUInt32  || t.type == lex::TokenType::TUInt64 || t.type == lex::TokenType::TFloat16
+             || t.type == lex::TokenType::TFloat32 || t.type == lex::TokenType::TFloat64
+        );
+
+        return is_sized_type && (t.literal.is_integer() || t.literal.is_float() || t.literal.is_u_integer());
+    };
+
+    if (is_numeric_literal(peek())) {
+        lex::Token tok = advance();
+        return tree_.add_expr(ast::Expr{ast::Literal_expr{
+            .value = tok.literal,
+            .type = map_token_to_type(tok.type, type_table_),
+            .loc = {tok.line, tok.column},
+        }});
     }
 
     if (match({lex::TokenType::String})) {
