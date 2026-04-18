@@ -100,6 +100,64 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             registers[base + inst.rrr.dst] = Value(result);
             break;
         }
+
+        case Opcode::Cast_i8:
+        case Opcode::Cast_i16:
+        case Opcode::Cast_i32:
+        case Opcode::Cast_i64:
+        case Opcode::Cast_u8:
+        case Opcode::Cast_u16:
+        case Opcode::Cast_u32:
+        case Opcode::Cast_u64:
+        case Opcode::Cast_f16:
+        case Opcode::Cast_f32:
+        case Opcode::Cast_f64: {
+            types::Primitive_kind target_kind = types::Primitive_kind::I64;
+            switch (inst.rrr.op) {
+            case Opcode::Cast_i8:
+                target_kind = types::Primitive_kind::I8;
+                break;
+            case Opcode::Cast_i16:
+                target_kind = types::Primitive_kind::I16;
+                break;
+            case Opcode::Cast_i32:
+                target_kind = types::Primitive_kind::I32;
+                break;
+            case Opcode::Cast_i64:
+                target_kind = types::Primitive_kind::I64;
+                break;
+            case Opcode::Cast_u8:
+                target_kind = types::Primitive_kind::U8;
+                break;
+            case Opcode::Cast_u16:
+                target_kind = types::Primitive_kind::U16;
+                break;
+            case Opcode::Cast_u32:
+                target_kind = types::Primitive_kind::U32;
+                break;
+            case Opcode::Cast_u64:
+                target_kind = types::Primitive_kind::U64;
+                break;
+            case Opcode::Cast_f16:
+                target_kind = types::Primitive_kind::F16;
+                break;
+            case Opcode::Cast_f32:
+                target_kind = types::Primitive_kind::F32;
+                break;
+            case Opcode::Cast_f64:
+                target_kind = types::Primitive_kind::F64;
+                break;
+            default:
+                std::unreachable();
+            }
+
+            auto casted = registers[base + inst.rrr.dst].cast_numeric(target_kind);
+            if (!casted) {
+                panic("Invalid numeric cast at IP: {}", ip - 1);
+            }
+            registers[base + inst.rrr.dst] = *casted;
+            break;
+        }
         case Opcode::Eq_i64:
         case Opcode::Neq_i64:
         case Opcode::Lt_i64:
@@ -117,6 +175,29 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             case Opcode::Lte_i64: result = (a <= b); break;
             case Opcode::Gt_i64:  result = (a > b);  break;
             case Opcode::Gte_i64: result = (a >= b); break;
+            default: std::unreachable();
+            }
+            registers[base + inst.rrr.dst] = Value(result);
+            break;
+        }
+
+        case Opcode::Eq_u64:
+        case Opcode::Neq_u64:
+        case Opcode::Lt_u64:
+        case Opcode::Lte_u64:
+        case Opcode::Gt_u64:
+        case Opcode::Gte_u64: {
+            uint64_t a = registers[base + inst.rrr.src_a].as_uint();
+            uint64_t b = registers[base + inst.rrr.src_b].as_uint();
+
+            bool result = false;
+            switch (inst.rrr.op) {
+            case Opcode::Eq_u64:  result = (a == b); break;
+            case Opcode::Neq_u64: result = (a != b); break;
+            case Opcode::Lt_u64:  result = (a < b);  break;
+            case Opcode::Lte_u64: result = (a <= b); break;
+            case Opcode::Gt_u64:  result = (a > b);  break;
+            case Opcode::Gte_u64: result = (a >= b); break;
             default: std::unreachable();
             }
             registers[base + inst.rrr.dst] = Value(result);

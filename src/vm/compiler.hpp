@@ -46,6 +46,10 @@ public:
     // Helpers that proxy to the current active code block
     size_t emit(vm::Instruction inst);
     uint16_t add_constant(Value val);
+    void emit_numeric_normalize(uint8_t reg, types::Type_id type);
+    vm::Opcode cast_opcode_for(types::Type_id type) const;
+    vm::Opcode arithmetic_opcode_for(lex::TokenType op, types::Type_id type) const;
+    vm::Opcode comparison_opcode_for(lex::TokenType op, types::Type_id left_type, types::Type_id right_type) const;
 
     // Statement compilation visitors
     void compile_stmt(ast::Stmt_id stmt_id);
@@ -62,6 +66,7 @@ public:
     uint8_t compile_expr_node(const ast::Literal_expr &expr);
     uint8_t compile_expr_node(const ast::Variable_expr &expr);
     uint8_t compile_expr_node(const ast::Assignment_expr &expr);
+    uint8_t compile_expr_node(const ast::Cast_expr &expr);
     uint8_t compile_expr_node(const ast::Binary_expr &expr);
 
 public:

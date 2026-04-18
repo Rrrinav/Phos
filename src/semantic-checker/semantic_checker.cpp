@@ -942,7 +942,30 @@ void Semantic_checker::check_stmt_node(ast::Var_stmt &stmt)
         }
         stmt.type = init_type;
     } else if (!stmt.initializer.is_null() && !initializer_failed && !is_compatible(stmt.type, init_type)) {
-        type_error(stmt.loc, std::format("Initializer type '{}' does not match variable type.", env.tt.to_string(init_type)));
+        const auto &init_node = tree.get(stmt.initializer).node;
+        if (auto *lit = std::get_if<ast::Literal_expr>(&init_node);
+            lit && env.tt.is_numeric_primitive(stmt.type) && env.tt.is_numeric_primitive(init_type)) {
+            auto target_kind = env.tt.get_primitive(stmt.type);
+
+            if ((lit->value.is_integer() && types::is_float_primitive(target_kind))
+                || (lit->value.is_float() && !types::is_float_primitive(target_kind))) {
+                type_error(
+                    stmt.loc,
+                    std::format(
+                        "Numeric literal '{}' cannot be implicitly converted to '{}'; use an explicit cast.",
+                        lit->value.to_string(),
+                        env.tt.to_string(stmt.type)));
+            } else {
+                type_error(
+                    stmt.loc,
+                    std::format(
+                        "Numeric literal '{}' does not fit in target type '{}'.",
+                        lit->value.to_string(),
+                        env.tt.to_string(stmt.type)));
+            }
+        } else {
+            type_error(stmt.loc, std::format("Initializer type '{}' does not match variable type.", env.tt.to_string(init_type)));
+        }
     }
     declare(stmt.name, stmt.type, stmt.is_mut, stmt.loc);
 }
@@ -1590,14 +1613,12 @@ types::Type_id Semantic_checker::check_expr_node(ast::Binary_expr &expr, std::op
             report_error("Operands for division must be numbers.");
             return expr.type = env.tt.get_unknown();
         }
-        if (env.tt.is_primitive(left_type) && env.tt.is_primitive(right_type)) {
-            auto left_kind = env.tt.get_primitive(left_type);
-            auto right_kind = env.tt.get_primitive(right_type);
-            if (types::is_float_primitive(left_kind) || types::is_float_primitive(right_kind)) {
-                return expr.type = promote_numeric_type(left_type, right_type);
-            }
+        expr.type = promote_numeric_type(left_type, right_type);
+        if (env.tt.is_any(expr.type) || env.tt.is_unknown(expr.type)) {
+            report_error("Mixed signed and unsigned division requires an explicit cast.");
+            return expr.type = env.tt.get_unknown();
         }
-        return expr.type = env.tt.get_f64();
+        return expr.type;
 
     case lex::TokenType::Percent: {
         bool both_ints = env.tt.is_integer_primitive(left_type) && env.tt.is_integer_primitive(right_type);

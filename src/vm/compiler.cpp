@@ -103,6 +103,130 @@ uint16_t Compiler::add_constant(Value val)
     return current_block().add_constant(val);
 }
 
+void Compiler::emit_numeric_normalize(uint8_t reg, types::Type_id type)
+{
+    if (!env.tt.is_numeric_primitive(type)) {
+        return;
+    }
+
+    auto kind = env.tt.get_primitive(type);
+    if (kind == types::Primitive_kind::I64 || kind == types::Primitive_kind::U64 || kind == types::Primitive_kind::F64) {
+        return;
+    }
+
+    emit(vm::Instruction::make_rrr(cast_opcode_for(type), reg, 0, 0));
+}
+
+vm::Opcode Compiler::cast_opcode_for(types::Type_id type) const
+{
+    switch (env.tt.get_primitive(type)) {
+    case types::Primitive_kind::I8:
+        return vm::Opcode::Cast_i8;
+    case types::Primitive_kind::I16:
+        return vm::Opcode::Cast_i16;
+    case types::Primitive_kind::I32:
+        return vm::Opcode::Cast_i32;
+    case types::Primitive_kind::I64:
+        return vm::Opcode::Cast_i64;
+    case types::Primitive_kind::U8:
+        return vm::Opcode::Cast_u8;
+    case types::Primitive_kind::U16:
+        return vm::Opcode::Cast_u16;
+    case types::Primitive_kind::U32:
+        return vm::Opcode::Cast_u32;
+    case types::Primitive_kind::U64:
+        return vm::Opcode::Cast_u64;
+    case types::Primitive_kind::F16:
+        return vm::Opcode::Cast_f16;
+    case types::Primitive_kind::F32:
+        return vm::Opcode::Cast_f32;
+    case types::Primitive_kind::F64:
+        return vm::Opcode::Cast_f64;
+    default:
+        std::println(std::cerr, "Compiler Bug: No cast opcode for type '{}'.", env.tt.to_string(type));
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+vm::Opcode Compiler::arithmetic_opcode_for(lex::TokenType op, types::Type_id type) const
+{
+    bool is_float = env.tt.is_float_primitive(type);
+    bool is_unsigned = env.tt.is_unsigned_integer_primitive(type);
+
+    switch (op) {
+    case lex::TokenType::Plus:
+        if (is_float) {
+            return vm::Opcode::Add_f64;
+        }
+        return is_unsigned ? vm::Opcode::Add_u64 : vm::Opcode::Add_i64;
+    case lex::TokenType::Minus:
+        if (is_float) {
+            return vm::Opcode::Sub_f64;
+        }
+        return is_unsigned ? vm::Opcode::Sub_u64 : vm::Opcode::Sub_i64;
+    case lex::TokenType::Star:
+        if (is_float) {
+            return vm::Opcode::Mul_f64;
+        }
+        return is_unsigned ? vm::Opcode::Mul_u64 : vm::Opcode::Mul_i64;
+    case lex::TokenType::Slash:
+        if (is_float) {
+            return vm::Opcode::Div_f64;
+        }
+        return is_unsigned ? vm::Opcode::Div_u64 : vm::Opcode::Div_i64;
+    case lex::TokenType::Percent:
+        if (is_float) {
+            return vm::Opcode::Mod_f64;
+        }
+        return is_unsigned ? vm::Opcode::Mod_u64 : vm::Opcode::Mod_i64;
+    default:
+        std::println(std::cerr, "Compiler Bug: Unsupported arithmetic operator.");
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+vm::Opcode Compiler::comparison_opcode_for(lex::TokenType op, types::Type_id left_type, types::Type_id right_type) const
+{
+    bool is_float = env.tt.is_float_primitive(left_type) || env.tt.is_float_primitive(right_type);
+    bool is_unsigned = env.tt.is_unsigned_integer_primitive(left_type) && env.tt.is_unsigned_integer_primitive(right_type);
+
+    switch (op) {
+    case lex::TokenType::Equal:
+        if (is_float) {
+            return vm::Opcode::Eq_f64;
+        }
+        return is_unsigned ? vm::Opcode::Eq_u64 : vm::Opcode::Eq_i64;
+    case lex::TokenType::NotEqual:
+        if (is_float) {
+            return vm::Opcode::Neq_f64;
+        }
+        return is_unsigned ? vm::Opcode::Neq_u64 : vm::Opcode::Neq_i64;
+    case lex::TokenType::Less:
+        if (is_float) {
+            return vm::Opcode::Lt_f64;
+        }
+        return is_unsigned ? vm::Opcode::Lt_u64 : vm::Opcode::Lt_i64;
+    case lex::TokenType::LessEqual:
+        if (is_float) {
+            return vm::Opcode::Lte_f64;
+        }
+        return is_unsigned ? vm::Opcode::Lte_u64 : vm::Opcode::Lte_i64;
+    case lex::TokenType::Greater:
+        if (is_float) {
+            return vm::Opcode::Gt_f64;
+        }
+        return is_unsigned ? vm::Opcode::Gt_u64 : vm::Opcode::Gt_i64;
+    case lex::TokenType::GreaterEqual:
+        if (is_float) {
+            return vm::Opcode::Gte_f64;
+        }
+        return is_unsigned ? vm::Opcode::Gte_u64 : vm::Opcode::Gte_i64;
+    default:
+        std::println(std::cerr, "Compiler Bug: Unsupported comparison operator.");
+        std::exit(EXIT_FAILURE);
+    }
+}
+
 void Compiler::compile_stmt(ast::Stmt_id stmt_id)
 {
     if (stmt_id.is_null()) {
@@ -150,6 +274,8 @@ uint8_t Compiler::compile_expr(ast::Expr_id expr_id)
             } else if constexpr (std::is_same_v<T, ast::Variable_expr>) {
                 return compile_expr_node(e);
             } else if constexpr (std::is_same_v<T, ast::Assignment_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Cast_expr>) {
                 return compile_expr_node(e);
             } else {
                 std::println("Unimplemented expression node");
@@ -218,6 +344,10 @@ void Compiler::compile_stmt_node(const ast::Var_stmt &stmt)
 
     if (!stmt.initializer.is_null()) {
         target_reg = compile_expr(stmt.initializer);
+        types::Type_id source_type = ast::get_type(tree.get(stmt.initializer).node);
+        if (source_type != stmt.type) {
+            emit_numeric_normalize(target_reg, stmt.type);
+        }
     } else {
         target_reg = allocate_register();
     }
@@ -386,6 +516,10 @@ uint8_t Compiler::compile_expr_node(const ast::Assignment_expr &expr)
 {
     // 1. Evaluate the right-hand side first
     uint8_t rhs_reg = compile_expr(expr.value);
+    types::Type_id source_type = ast::get_type(tree.get(expr.value).node);
+    if (source_type != expr.type) {
+        emit_numeric_normalize(rhs_reg, expr.type);
+    }
 
     // 2. Search backward to find the physical register for the variable
     for (auto it = locals_.rbegin(); it != locals_.rend(); ++it) {
@@ -419,6 +553,22 @@ uint8_t Compiler::compile_expr_node(const ast::Literal_expr &expr)
 
     emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
     return target_reg;
+}
+
+uint8_t Compiler::compile_expr_node(const ast::Cast_expr &expr)
+{
+    uint8_t value_reg = compile_expr(expr.expression);
+
+    if (!env.tt.is_numeric_primitive(expr.target_type)) {
+        std::println(
+            std::cerr,
+            "Compiler Bug: Only numeric cast expressions are currently implemented, got '{}'.",
+            env.tt.to_string(expr.target_type));
+        std::exit(EXIT_FAILURE);
+    }
+
+    emit(vm::Instruction::make_rrr(cast_opcode_for(expr.target_type), value_reg, 0, 0));
+    return value_reg;
 }
 
 /*
@@ -497,50 +647,34 @@ uint8_t Compiler::compile_expr_node(const ast::Binary_expr &expr)
     uint8_t reg_b = compile_expr(expr.right);
 
     uint8_t dest_reg = allocate_register();
-    bool is_float = env.tt.is_float_primitive(expr.type);
+    types::Type_id left_type = ast::get_type(tree.get(expr.left).node);
+    types::Type_id right_type = ast::get_type(tree.get(expr.right).node);
 
-    vm::Opcode opcode;
+    vm::Opcode opcode = vm::Opcode::Move;
     switch (expr.op) {
     case lex::TokenType::Plus:
-        opcode = is_float ? vm::Opcode::Add_f64 : vm::Opcode::Add_i64;
-        break;
     case lex::TokenType::Minus:
-        opcode = is_float ? vm::Opcode::Sub_f64 : vm::Opcode::Sub_i64;
-        break;
     case lex::TokenType::Star:
-        opcode = is_float ? vm::Opcode::Mul_f64 : vm::Opcode::Mul_i64;
-        break;
     case lex::TokenType::Slash:
-        opcode = is_float ? vm::Opcode::Div_f64 : vm::Opcode::Div_i64;
-        break;
     case lex::TokenType::Percent:
-        opcode = is_float ? vm::Opcode::Mod_f64 : vm::Opcode::Mod_i64;
+        opcode = arithmetic_opcode_for(expr.op, expr.type);
         break;
     case lex::TokenType::Equal:
-        opcode = is_float ? vm::Opcode::Eq_f64 : vm::Opcode::Eq_i64;
-        break;
     case lex::TokenType::NotEqual:
-        opcode = is_float ? vm::Opcode::Neq_f64 : vm::Opcode::Neq_i64;
-        break;
     case lex::TokenType::Less:
-        opcode = is_float ? vm::Opcode::Lt_f64 : vm::Opcode::Lt_i64;
-        break;
     case lex::TokenType::LessEqual:
-        opcode = is_float ? vm::Opcode::Lte_f64 : vm::Opcode::Lte_i64;
-        break;
     case lex::TokenType::Greater:
-        opcode = is_float ? vm::Opcode::Gt_f64 : vm::Opcode::Gt_i64;
+    case lex::TokenType::GreaterEqual: {
+        opcode = comparison_opcode_for(expr.op, left_type, right_type);
         break;
-    case lex::TokenType::GreaterEqual:
-        opcode = is_float ? vm::Opcode::Gte_f64 : vm::Opcode::Gte_i64;
-        break;
-    default: {
+    }
+    default:
         std::println(std::cerr, "Unsupported binary operator in compiler");
         std::exit(EXIT_FAILURE);
     }
-    }
 
     emit(vm::Instruction::make_rrr(opcode, dest_reg, reg_a, reg_b));
+    emit_numeric_normalize(dest_reg, expr.type);
     return dest_reg;
 }
 } // namespace phos::vm

@@ -52,9 +52,15 @@ enum class Opcode : uint8_t {
     Mul_i64, Mul_u64, Mul_f64, Div_i64, Div_u64, Div_f64, // dst, src_a, src_b
 
     Mod_i64, Mod_u64, Mod_f64, // dst, src_a, src_b
+ 
+    // Casts
+    Cast_i8, Cast_i16, Cast_i32, Cast_i64,  // cast r
+    Cast_u8, Cast_u16, Cast_u32, Cast_u64,
+    Cast_f16, Cast_f32, Cast_f64,
 
     // Comparison
     Eq_i64, Neq_i64, Lt_i64, Lte_i64, Gt_i64, Gte_i64, // dest, src_a, src_b
+    Eq_u64, Neq_u64, Lt_u64, Lte_u64, Gt_u64, Gte_u64, // dest, src_a, src_b
     Eq_f64, Neq_f64, Lt_f64, Lte_f64, Gt_f64, Gte_f64, // dest, src_a, src_b
 
     // Print

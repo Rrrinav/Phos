@@ -212,12 +212,12 @@ types::Primitive_kind Value::numeric_type() const
 
 std::optional<Value> Value::cast_numeric(types::Primitive_kind target_type) const
 {
-    if (!is_number() || !types::is_numeric_primitive(target_type)) {
+    if ((!is_number() && !is_bool()) || !types::is_numeric_primitive(target_type)) {
         return std::nullopt;
     }
 
     if (types::is_float_primitive(target_type)) {
-        double val = as_float();
+        double val = is_bool() ? (as_bool() ? 1.0 : 0.0) : as_float();
         if (target_type == types::Primitive_kind::F32) {
             return Value(static_cast<float>(val));
         }
@@ -228,7 +228,7 @@ std::optional<Value> Value::cast_numeric(types::Primitive_kind target_type) cons
     }
 
     if (types::is_unsigned_integer_primitive(target_type)) {
-        uint64_t val = (is_float() && as_float() < 0) ? 0 : as_uint();
+        uint64_t val = is_bool() ? static_cast<uint64_t>(as_bool()) : ((is_float() && as_float() < 0) ? 0 : as_uint());
         if (target_type == types::Primitive_kind::U8) {
             return Value(static_cast<uint8_t>(val));
         }
@@ -241,7 +241,7 @@ std::optional<Value> Value::cast_numeric(types::Primitive_kind target_type) cons
         return Value(val);
     }
 
-    int64_t val = as_int();
+    int64_t val = is_bool() ? static_cast<int64_t>(as_bool()) : as_int();
     if (target_type == types::Primitive_kind::I8) {
         return Value(static_cast<int8_t>(val));
     }
@@ -450,8 +450,7 @@ std::optional<Value> coerce_numeric_literal(const Value &literal, types::Primiti
         case types::Primitive_kind::F16:
         case types::Primitive_kind::F32:
         case types::Primitive_kind::F64:
-            // Floats just pass straight through using the underlying double
-            return literal;
+            return literal.cast_numeric(target_type);
         default:
             // Reject implicit float-to-int narrowing (e.g., 10.5i32 is banned)
             return std::nullopt;
@@ -465,48 +464,47 @@ std::optional<Value> coerce_numeric_literal(const Value &literal, types::Primiti
         // Integer-to-Integer bounds checking
         case types::Primitive_kind::I8:
             if (raw_val >= std::numeric_limits<int8_t>::min() && raw_val <= std::numeric_limits<int8_t>::max()) {
-                return literal;
+                return Value(static_cast<int8_t>(raw_val));
             }
             break;
         case types::Primitive_kind::I16:
             if (raw_val >= std::numeric_limits<int16_t>::min() && raw_val <= std::numeric_limits<int16_t>::max()) {
-                return literal;
+                return Value(static_cast<int16_t>(raw_val));
             }
             break;
         case types::Primitive_kind::I32:
             if (raw_val >= std::numeric_limits<int32_t>::min() && raw_val <= std::numeric_limits<int32_t>::max()) {
-                return literal;
+                return Value(static_cast<int32_t>(raw_val));
             }
             break;
         case types::Primitive_kind::I64:
-            return literal;
+            return Value(static_cast<int64_t>(raw_val));
 
         case types::Primitive_kind::U8:
             if (raw_val >= 0 && raw_val <= std::numeric_limits<uint8_t>::max()) {
-                return literal;
+                return Value(static_cast<uint8_t>(raw_val));
             }
             break;
         case types::Primitive_kind::U16:
             if (raw_val >= 0 && raw_val <= std::numeric_limits<uint16_t>::max()) {
-                return literal;
+                return Value(static_cast<uint16_t>(raw_val));
             }
             break;
         case types::Primitive_kind::U32:
             if (raw_val >= 0 && raw_val <= std::numeric_limits<uint32_t>::max()) {
-                return literal;
+                return Value(static_cast<uint32_t>(raw_val));
             }
             break;
         case types::Primitive_kind::U64:
             if (raw_val >= 0) {
-                return literal;
+                return Value(static_cast<uint64_t>(raw_val));
             }
             break;
 
-        // Integer-to-Float upcasting (e.g., 10f32)
         case types::Primitive_kind::F16:
         case types::Primitive_kind::F32:
         case types::Primitive_kind::F64:
-            return Value(static_cast<double>(raw_val));
+            return std::nullopt;
 
         default:
             return std::nullopt;
