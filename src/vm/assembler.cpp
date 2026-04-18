@@ -80,6 +80,14 @@ std::string Assembler::disassemble_instruction(Instruction inst, const Closure_d
         comment = std::format("%r{} = %r{} % %r{}", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
         break;
 
+    case Opcode::Jump:
+        asm_str = std::format("{:<14} @{:04}", name, static_cast<uint32_t>(inst.i.imm));
+        break;
+
+    case Opcode::Jump_if_false:
+        asm_str = std::format("{:<14} %r{}, @{:04}", name, inst.ri.dst, inst.ri.imm);
+        break;
+
     default:
         asm_str = std::format("{:<14} ???", name);
         break;
@@ -233,13 +241,24 @@ Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &ar
                 if (s.empty()) {
                     return 0;
                 }
-                // Skips the '%' or '$' and the 'r' or 'K'
                 return static_cast<uint16_t>(std::stoi(s.substr(2)));
+            };
+
+            // Helper specifically for our 24-bit jumps (e.g., @0042)
+            auto parse_jump = [](const std::string &s) -> uint32_t {
+                if (s.empty()) {
+                    return 0;
+                }
+                return static_cast<uint32_t>(std::stoul(s.substr(1))); // Skip the '@'
             };
 
             // Build Instruction based on Opcode format
             if (op == Opcode::Load_const) {
                 temp_code.push_back(Instruction::make_ri(op, parse_arg(args[0]), parse_arg(args[1])));
+            } else if (op == Opcode::Jump) {
+                temp_code.push_back(Instruction::make_i(op, parse_jump(args[0])));
+            } else if (op == Opcode::Jump_if_false) {
+                temp_code.push_back(Instruction::make_ri(op, parse_arg(args[0]), parse_jump(args[1])));
             } else if (op == Opcode::Return || op == Opcode::Print) {
                 temp_code.push_back(Instruction::make_rrr(op, parse_arg(args[0]), 0, 0));
             } else if (op == Opcode::Move) {

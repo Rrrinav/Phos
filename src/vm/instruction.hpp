@@ -87,7 +87,6 @@ union Instruction {
         Opcode op;
         uint8_t dst;
         uint16_t imm;
-
     } ri;
 
     // RS format (register + signed immediate)
@@ -97,6 +96,12 @@ union Instruction {
         uint8_t dst;
         int16_t imm;
     } rs;
+
+    struct
+    {
+        Opcode op;
+        uint32_t imm : 24;
+    } i;
 
     inline static Instruction make_rrr(Opcode op, uint8_t dst, uint8_t a, uint8_t b)
     {
@@ -124,6 +129,14 @@ union Instruction {
         i.rs.dst = dst;
         i.rs.imm = imm;
         return i;
+    }
+
+    inline static Instruction make_i(Opcode op, uint32_t imm)
+    {
+        Instruction inst{};
+        inst.i.op = op;
+        inst.i.imm = imm & 0xFFFFFF;
+        return inst;
     }
 };
 
