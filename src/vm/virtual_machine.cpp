@@ -148,7 +148,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
 
         case Opcode::Jump: {
-            ip = inst.ri.imm;
+            ip = inst.i.imm;
             break;
         }
 

@@ -149,6 +149,8 @@ uint8_t Compiler::compile_expr(ast::Expr_id expr_id)
                 return compile_expr_node(e);
             } else if constexpr (std::is_same_v<T, ast::Variable_expr>) {
                 return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Assignment_expr>) {
+                return compile_expr_node(e);
             } else {
                 std::println("Unimplemented expression node");
             }
@@ -371,6 +373,36 @@ uint8_t Compiler::compile_expr_node(const ast::Variable_expr &expr)
     }
 
     std::println(std::cerr, "Compiler Bug: Unresolved variable '{}' escaped semantic checker.", expr.name);
+    std::exit(1);
+    return 0;
+}
+
+/*
+    %rhs = compile(expr.value)
+    %target_reg = lookup_local(expr.name)
+    move %target_reg, %rhs
+*/
+uint8_t Compiler::compile_expr_node(const ast::Assignment_expr &expr)
+{
+    // 1. Evaluate the right-hand side first
+    uint8_t rhs_reg = compile_expr(expr.value);
+
+    // 2. Search backward to find the physical register for the variable
+    for (auto it = locals_.rbegin(); it != locals_.rend(); ++it) {
+        if (it->name == expr.name) {
+
+            // 3. Move the evaluated value into the variable's physical register
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, it->reg, rhs_reg, 0));
+
+            // In C-style languages, assignment expressions resolve to the assigned value
+            // e.g., print(a = 5); prints 5. So we return the target register.
+            return it->reg;
+        }
+    }
+
+    // Global re-assignment (like overriding a hoisted function pointer)
+    // is usually illegal or requires a specific VM opcode we don't have yet.
+    std::println(std::cerr, "Compiler Bug: Reassignment of unresolved or global variable '{}'.", expr.name);
     std::exit(1);
     return 0;
 }

@@ -21,12 +21,24 @@ static std::string escape_string(std::string_view input)
     out.reserve(input.length() + 2);
     for (char c : input) {
         switch (c) {
-        case '\n': out += "\\n";  break;
-        case '\r': out += "\\r";  break;
-        case '\t': out += "\\t";  break;
-        case '\\': out += "\\\\"; break;
-        case '\"': out += "\\\""; break;
-        default:   out += c;      break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
+        case '\\':
+            out += "\\\\";
+            break;
+        case '\"':
+            out += "\\\"";
+            break;
+        default:
+            out += c;
+            break;
         }
     }
     return out;
@@ -40,13 +52,24 @@ static std::string unescape_string(std::string_view input)
         if (input[i] == '\\' && i + 1 < input.length()) {
             char next = input[++i];
             switch (next) {
-            case 'n':  out += '\n'; break;
-            case 'r':  out += '\r'; break;
-            case 't':  out += '\t'; break;
-            case '\\': out += '\\'; break;
-            case '"':  out += '"';  break;
-            default:   out += '\\';
-                       out += next;
+            case 'n':
+                out += '\n';
+                break;
+            case 'r':
+                out += '\r';
+                break;
+            case 't':
+                out += '\t';
+                break;
+            case '\\':
+                out += '\\';
+                break;
+            case '"':
+                out += '"';
+                break;
+            default:
+                out += '\\';
+                out += next;
                 break;
             }
         } else {
@@ -80,11 +103,11 @@ std::string Assembler::disassemble_instruction(Instruction inst, const Closure_d
         break;
 
     case Opcode::Jump:
-        asm_str = std::format("{:<14} @{:04}", name, static_cast<uint32_t>(inst.i.imm));
+        asm_str = std::format("{:<14} .L{:04}", name, static_cast<uint32_t>(inst.i.imm));
         break;
 
     case Opcode::Jump_if_false:
-        asm_str = std::format("{:<14} %r{}, @{:04}", name, inst.ri.dst, inst.ri.imm);
+        asm_str = std::format("{:<14} %r{}, .L{:04}", name, inst.ri.dst, inst.ri.imm);
         break;
 
     case Opcode::Load_nil:
@@ -168,7 +191,23 @@ std::string Assembler::serialize(const Closure_data &closure)
     }
 
     ss << "  .code:\n";
+
+    // First pass: find all instructions that are targets of a jump
+    std::vector<bool> is_target(closure.code_count, false);
     for (size_t i = 0; i < closure.code_count; i++) {
+        Opcode op = closure.code[i].rrr.op;
+        if (op == Opcode::Jump) {
+            is_target[closure.code[i].i.imm] = true;
+        } else if (op == Opcode::Jump_if_false) {
+            is_target[closure.code[i].ri.imm] = true;
+        }
+    }
+
+    // Second pass: write the instructions, injecting labels where needed
+    for (size_t i = 0; i < closure.code_count; i++) {
+        if (is_target[i]) {
+            ss << std::format("  .L{:04}:\n", i);
+        }
         std::string inst_str = disassemble_instruction(closure.code[i], &closure);
         ss << std::format("    {}\n", inst_str);
     }
@@ -258,6 +297,11 @@ Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &ar
                 }
             }
         } else if (in_code) {
+            // Ignore label definitions completely during deserialization
+            if (line.starts_with(".L") && line.ends_with(":")) {
+                continue;
+            }
+
             std::istringstream token_stream(line);
             std::string op_str;
             token_stream >> op_str;
@@ -285,7 +329,13 @@ Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &ar
                 if (s.empty()) {
                     return 0;
                 }
-                return static_cast<uint32_t>(std::stoul(s.substr(1)));
+                if (s.starts_with(".L")) {
+                    return static_cast<uint32_t>(std::stoul(s.substr(2)));
+                }
+                if (s.starts_with("@")) {
+                    return static_cast<uint32_t>(std::stoul(s.substr(1)));
+                }
+                return 0;
             };
 
             if (op == Opcode::Load_const) {
