@@ -257,7 +257,10 @@ Result<std::optional<ast::Stmt_id>> Parser::declaration()
         return std::optional<ast::Stmt_id>{__Try(enum_declaration())};
     }
     if (match({lex::TokenType::Let})) {
-        return std::optional<ast::Stmt_id>{__Try(var_declaration())};
+        return std::optional<ast::Stmt_id>{__Try(var_declaration(false))};
+    }
+    if (match({lex::TokenType::Const})) {
+        return std::optional<ast::Stmt_id>{__Try(var_declaration(true))};
     }
 
     return std::optional<ast::Stmt_id>{__Try(statement())};
@@ -547,13 +550,18 @@ Result<ast::Function_stmt> Parser::parse_model_method()
     };
 }
 
-// var_decl -> "let" ("mut" | "const")? IDENT (":=" expr | ":" type ("=" expr)?) ";"
-Result<ast::Stmt_id> Parser::var_declaration()
+// var_decl   -> "let" "mut"? IDENT (":=" expr | ":" type ("=" expr)?) ";"
+// const_decl -> "const" IDENT (":=" expr | ":" type ("=" expr)?) ";"
+Result<ast::Stmt_id> Parser::var_declaration(bool is_const)
 {
-    bool is_mut = match({lex::TokenType::Mut});
-    bool is_const = !is_mut && match({lex::TokenType::Const});
+    bool is_mut = false;
 
-    auto name = __Try(consume(lex::TokenType::Identifier, "Expect variable name"));
+    // Only check for 'mut' if we are in a 'let' declaration
+    if (!is_const) {
+        is_mut = match({lex::TokenType::Mut});
+    }
+
+    auto name = __Try(consume(lex::TokenType::Identifier, "Expect variable or constant name"));
 
     types::Type_id var_type{};
     ast::Expr_id initializer = ast::Expr_id::null();
@@ -561,32 +569,35 @@ Result<ast::Stmt_id> Parser::var_declaration()
 
     if (match({lex::TokenType::Colon})) {
         if (match({lex::TokenType::Assign})) {
-            // let x := expr  -- inferred type
+            // let x := expr  OR  const x := expr
             initializer = __Try(expression());
             type_inferred = true;
         } else {
-            // let x: T = expr  -- explicit type, optional initializer
+            // let x: T = expr  OR  const x: T = expr
             var_type = __Try(parse_type());
+
             if (match({lex::TokenType::Assign})) {
                 initializer = __Try(expression());
+            } else if (is_const) {
+                // Semantic enforcement: Constants must have an initializer
+                return std::unexpected(create_error(peek(), "Constants must be initialized"));
             }
         }
     } else {
-        return std::unexpected(create_error(peek(), "Expect ':' or ':=' after variable name"));
+        return std::unexpected(create_error(peek(), "Expect ':' or ':=' after name"));
     }
 
-    __TryIgnore(consume(lex::TokenType::Semicolon, "Expected ';' after variable declaration"));
+    __TryIgnore(consume(lex::TokenType::Semicolon, "Expected ';' after declaration"));
 
-    return tree_.add_stmt(
-        ast::Stmt{ast::Var_stmt{
-            .is_mut = is_mut,
-            .is_const = is_const,
-            .name = name.lexeme,
-            .type = var_type,
-            .initializer = initializer,
-            .type_inferred = type_inferred,
-            .loc = {name.line, name.column},
-        }});
+    return tree_.add_stmt(ast::Stmt{ast::Var_stmt{
+        .is_mut = is_mut,
+        .is_const = is_const,
+        .name = name.lexeme,
+        .type = var_type,
+        .initializer = initializer,
+        .type_inferred = type_inferred,
+        .loc = {name.line, name.column},
+    }});
 }
 
 // =============================================================================
@@ -787,6 +798,7 @@ Result<ast::Stmt_id> Parser::while_statement()
         }});
 }
 
+// for_stmt -> "for" "(" (var_decl | const_decl | expr_stmt | ";") expr? ";" expr? ")" block
 Result<ast::Stmt_id> Parser::for_statement()
 {
     __TryIgnore(consume(lex::TokenType::LeftParen, "Expect '(' after 'for'"));
@@ -796,9 +808,11 @@ Result<ast::Stmt_id> Parser::for_statement()
     ast::Expr_id increment = ast::Expr_id::null();
 
     if (match({lex::TokenType::Semicolon})) {
-        // empty initializer
+        // empty initializer, do nothing
     } else if (match({lex::TokenType::Let})) {
-        initializer = __TryOr(var_declaration(), ast::Stmt_id::null());
+        initializer = __TryOr(var_declaration(false), ast::Stmt_id::null());
+    } else if (match({lex::TokenType::Const})) {
+        initializer = __TryOr(var_declaration(true), ast::Stmt_id::null());
     } else {
         initializer = __TryOr(expression_statement(), ast::Stmt_id::null());
     }
@@ -813,7 +827,6 @@ Result<ast::Stmt_id> Parser::for_statement()
     }
     __TryIgnore(consume(lex::TokenType::RightParen, "Expect ')' after for clauses"));
 
-    // FORCE BLOCK HERE
     __TryIgnore(consume(lex::TokenType::LeftBrace, "Expect '{' after for clauses"));
     auto body = __Try(block_statement());
 

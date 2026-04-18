@@ -1,21 +1,27 @@
 #pragma once
 
-#include "instruction.hpp"
-#include "../value/value.hpp"
 #include "../memory/arena.hpp"
+#include "../value/value.hpp"
+#include "instruction.hpp"
+
 #include <string>
 
 namespace phos::vm {
 
-// TODO: Espace strings de/serialization
-class Assembler {
+class Assembler
+{
 public:
-    // Exports the Closure to deterministic text
-    static std::string serialize(const Closure_data& closure);
-    // Reads deterministic text back into executable VM memory
-    static Closure_data deserialize(const std::string& ir_source, mem::Arena& arena);
+    // Serializes a Closure_data object into a deterministic, human-readable text format.
+    // Handles string escaping automatically to ensure safe multiline strings.
+    static std::string serialize(const Closure_data &closure);
 
-    static std::string disassemble_instruction(Instruction inst, const Closure_data* closure = nullptr);
+    // Reads deterministic text back into executable VM memory using the provided Arena.
+    // Automatically unescapes strings and links 24-bit jump instructions.
+    static Closure_data deserialize(const std::string &ir_source, mem::Arena &arena);
+
+    // Converts a single 32-bit Instruction into an LLVM-style assembly string.
+    // If a closure is provided, it will resolve constant pool indices ($K) into inline comments.
+    static std::string disassemble_instruction(Instruction inst, const Closure_data *closure = nullptr);
 };
 
 } // namespace phos::vm

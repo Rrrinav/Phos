@@ -2,17 +2,58 @@
 
 #include <algorithm>
 #include <cctype>
+#include <format>
 #include <sstream>
 #include <vector>
 
 namespace phos::vm {
 
-// Helper to strip whitespace
 static std::string trim(std::string s)
 {
     s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) { return !std::isspace(ch); }));
     s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base(), s.end());
     return s;
+}
+
+static std::string escape_string(std::string_view input)
+{
+    std::string out;
+    out.reserve(input.length() + 2);
+    for (char c : input) {
+        switch (c) {
+        case '\n': out += "\\n";  break;
+        case '\r': out += "\\r";  break;
+        case '\t': out += "\\t";  break;
+        case '\\': out += "\\\\"; break;
+        case '\"': out += "\\\""; break;
+        default:   out += c;      break;
+        }
+    }
+    return out;
+}
+
+static std::string unescape_string(std::string_view input)
+{
+    std::string out;
+    out.reserve(input.length());
+    for (size_t i = 0; i < input.length(); ++i) {
+        if (input[i] == '\\' && i + 1 < input.length()) {
+            char next = input[++i];
+            switch (next) {
+            case 'n':  out += '\n'; break;
+            case 'r':  out += '\r'; break;
+            case 't':  out += '\t'; break;
+            case '\\': out += '\\'; break;
+            case '"':  out += '"';  break;
+            default:   out += '\\';
+                       out += next;
+                break;
+            }
+        } else {
+            out += input[i];
+        }
+    }
+    return out;
 }
 
 std::string Assembler::disassemble_instruction(Instruction inst, const Closure_data *closure)
@@ -23,23 +64,32 @@ std::string Assembler::disassemble_instruction(Instruction inst, const Closure_d
     std::string asm_str;
     std::string comment;
 
-    // Decode using LLVM-style Sigils: % (Register) and $ (Constant/Immediate)
     switch (op) {
     case Opcode::Load_const:
-        asm_str = std::format("{:<14} %R{}, $K{:03}", name, inst.ri.dst, inst.ri.imm);
+        asm_str = std::format("{:<14} %r{}, $K{:03}", name, inst.ri.dst, inst.ri.imm);
         if (closure && inst.ri.imm < closure->constant_count) {
             Value val = closure->constants[inst.ri.imm];
             if (val.is_integer()) {
-                comment = std::format("%R{} = {}", inst.ri.dst, val.as_int());
+                comment = std::format("%r{} = {}", inst.ri.dst, val.as_int());
             } else if (val.is_float()) {
-                comment = std::format("%R{} = {}", inst.ri.dst, val.as_float());
+                comment = std::format("%r{} = {}", inst.ri.dst, val.as_float());
             } else if (val.is_string()) {
-                comment = std::format("%R{} = \"{}\"", inst.ri.dst, val.as_string());
+                comment = std::format("%r{} = \"{}\"", inst.ri.dst, escape_string(val.as_string()));
             }
         }
         break;
 
+    case Opcode::Jump:
+        asm_str = std::format("{:<14} @{:04}", name, static_cast<uint32_t>(inst.i.imm));
+        break;
+
+    case Opcode::Jump_if_false:
+        asm_str = std::format("{:<14} %r{}, @{:04}", name, inst.ri.dst, inst.ri.imm);
+        break;
+
     case Opcode::Load_nil:
+    case Opcode::Load_true:
+    case Opcode::Load_false:
     case Opcode::Print:
     case Opcode::Return:
         asm_str = std::format("{:<14} %r{}", name, inst.rrr.dst);
@@ -52,40 +102,27 @@ std::string Assembler::disassemble_instruction(Instruction inst, const Closure_d
 
     case Opcode::Add_i64:
     case Opcode::Add_f64:
-        asm_str = std::format("{:<14} %r{}, %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
-        comment = std::format("%r{} = %r{} + %r{}", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
-        break;
-
     case Opcode::Sub_i64:
     case Opcode::Sub_f64:
-        asm_str = std::format("{:<14} %r{}, %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
-        comment = std::format("%r{} = %r{} - %r{}", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
-        break;
-
     case Opcode::Mul_i64:
     case Opcode::Mul_f64:
-        asm_str = std::format("{:<14} %r{}, %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
-        comment = std::format("%r{} = %r{} * %r{}", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
-        break;
-
     case Opcode::Div_i64:
     case Opcode::Div_f64:
-        asm_str = std::format("{:<14} %r{}, %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
-        comment = std::format("%r{} = %r{} / %r{}", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
-        break;
-
     case Opcode::Mod_i64:
     case Opcode::Mod_f64:
+    case Opcode::Eq_i64:
+    case Opcode::Neq_i64:
+    case Opcode::Lt_i64:
+    case Opcode::Lte_i64:
+    case Opcode::Gt_i64:
+    case Opcode::Gte_i64:
+    case Opcode::Eq_f64:
+    case Opcode::Neq_f64:
+    case Opcode::Lt_f64:
+    case Opcode::Lte_f64:
+    case Opcode::Gt_f64:
+    case Opcode::Gte_f64:
         asm_str = std::format("{:<14} %r{}, %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
-        comment = std::format("%r{} = %r{} % %r{}", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
-        break;
-
-    case Opcode::Jump:
-        asm_str = std::format("{:<14} @{:04}", name, static_cast<uint32_t>(inst.i.imm));
-        break;
-
-    case Opcode::Jump_if_false:
-        asm_str = std::format("{:<14} %r{}, @{:04}", name, inst.ri.dst, inst.ri.imm);
         break;
 
     default:
@@ -93,7 +130,6 @@ std::string Assembler::disassemble_instruction(Instruction inst, const Closure_d
         break;
     }
 
-    // If we generated a comment, align it neatly to column 32 (using standard ';' for comments)
     if (!comment.empty()) {
         return std::format("{:<32} ; {}", asm_str, comment);
     }
@@ -104,16 +140,13 @@ std::string Assembler::serialize(const Closure_data &closure)
 {
     std::stringstream ss;
 
-    // Resolve Function Name safely
     std::string func_name = "main";
     if (closure.name && closure.name->length > 0) {
         func_name = std::string(closure.name->chars, closure.name->length);
     }
 
-    // 1. Semantic Function Definition Block
     ss << std::format("@fn {}(arity: {}) {{\n", func_name, closure.arity);
 
-    // 2. Constants Block
     ss << "  .constants:\n";
     for (size_t i = 0; i < closure.constant_count; i++) {
         Value val = closure.constants[i];
@@ -122,7 +155,9 @@ std::string Assembler::serialize(const Closure_data &closure)
         } else if (val.is_integer()) {
             ss << std::format("    $K{:03} = i64 {}\n", i, val.as_int());
         } else if (val.is_string()) {
-            ss << std::format("    $K{:03} = str \"{}\"\n", i, val.as_string());
+            ss << std::format("    $K{:03} = str \"{}\"\n", i, escape_string(val.as_string()));
+        } else if (val.is_nil()) {
+            ss << std::format("    $K{:03} = nil\n", i);
         } else {
             ss << std::format("    $K{:03} = unknown\n", i);
         }
@@ -132,21 +167,17 @@ std::string Assembler::serialize(const Closure_data &closure)
         ss << "\n";
     }
 
-    // 3. Executable Code Block
     ss << "  .code:\n";
     for (size_t i = 0; i < closure.code_count; i++) {
-        // No line numbers. Just pure, parsable instruction text.
         std::string inst_str = disassemble_instruction(closure.code[i], &closure);
         ss << std::format("    {}\n", inst_str);
     }
 
-    // Close the function scope
     ss << "}\n\n";
 
     return ss.str();
 }
 
-// Inverse mapping for our opcodes
 Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &arena)
 {
     Closure_data closure{};
@@ -160,7 +191,6 @@ Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &ar
     bool in_code = false;
 
     while (std::getline(ss, line)) {
-        // Strip inline comments starting with ';'
         size_t comment_pos = line.find(';');
         if (comment_pos != std::string::npos) {
             line = line.substr(0, comment_pos);
@@ -171,9 +201,7 @@ Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &ar
             continue;
         }
 
-        // --- 1. Parse Header ---
         if (line.starts_with("@fn")) {
-            // Very naive extraction: @fn main(arity: 0) {
             size_t name_start = 4;
             size_t name_end = line.find('(');
             std::string name = line.substr(name_start, name_end - name_start);
@@ -182,7 +210,6 @@ Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &ar
             std::copy(name.begin(), name.end(), closure.name->chars);
             closure.name->chars[name.length()] = '\0';
 
-            // Extract Arity
             size_t arity_pos = line.find("arity:");
             closure.arity = std::stoi(line.substr(arity_pos + 6));
         } else if (line == ".constants:") {
@@ -192,11 +219,8 @@ Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &ar
             in_constants = false;
             in_code = true;
         } else if (line == "}") {
-            break; // End of function block
-        }
-        // --- 2. Parse Constants ---
-        else if (in_constants) {
-            // Expected format: $K000 = i64 100
+            break;
+        } else if (in_constants) {
             size_t eq_pos = line.find('=');
             if (eq_pos == std::string::npos) {
                 continue;
@@ -208,24 +232,38 @@ Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &ar
                 temp_constants.push_back(Value(static_cast<int64_t>(std::stoll(type_val.substr(4)))));
             } else if (type_val.starts_with("f64")) {
                 temp_constants.push_back(Value(static_cast<double>(std::stod(type_val.substr(4)))));
+            } else if (type_val.starts_with("nil")) {
+                temp_constants.push_back(Value(nullptr));
             } else if (type_val.starts_with("str")) {
-                // Extract string between quotes
                 size_t first_quote = type_val.find('"');
-                size_t last_quote = type_val.rfind('"');
-                std::string str_content = type_val.substr(first_quote + 1, last_quote - first_quote - 1);
-                temp_constants.push_back(Value::make_string(arena, str_content));
+                if (first_quote != std::string::npos) {
+                    std::string escaped_content;
+                    bool in_escape = false;
+
+                    for (size_t i = first_quote + 1; i < type_val.length(); ++i) {
+                        char c = type_val[i];
+                        if (in_escape) {
+                            escaped_content += c;
+                            in_escape = false;
+                        } else if (c == '\\') {
+                            escaped_content += c;
+                            in_escape = true;
+                        } else if (c == '"') {
+                            break;
+                        } else {
+                            escaped_content += c;
+                        }
+                    }
+                    temp_constants.push_back(Value::make_string(arena, unescape_string(escaped_content)));
+                }
             }
-        }
-        // --- 3. Parse Code ---
-        else if (in_code) {
-            // Expected format: Add_i64 %r2, %r0, %r1
+        } else if (in_code) {
             std::istringstream token_stream(line);
             std::string op_str;
             token_stream >> op_str;
 
             Opcode op = string_to_opcode(op_str);
 
-            // Extract the comma separated arguments safely
             std::string args_str;
             std::getline(token_stream, args_str);
 
@@ -236,7 +274,6 @@ Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &ar
                 args.push_back(trim(item));
             }
 
-            // Helper to pull out the integer from %rX or $KX
             auto parse_arg = [](const std::string &s) -> uint16_t {
                 if (s.empty()) {
                     return 0;
@@ -244,15 +281,13 @@ Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &ar
                 return static_cast<uint16_t>(std::stoi(s.substr(2)));
             };
 
-            // Helper specifically for our 24-bit jumps (e.g., @0042)
             auto parse_jump = [](const std::string &s) -> uint32_t {
                 if (s.empty()) {
                     return 0;
                 }
-                return static_cast<uint32_t>(std::stoul(s.substr(1))); // Skip the '@'
+                return static_cast<uint32_t>(std::stoul(s.substr(1)));
             };
 
-            // Build Instruction based on Opcode format
             if (op == Opcode::Load_const) {
                 temp_code.push_back(Instruction::make_ri(op, parse_arg(args[0]), parse_arg(args[1])));
             } else if (op == Opcode::Jump) {
@@ -264,14 +299,11 @@ Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &ar
             } else if (op == Opcode::Move) {
                 temp_code.push_back(Instruction::make_rrr(op, parse_arg(args[0]), parse_arg(args[1]), 0));
             } else {
-                // RRR Math Opcodes
                 temp_code.push_back(Instruction::make_rrr(op, parse_arg(args[0]), parse_arg(args[1]), parse_arg(args[2])));
             }
         }
     }
 
-    // --- 4. Permanently Allocate to Arena ---
-    // This guarantees the VM can execute it safely without vector reallocation deleting the pointers.
     closure.constant_count = temp_constants.size();
     if (closure.constant_count > 0) {
         closure.constants = arena.allocate<Value>(closure.constant_count);

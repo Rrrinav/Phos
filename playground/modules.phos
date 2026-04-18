@@ -1,0 +1,4 @@
+import math;
+import { sin, cos, pow } from math;
+import math::sin;
+const my_math := import math;

@@ -108,8 +108,6 @@ void Compiler::compile_stmt(ast::Stmt_id stmt_id)
                 compile_stmt_node(s);
             } else if constexpr (std::is_same_v<T, ast::If_stmt>) {
                 compile_stmt_node(s);
-            } else if constexpr (std::is_same_v<T, ast::Function_stmt>) {
-                compile_stmt_node(s);
             } else {
                 std::println(std::cerr, "Unimplemented stmt node");
             }
@@ -165,6 +163,7 @@ void Compiler::compile_stmt_node(const ast::Print_stmt &stmt)
     if (!stmt.end.empty()) {
         uint8_t end_reg = allocate_register();
         uint16_t end_idx = add_constant(Value::make_string(arena, stmt.end));
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, end_reg, end_idx));
         emit(vm::Instruction::make_rrr(vm::Opcode::Print, end_reg, stream_flag, 0));
     }
 }
