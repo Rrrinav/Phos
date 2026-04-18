@@ -54,6 +54,8 @@ public:
     void compile_stmt_node(const ast::Var_stmt &stmt);
     void compile_stmt_node(const ast::Block_stmt &stmt);
     void compile_stmt_node(const ast::If_stmt &stmt);
+    void compile_stmt_node(const ast::While_stmt &stmt);
+    void compile_stmt_node(const ast::For_stmt &stmt);
 
     // Expression compilation visitors. Returns the register holding the result.
     uint8_t compile_expr(ast::Expr_id expr_id);

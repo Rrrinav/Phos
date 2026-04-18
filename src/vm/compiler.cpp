@@ -1,5 +1,6 @@
 #include "compiler.hpp"
 
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <print>
@@ -8,7 +9,6 @@ namespace phos::vm {
 
 Compiler::Compiler(const ast::Ast_tree &tree, const Type_environment &env, mem::Arena &arena_) : tree(tree), env(env), arena(arena_)
 {
-    // Initialize the primary code block for the main script
     blocks_.push_back(Code_block{});
 }
 
@@ -17,11 +17,26 @@ Code_block &Compiler::current_block()
     return blocks_.back();
 }
 
+/*
+    Main Compilation Flow (Two-Pass Architecture):
+
+    Pass 1: Hoisting
+        For each top-level statement:
+            If it's a function:
+                Reserve an index in the constant pool.
+                Save mapping: function_locations_[name] = index.
+
+    Pass 2: Bytecode Generation
+        For each top-level statement:
+            compile_stmt(stmt)
+
+    Packaging:
+        Emit graceful Return instruction.
+        Allocate final instructions and constants into the memory Arena.
+*/
 Closure_data Compiler::compile(const std::vector<ast::Stmt_id> &statements)
 {
     // Pass 1: Forward Declarations (Hoisting)
-    // We scan the top-level statements for functions, reserve a dummy slot
-    // in the main block's constant pool, and store that index.
     for (auto stmt_id : statements) {
         if (stmt_id.is_null()) {
             continue;
@@ -36,15 +51,12 @@ Closure_data Compiler::compile(const std::vector<ast::Stmt_id> &statements)
     }
 
     // Pass 2: Bytecode Generation
-    // Now we walk the AST and generate instructions.
     for (auto stmt_id : statements) {
         compile_stmt(stmt_id);
     }
 
-    // Graceful halt for the main script
     emit(vm::Instruction::make_rrr(vm::Opcode::Return, 0, 0, 0));
 
-    // Extract the completed main script block and package it into Arena memory
     Closure_data data{};
     auto &final_block = current_block();
 
@@ -63,6 +75,10 @@ Closure_data Compiler::compile(const std::vector<ast::Stmt_id> &statements)
     return data;
 }
 
+/*
+    Virtual Register Allocation:
+    Claims the next available 8-bit register for temporary use.
+*/
 uint8_t Compiler::allocate_register()
 {
     if (current_register_ >= 255) {
@@ -74,8 +90,6 @@ uint8_t Compiler::allocate_register()
 
 void Compiler::reset_registers()
 {
-    // Resets temporary scratch space. Lexical locals will require a more
-    // advanced register allocator in the future.
     current_register_ = 0;
 }
 
@@ -108,6 +122,10 @@ void Compiler::compile_stmt(ast::Stmt_id stmt_id)
                 compile_stmt_node(s);
             } else if constexpr (std::is_same_v<T, ast::If_stmt>) {
                 compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::While_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::For_stmt>) {
+                compile_stmt_node(s);
             } else {
                 std::println(std::cerr, "Unimplemented stmt node");
             }
@@ -139,6 +157,18 @@ uint8_t Compiler::compile_expr(ast::Expr_id expr_id)
         tree.get(expr_id).node);
 }
 
+/*
+    if custom separator:
+        %sep = load_const "separator_string"
+    for each expression 'e':
+        if not first expression:
+            print %sep, stream
+        %res = compile(e)
+        print %res, stream
+    if custom end (e.g., \n):
+        %end = load_const "end_string"
+        print %end, stream
+*/
 void Compiler::compile_stmt_node(const ast::Print_stmt &stmt)
 {
     uint8_t stream_flag = (stmt.stream == ast::Print_stream::STDERR) ? 1 : 0;
@@ -173,6 +203,13 @@ void Compiler::compile_stmt_node(const ast::Expr_stmt &stmt)
     compile_expr(stmt.expression);
 }
 
+/*
+    if has initializer:
+        %target = compile(initializer)
+    else:
+        %target = allocate_register()
+    locals.push(name, %target)
+*/
 void Compiler::compile_stmt_node(const ast::Var_stmt &stmt)
 {
     uint8_t target_reg = 0;
@@ -186,25 +223,37 @@ void Compiler::compile_stmt_node(const ast::Var_stmt &stmt)
     locals_.push_back({stmt.name, target_reg});
 }
 
+/*
+    Save current locals count
+    compile(statements inside block)
+    Restore locals count (destroys block-scoped variables)
+*/
 void Compiler::compile_stmt_node(const ast::Block_stmt &stmt)
 {
-    // Save current scope boundary
     auto prev_locals_size = this->locals_.size();
 
     for (const auto &st : stmt.statements) {
         compile_stmt(st);
     }
 
-    // Discard locals created inside this block
     this->locals_.resize(prev_locals_size);
 }
 
+/*
+    If-Else Pseudo-IR:
+        %cond = compile(condition)
+        jump_if_false %cond, .else_branch
+    .then_branch:
+        compile(then_body)
+        jump .if_end
+    .else_branch:
+        compile(else_body)
+    .if_end:
+*/
 void Compiler::compile_stmt_node(const ast::If_stmt &stmt)
 {
     uint8_t cond_reg = compile_expr(stmt.condition);
 
-    // Conditional jump over the 'then' block.
-    // We emit 0 as the offset and store the instruction index to patch later.
     size_t jump_if_false_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, cond_reg, 0));
 
     if (!stmt.then_branch.is_null()) {
@@ -212,36 +261,108 @@ void Compiler::compile_stmt_node(const ast::If_stmt &stmt)
     }
 
     if (!stmt.else_branch.is_null()) {
-        // Unconditional jump over the 'else' block using the new I format (24-bit).
         size_t jump_skip_else_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
 
-        // Patch the false jump to land exactly at the start of the else block
         uint16_t else_start = static_cast<uint16_t>(current_block().instructions.size());
         current_block().instructions[jump_if_false_idx].ri.imm = else_start;
 
         compile_stmt(stmt.else_branch);
 
-        // Patch the unconditional skip to land exactly at the end of the chain
         uint32_t skip_target = static_cast<uint32_t>(current_block().instructions.size());
         current_block().instructions[jump_skip_else_idx].i.imm = skip_target;
 
     } else {
-        // No else block, so the false jump just lands at the end of the 'then' block
         uint16_t end_target = static_cast<uint16_t>(current_block().instructions.size());
         current_block().instructions[jump_if_false_idx].ri.imm = end_target;
     }
 }
 
+/*
+    .loop_start:
+        %cond = compile(condition)
+        jump_if_false %cond, .loop_end
+    .loop_body:
+        compile(body)
+        jump .loop_start
+    .loop_end:
+*/
+void Compiler::compile_stmt_node(const ast::While_stmt &stmt)
+{
+    std::uint32_t loop_start = static_cast<uint32_t>(current_block().instructions.size());
+
+    std::uint8_t condition_reg = compile_expr(stmt.condition);
+
+    size_t exit_jump_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, condition_reg, 0));
+
+    compile_stmt(stmt.body);
+
+    emit(vm::Instruction::make_i(vm::Opcode::Jump, loop_start));
+
+    uint16_t exit_target = static_cast<uint16_t>(current_block().instructions.size());
+    current_block().instructions[exit_jump_idx].ri.imm = exit_target;
+}
+
+/*
+    .loop_init:
+        compile(initializer)
+    .loop_start:
+        %cond = compile(condition)
+        jump_if_false %cond, .loop_end
+    .loop_body:
+        compile(body)
+    .loop_step:
+        compile(increment)
+        jump .loop_start
+    .loop_end:
+*/
+void Compiler::compile_stmt_node(const ast::For_stmt &stmt)
+{
+    auto prev_locals_size = this->locals_.size();
+
+    if (!stmt.initializer.is_null()) {
+        compile_stmt(stmt.initializer);
+    }
+
+    uint32_t loop_start = static_cast<uint32_t>(current_block().instructions.size());
+
+    size_t exit_jump_idx = -1;
+    if (!stmt.condition.is_null()) {
+        uint8_t cond_reg = compile_expr(stmt.condition);
+        exit_jump_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, cond_reg, 0));
+    }
+
+    compile_stmt(stmt.body);
+
+    if (!stmt.increment.is_null()) {
+        compile_expr(stmt.increment);
+    }
+
+    emit(vm::Instruction::make_i(vm::Opcode::Jump, loop_start));
+
+    if (exit_jump_idx != -1) {
+        uint16_t exit_target = static_cast<uint16_t>(current_block().instructions.size());
+        current_block().instructions[exit_jump_idx].ri.imm = exit_target;
+    }
+
+    this->locals_.resize(prev_locals_size);
+}
+
+/*
+    Search backwards in locals (supports shadowing).
+    If found: return physical register assigned.
+    If not local: Check if it's a hoisted global function.
+    If hoisted function:
+        %dest = allocate_register()
+        load_const %dest, $K_function_ptr
+*/
 uint8_t Compiler::compile_expr_node(const ast::Variable_expr &expr)
 {
-    // Search backward to find the physical register for the nearest shadowed variable
     for (auto it = locals_.rbegin(); it != locals_.rend(); ++it) {
         if (it->name == expr.name) {
             return it->reg;
         }
     }
 
-    // If it's not a local, check if it's a hoisted global function
     if (function_locations_.contains(expr.name)) {
         uint8_t target_reg = allocate_register();
         uint16_t const_idx = function_locations_[expr.name];
@@ -254,6 +375,11 @@ uint8_t Compiler::compile_expr_node(const ast::Variable_expr &expr)
     return 0;
 }
 
+/*
+    $K = add_constant(value)
+    %dest = allocate_register()
+    load_const %dest, $K
+*/
 uint8_t Compiler::compile_expr_node(const ast::Literal_expr &expr)
 {
     uint8_t target_reg = allocate_register();
@@ -263,8 +389,78 @@ uint8_t Compiler::compile_expr_node(const ast::Literal_expr &expr)
     return target_reg;
 }
 
+/*
+    Binary Expression Dispatcher
+    Contains Short-Circuit execution flows for Logical AND/OR,
+    followed by standard post-order generation for math operators.
+*/
 uint8_t Compiler::compile_expr_node(const ast::Binary_expr &expr)
 {
+    /*
+            %left = compile(expr.left)
+            %dest = move %left
+            jump_if_false %left, .short_circuit_end
+        .eval_right:
+            %right = compile(expr.right)
+            %dest = move %right
+        .short_circuit_end:
+    */
+    if (expr.op == lex::TokenType::LogicalAnd) {
+        uint8_t reg_a = compile_expr(expr.left);
+        uint8_t dest_reg = allocate_register();
+
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, dest_reg, reg_a, 0));
+
+        size_t jump_end_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, reg_a, 0));
+
+        uint8_t reg_b = compile_expr(expr.right);
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, dest_reg, reg_b, 0));
+
+        uint16_t end_target = static_cast<uint16_t>(current_block().instructions.size());
+        current_block().instructions[jump_end_idx].ri.imm = end_target;
+
+        return dest_reg;
+    }
+
+    /*
+            %left = compile(expr.left)
+            %dest = move %left
+            jump_if_false %left, .eval_right
+        .short_circuit_true:
+            jump .short_circuit_end
+        .eval_right:
+            %right = compile(expr.right)
+            %dest = move %right
+        .short_circuit_end:
+    */
+    if (expr.op == lex::TokenType::LogicalOr) {
+        uint8_t reg_a = compile_expr(expr.left);
+        uint8_t dest_reg = allocate_register();
+
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, dest_reg, reg_a, 0));
+
+        size_t jump_eval_b_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, reg_a, 0));
+
+        size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+
+        uint16_t eval_b_target = static_cast<uint16_t>(current_block().instructions.size());
+        current_block().instructions[jump_eval_b_idx].ri.imm = eval_b_target;
+
+        uint8_t reg_b = compile_expr(expr.right);
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, dest_reg, reg_b, 0));
+
+        uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
+        current_block().instructions[jump_end_idx].i.imm = end_target;
+
+        return dest_reg;
+    }
+
+    /*
+        %left = compile(left)
+        %right = compile(right)
+        %dest = allocate_register()
+        [opcode] %dest, %left, %right
+    */
     uint8_t reg_a = compile_expr(expr.left);
     uint8_t reg_b = compile_expr(expr.right);
 

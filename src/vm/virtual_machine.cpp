@@ -44,6 +44,11 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             break;
         }
 
+        case Opcode::Move: {
+            registers[base + inst.rrr.dst] = registers[base + inst.rrr.src_a];
+            break;
+        }
+
         // BINARY OPERATIONS
         case Opcode::Add_i64:
         case Opcode::Sub_i64:
