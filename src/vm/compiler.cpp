@@ -480,6 +480,101 @@ void Compiler::compile_stmt_node(const ast::For_stmt &stmt)
 }
 
 /*
+    1. Push a new isolated environment (Code_block, locals, registers)
+    2. Assign the first registers to the parameters
+    3. Compile the function body
+    4. Emit a failsafe Return (in case the user forgot a return statement)
+    5. Package everything into a Closure_data using the Arena directly
+    6. Pop the environment
+    7. Store the Closure into the parent's Constant Pool
+*/
+void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
+{
+    // Save locals
+    std::vector<Local> parent_locals = std::move(locals_);
+    uint8_t parent_register = current_register_;
+
+    // Make an empty state for the function
+    locals_.clear();
+    current_register_ = 0;
+
+    // Initiate a new code block (real code block)
+    blocks_.push_back(Code_block{});
+
+    // Register the params from r[0].....r[arity - 1]
+    for (const auto &param : stmt.parameters) {
+        uint8_t reg = allocate_register();
+        locals_.push_back({param.name, reg});
+    }
+
+    // Emit a failsafe `return nil` at the very end
+    uint8_t nil_reg = allocate_register();
+    emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, nil_reg, 0, 0));
+    emit(vm::Instruction::make_rrr(vm::Opcode::Return, nil_reg, 0, 0));
+
+    // Package the compiled block into a Closure_data manually
+    auto &fn_block = current_block();
+    Closure_data *closure = arena.allocate<Closure_data>();
+    new (closure) Closure_data();
+
+    // Name
+    size_t name_size = sizeof(String_data) + stmt.name.length() + 1;
+    closure->name = static_cast<String_data *>(arena.allocate_bytes(name_size));
+    closure->name->length = stmt.name.length();
+    std::copy(stmt.name.begin(), stmt.name.end(), closure->name->chars);
+    closure->name->chars[stmt.name.length()] = '\0';
+
+    // Arity
+    closure->arity = stmt.parameters.size();
+
+    // Code block
+    closure->code_count = fn_block.instructions.size();
+    if (closure->code_count > 0) {
+        closure->code = arena.allocate<vm::Instruction>(closure->code_count);
+        std::copy(fn_block.instructions.begin(), fn_block.instructions.end(), closure->code);
+    }
+
+    // Constants
+    closure->constant_count = fn_block.constants.size();
+    if (closure->constant_count > 0) {
+        closure->constants = arena.allocate<Value>(closure->constant_count);
+        std::copy(fn_block.constants.begin(), fn_block.constants.end(), closure->constants);
+    }
+
+    // Other fields
+    closure->native_func = std::nullopt;
+    closure->upvalue_count = 0;
+    closure->upvalues = nullptr;
+
+    // Remove this function's free hanging byte code
+    blocks_.pop_back();
+
+    // Recover state
+    locals_ = std::move(parent_locals);
+    current_register_ = parent_register;
+
+    // Store closure
+    uint16_t hoisted_idx = function_locations_[stmt.name];
+    current_block().constants[hoisted_idx] = Value::make_closure(closure);
+}
+
+void Compiler::compile_stmt_node(const ast::Return_stmt &stmt)
+{
+    uint8_t ret_reg = 0;
+
+    if (!stmt.expression.is_null()) {
+        ret_reg = compile_expr(stmt.expression);
+    } else {
+        ret_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, ret_reg, 0, 0));
+    }
+
+    emit(vm::Instruction::make_rrr(vm::Opcode::Return, ret_reg, 0, 0));
+}
+
+// == Compiling expressions
+
+/*
     Search backwards in locals (supports shadowing).
     If found: return physical register assigned.
     If not local: Check if it's a hoisted global function.
@@ -675,6 +770,55 @@ uint8_t Compiler::compile_expr_node(const ast::Binary_expr &expr)
 
     emit(vm::Instruction::make_rrr(opcode, dest_reg, reg_a, reg_b));
     emit_numeric_normalize(dest_reg, expr.type);
+    return dest_reg;
+}
+
+/*
+    %callee = compile(expr.callee)
+    %arg0 = compile(expr.arguments[0])
+    %arg1 = compile(expr.arguments[1])
+
+    // Pack into contiguous ABI layout
+    %call_base = allocate()
+    move %call_base, %callee
+
+    %packed0 = allocate()
+    move %packed0, %arg0
+
+    %packed1 = allocate()
+    move %packed1, %arg1
+
+    %dest = allocate()
+    call %dest, %call_base, argc
+*/
+uint8_t Compiler::compile_expr_node(const ast::Call_expr &expr)
+{
+    // 1. Evaluate callee
+    uint8_t callee_eval_reg = compile_expr(expr.callee);
+
+    // 2. Evaluate all arguments into scattered temporary registers
+    std::vector<uint8_t> arg_eval_regs;
+    for (const auto &arg : expr.arguments) {
+        arg_eval_regs.push_back(compile_expr(arg.value));
+    }
+
+    // 3. Allocate a strictly contiguous block of registers for the ABI.
+    // The first register MUST hold the callee pointer.
+    uint8_t call_base_reg = allocate_register();
+    emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base_reg, callee_eval_reg, 0));
+
+    // The subsequent registers MUST hold the evaluated arguments in order.
+    for (size_t i = 0; i < expr.arguments.size(); ++i) {
+        uint8_t arg_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_reg, arg_eval_regs[i], 0));
+    }
+
+    // 4. Allocate destination and emit the Call instruction
+    uint8_t dest_reg = allocate_register();
+    uint8_t argc = static_cast<uint8_t>(expr.arguments.size());
+
+    emit(vm::Instruction::make_rrr(vm::Opcode::Call, dest_reg, call_base_reg, argc));
+
     return dest_reg;
 }
 } // namespace phos::vm

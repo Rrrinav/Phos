@@ -96,12 +96,12 @@ Result<lex::Token> Parser::consume(lex::TokenType type, const std::string &messa
     if (check(type)) {
         return advance();
     }
-    return std::unexpected(err::msg(message, "parser", peek().line, peek().column));
+    return std::unexpected(err::msg::error("parser", peek().line, peek().column, source_name_, "{}", message));
 }
 
 err::msg Parser::create_error(const lex::Token &token, const std::string &message)
 {
-    return err::msg(message, this->stage_, token.line, token.column);
+    return err::msg::error(this->stage_, token.line, token.column, source_name_, "{}", message);
 }
 
 // Skip tokens until we reach a point where we can resume parsing cleanly.
@@ -148,7 +148,7 @@ Result<std::vector<ast::Stmt_id>> Parser::parse()
 
         auto decl_result = declaration();
         if (!decl_result) {
-            if (!decl_result.error().message.empty()) {
+            if (!decl_result.error().summary.empty()) {
                 std::println(stderr, "{}", decl_result.error().format());
             }
 
@@ -163,10 +163,181 @@ Result<std::vector<ast::Stmt_id>> Parser::parse()
     }
 
     if (had_error) {
-        return std::unexpected(err::msg("Compilation halted due to syntax errors", "parser", 0, 0));
+        return std::unexpected(err::msg::error("parser", 0, 0, source_name_, "Compilation halted due to syntax errors"));
     }
 
+    stamp_statement_locations(statements);
     return statements;
+}
+
+void Parser::stamp_loc(ast::Source_location &loc)
+{
+    if (loc.file.empty()) {
+        loc.file = source_name_;
+    }
+}
+
+void Parser::stamp_expr(ast::Expr_id expr_id)
+{
+    if (expr_id.is_null()) {
+        return;
+    }
+
+    auto &expr = tree_.get(expr_id).node;
+    stamp_loc(ast::get_loc(expr));
+
+    std::visit(
+        [this](auto &e) {
+            using T = std::decay_t<decltype(e)>;
+
+            if constexpr (std::is_same_v<T, ast::Binary_expr>) {
+                stamp_expr(e.left);
+                stamp_expr(e.right);
+            } else if constexpr (std::is_same_v<T, ast::Unary_expr>) {
+                stamp_expr(e.right);
+            } else if constexpr (std::is_same_v<T, ast::Call_expr>) {
+                stamp_expr(e.callee);
+                for (auto &arg : e.arguments) {
+                    stamp_loc(arg.loc);
+                    stamp_expr(arg.value);
+                }
+            } else if constexpr (std::is_same_v<T, ast::Assignment_expr>) {
+                stamp_expr(e.value);
+            } else if constexpr (std::is_same_v<T, ast::Field_assignment_expr>) {
+                stamp_expr(e.object);
+                stamp_expr(e.value);
+            } else if constexpr (std::is_same_v<T, ast::Array_assignment_expr>) {
+                stamp_expr(e.array);
+                stamp_expr(e.index);
+                stamp_expr(e.value);
+            } else if constexpr (std::is_same_v<T, ast::Cast_expr>) {
+                stamp_expr(e.expression);
+            } else if constexpr (std::is_same_v<T, ast::Field_access_expr>) {
+                stamp_expr(e.object);
+            } else if constexpr (std::is_same_v<T, ast::Method_call_expr>) {
+                stamp_expr(e.object);
+                for (auto &arg : e.arguments) {
+                    stamp_loc(arg.loc);
+                    stamp_expr(arg.value);
+                }
+            } else if constexpr (std::is_same_v<T, ast::Model_literal_expr>) {
+                for (auto &[_, field_expr] : e.fields) {
+                    stamp_expr(field_expr);
+                }
+            } else if constexpr (std::is_same_v<T, ast::Closure_expr>) {
+                for (auto &param : e.parameters) {
+                    stamp_loc(param.loc);
+                    stamp_expr(param.default_value);
+                }
+                stamp_stmt(e.body);
+            } else if constexpr (std::is_same_v<T, ast::Array_literal_expr>) {
+                for (auto elem : e.elements) {
+                    stamp_expr(elem);
+                }
+            } else if constexpr (std::is_same_v<T, ast::Array_access_expr>) {
+                stamp_expr(e.array);
+                stamp_expr(e.index);
+            } else if constexpr (std::is_same_v<T, ast::Static_path_expr>) {
+                stamp_expr(e.base);
+            } else if constexpr (std::is_same_v<T, ast::Range_expr>) {
+                stamp_expr(e.start);
+                stamp_expr(e.end);
+            } else if constexpr (std::is_same_v<T, ast::Spawn_expr>) {
+                stamp_expr(e.call);
+            } else if constexpr (std::is_same_v<T, ast::Await_expr>) {
+                stamp_expr(e.thread);
+            } else if constexpr (std::is_same_v<T, ast::Yield_expr>) {
+                stamp_expr(e.value);
+            } else if constexpr (std::is_same_v<T, ast::Fstring_expr>) {
+                for (auto interpolation : e.interpolations) {
+                    stamp_expr(interpolation);
+                }
+            } else if constexpr (std::is_same_v<T, ast::Anon_model_literal_expr>) {
+                for (auto &[_, field_expr] : e.fields) {
+                    stamp_expr(field_expr);
+                }
+            }
+        },
+        expr);
+}
+
+void Parser::stamp_stmt(ast::Stmt_id stmt_id)
+{
+    if (stmt_id.is_null()) {
+        return;
+    }
+
+    auto &stmt = tree_.get(stmt_id).node;
+    stamp_loc(ast::get_loc(stmt));
+
+    std::visit(
+        [this](auto &s) {
+            using T = std::decay_t<decltype(s)>;
+
+            if constexpr (std::is_same_v<T, ast::Return_stmt>) {
+                stamp_expr(s.expression);
+            } else if constexpr (std::is_same_v<T, ast::Function_stmt>) {
+                for (auto &param : s.parameters) {
+                    stamp_loc(param.loc);
+                    stamp_expr(param.default_value);
+                }
+                stamp_stmt(s.body);
+            } else if constexpr (std::is_same_v<T, ast::Model_stmt>) {
+                for (auto &field : s.fields) {
+                    stamp_loc(field.loc);
+                    stamp_expr(field.default_value);
+                }
+                for (auto method : s.methods) {
+                    stamp_stmt(method);
+                }
+            } else if constexpr (std::is_same_v<T, ast::Var_stmt>) {
+                stamp_expr(s.initializer);
+            } else if constexpr (std::is_same_v<T, ast::Print_stmt>) {
+                for (auto expr : s.expressions) {
+                    stamp_expr(expr);
+                }
+            } else if constexpr (std::is_same_v<T, ast::Expr_stmt>) {
+                stamp_expr(s.expression);
+            } else if constexpr (std::is_same_v<T, ast::Block_stmt>) {
+                for (auto child : s.statements) {
+                    stamp_stmt(child);
+                }
+            } else if constexpr (std::is_same_v<T, ast::If_stmt>) {
+                stamp_expr(s.condition);
+                stamp_stmt(s.then_branch);
+                stamp_stmt(s.else_branch);
+            } else if constexpr (std::is_same_v<T, ast::While_stmt>) {
+                stamp_expr(s.condition);
+                stamp_stmt(s.body);
+            } else if constexpr (std::is_same_v<T, ast::For_stmt>) {
+                stamp_stmt(s.initializer);
+                stamp_expr(s.condition);
+                stamp_expr(s.increment);
+                stamp_stmt(s.body);
+            } else if constexpr (std::is_same_v<T, ast::For_in_stmt>) {
+                stamp_expr(s.iterable);
+                stamp_stmt(s.body);
+            } else if constexpr (std::is_same_v<T, ast::Union_stmt>) {
+                for (auto &variant : s.variants) {
+                    stamp_loc(variant.loc);
+                    stamp_expr(variant.default_value);
+                }
+            } else if constexpr (std::is_same_v<T, ast::Match_stmt>) {
+                stamp_expr(s.subject);
+                for (auto &arm : s.arms) {
+                    stamp_expr(arm.pattern);
+                    stamp_stmt(arm.body);
+                }
+            }
+        },
+        stmt);
+}
+
+void Parser::stamp_statement_locations(const std::vector<ast::Stmt_id> &statements)
+{
+    for (auto stmt_id : statements) {
+        stamp_stmt(stmt_id);
+    }
 }
 
 // Declarations
@@ -887,13 +1058,15 @@ Result<ast::Stmt_id> Parser::match_statement()
 
                 // 2. Validate and extract the payload binding name
                 if (call_node->arguments.size() != 1) {
-                    return std::unexpected(err::msg("Match union payloads can only bind exactly one variable", "parser", loc.l, loc.c));
+                    return std::unexpected(
+                        err::msg::error("parser", loc.l, loc.c, source_name_, "Match union payloads can only bind exactly one variable"));
                 }
 
                 if (auto *var_node = std::get_if<ast::Variable_expr>(&tree_.get(call_node->arguments[0].value).node)) {
                     arm.bind_name = var_node->name;
                 } else {
-                    return std::unexpected(err::msg("Match binding payload must be a simple identifier", "parser", loc.l, loc.c));
+                    return std::unexpected(
+                        err::msg::error("parser", loc.l, loc.c, source_name_, "Match binding payload must be a simple identifier"));
                 }
             }
         }

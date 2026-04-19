@@ -37,6 +37,7 @@ private:
     std::string phase = "resolution";
 
     void resolver_error(const ast::Source_location &loc, const std::string &message);
+    void resolver_warning(const ast::Source_location &loc, const std::string &message);
 };
 
 } // namespace phos

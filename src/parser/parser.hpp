@@ -17,8 +17,13 @@ namespace phos {
 class Parser
 {
 public:
-    explicit Parser(std::vector<lex::Token> tokens, phos::types::Type_table &type_table, ast::Ast_tree &tree, phos::mem::Arena& arena)
-        : tree_(tree), type_table_(type_table), tokens_(std::move(tokens)), arena_(arena)
+    explicit Parser(
+        std::vector<lex::Token> tokens,
+        phos::types::Type_table &type_table,
+        ast::Ast_tree &tree,
+        phos::mem::Arena &arena,
+        std::string source_name = "<input>")
+        : tree_(tree), type_table_(type_table), tokens_(std::move(tokens)), arena_(arena), source_name_(std::move(source_name))
     {}
 
     Result<std::vector<ast::Stmt_id>> parse();
@@ -28,6 +33,7 @@ private:
     phos::types::Type_table &type_table_;
     std::vector<lex::Token> tokens_;
     phos::mem::Arena& arena_;
+    std::string source_name_;
     size_t current_ = 0;
     std::string stage_ = "parser";
 
@@ -105,6 +111,11 @@ private:
     Result<ast::Expr_id> parse_array_literal();
     Result<ast::Expr_id> parse_model_literal(const std::string &model_name);
     Result<ast::Expr_id> parse_fstring(const lex::Token &tok);
+
+    void stamp_loc(ast::Source_location &loc);
+    void stamp_expr(ast::Expr_id expr);
+    void stamp_stmt(ast::Stmt_id stmt);
+    void stamp_statement_locations(const std::vector<ast::Stmt_id> &statements);
 };
 
 } // namespace phos

@@ -38,23 +38,25 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
 
         // Dispatch based on the Opcode
         switch (inst.rrr.op) {
-        // CONSTANTS
+
         case Opcode::Load_const: {
+            /* R[dst] := K[imm] */
             registers[base + inst.ri.dst] = constants[inst.ri.imm];
             break;
         }
 
         case Opcode::Move: {
+            /* R[dst] := R[src_a] */
             registers[base + inst.rrr.dst] = registers[base + inst.rrr.src_a];
             break;
         }
 
-        // BINARY OPERATIONS
         case Opcode::Add_i64:
         case Opcode::Sub_i64:
         case Opcode::Mul_i64:
         case Opcode::Div_i64:
         case Opcode::Mod_i64: {
+            /* R[dst] := R[src_a] OP R[src_b] */
             int64_t a = registers[base + inst.rrr.src_a].as_int();
             int64_t b = registers[base + inst.rrr.src_b].as_int();
 
@@ -72,6 +74,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         case Opcode::Mul_u64:
         case Opcode::Div_u64:
         case Opcode::Mod_u64: {
+            /* R[dst] := R[src_a] OP R[src_b] */
             uint64_t a = registers[base + inst.rrr.src_a].as_uint();
             uint64_t b = registers[base + inst.rrr.src_b].as_uint();
 
@@ -89,6 +92,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         case Opcode::Mul_f64:
         case Opcode::Div_f64:
         case Opcode::Mod_f64: {
+            /* R[dst] := R[src_a] OP R[src_b] */
             double a = registers[base + inst.rrr.src_a].as_float();
             double b = registers[base + inst.rrr.src_b].as_float();
 
@@ -112,6 +116,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         case Opcode::Cast_f16:
         case Opcode::Cast_f32:
         case Opcode::Cast_f64: {
+            /* R[dst] := (Target_Type) R[dst] */
             types::Primitive_kind target_kind = types::Primitive_kind::I64;
             switch (inst.rrr.op) {
             case Opcode::Cast_i8:
@@ -158,24 +163,39 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             registers[base + inst.rrr.dst] = *casted;
             break;
         }
+
         case Opcode::Eq_i64:
         case Opcode::Neq_i64:
         case Opcode::Lt_i64:
         case Opcode::Lte_i64:
         case Opcode::Gt_i64:
         case Opcode::Gte_i64: {
+            /* R[dst] := (R[src_a] OP R[src_b]) */
             int64_t a = registers[base + inst.rrr.src_a].as_int();
             int64_t b = registers[base + inst.rrr.src_b].as_int();
 
             bool result = false;
             switch (inst.rrr.op) {
-            case Opcode::Eq_i64:  result = (a == b); break;
-            case Opcode::Neq_i64: result = (a != b); break;
-            case Opcode::Lt_i64:  result = (a < b);  break;
-            case Opcode::Lte_i64: result = (a <= b); break;
-            case Opcode::Gt_i64:  result = (a > b);  break;
-            case Opcode::Gte_i64: result = (a >= b); break;
-            default: std::unreachable();
+            case Opcode::Eq_i64:
+                result = (a == b);
+                break;
+            case Opcode::Neq_i64:
+                result = (a != b);
+                break;
+            case Opcode::Lt_i64:
+                result = (a < b);
+                break;
+            case Opcode::Lte_i64:
+                result = (a <= b);
+                break;
+            case Opcode::Gt_i64:
+                result = (a > b);
+                break;
+            case Opcode::Gte_i64:
+                result = (a >= b);
+                break;
+            default:
+                std::unreachable();
             }
             registers[base + inst.rrr.dst] = Value(result);
             break;
@@ -187,18 +207,32 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         case Opcode::Lte_u64:
         case Opcode::Gt_u64:
         case Opcode::Gte_u64: {
+            /* R[dst] := (R[src_a] OP R[src_b]) */
             uint64_t a = registers[base + inst.rrr.src_a].as_uint();
             uint64_t b = registers[base + inst.rrr.src_b].as_uint();
 
             bool result = false;
             switch (inst.rrr.op) {
-            case Opcode::Eq_u64:  result = (a == b); break;
-            case Opcode::Neq_u64: result = (a != b); break;
-            case Opcode::Lt_u64:  result = (a < b);  break;
-            case Opcode::Lte_u64: result = (a <= b); break;
-            case Opcode::Gt_u64:  result = (a > b);  break;
-            case Opcode::Gte_u64: result = (a >= b); break;
-            default: std::unreachable();
+            case Opcode::Eq_u64:
+                result = (a == b);
+                break;
+            case Opcode::Neq_u64:
+                result = (a != b);
+                break;
+            case Opcode::Lt_u64:
+                result = (a < b);
+                break;
+            case Opcode::Lte_u64:
+                result = (a <= b);
+                break;
+            case Opcode::Gt_u64:
+                result = (a > b);
+                break;
+            case Opcode::Gte_u64:
+                result = (a >= b);
+                break;
+            default:
+                std::unreachable();
             }
             registers[base + inst.rrr.dst] = Value(result);
             break;
@@ -210,18 +244,32 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         case Opcode::Lte_f64:
         case Opcode::Gt_f64:
         case Opcode::Gte_f64: {
+            /* R[dst] := (R[src_a] OP R[src_b]) */
             double a = registers[base + inst.rrr.src_a].as_float();
             double b = registers[base + inst.rrr.src_b].as_float();
 
             bool result = false;
             switch (inst.rrr.op) {
-            case Opcode::Eq_f64:  result = (a == b); break;
-            case Opcode::Neq_f64: result = (a != b); break;
-            case Opcode::Lt_f64:  result = (a < b);  break;
-            case Opcode::Lte_f64: result = (a <= b); break;
-            case Opcode::Gt_f64:  result = (a > b);  break;
-            case Opcode::Gte_f64: result = (a >= b); break;
-            default: std::unreachable();
+            case Opcode::Eq_f64:
+                result = (a == b);
+                break;
+            case Opcode::Neq_f64:
+                result = (a != b);
+                break;
+            case Opcode::Lt_f64:
+                result = (a < b);
+                break;
+            case Opcode::Lte_f64:
+                result = (a <= b);
+                break;
+            case Opcode::Gt_f64:
+                result = (a > b);
+                break;
+            case Opcode::Gte_f64:
+                result = (a >= b);
+                break;
+            default:
+                std::unreachable();
             }
 
             registers[base + inst.rrr.dst] = Value(result);
@@ -229,24 +277,88 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
 
         case Opcode::Jump: {
+            /* IP := imm */
             ip = inst.i.imm;
             break;
         }
 
         case Opcode::Jump_if_false: {
+            /* if (!R[dst]) IP := imm */
             if (!registers[base + inst.ri.dst].as_bool()) {
                 ip = inst.ri.imm;
             }
             break;
         }
 
-        case Opcode::Return: {
-            thread->is_completed = true;
+        case Opcode::Call: {
+            /*
+                R[src_a]     := Closure
+                R[src_a + 1] := Arg 0 ...
+                ---
+                Save IP -> Push Frame(base = base + src_a + 1) -> IP = 0
+            */
+            Value callee = registers[base + inst.rrr.src_a];
+            uint8_t arg_count = inst.rrr.src_b;
+
+            if (!callee.is_closure()) {
+                panic("Attempted to call a non-function value at IP: {}", ip - 1);
+            }
+
+            Closure_data *target_closure = callee.as_closure();
+
+            if (target_closure->arity != arg_count) {
+                panic("Arity mismatch. Expected {} arguments, got {} at IP: {}", target_closure->arity, arg_count, ip - 1);
+            }
+
+            if (thread->call_stack_count >= 256) {
+                panic("Stack overflow! Maximum call depth exceeded.");
+            }
+
             frame->ip = ip;
-            return;
+            size_t new_base = base + inst.rrr.src_a + 1;
+
+            thread->call_stack[thread->call_stack_count++] = Call_frame(target_closure, new_base);
+
+            // Swap hot loop variables to new frame
+            frame = &thread->call_stack[thread->call_stack_count - 1];
+            code = frame->closure->code;
+            constants = frame->closure->constants;
+            base = frame->frame_base;
+            ip = 0;
+            break;
+        }
+
+        case Opcode::Return: {
+            /*
+                RetVal := R[dst]
+                Pop Frame
+                Caller.R[Call.dst] := RetVal
+            */
+            Value ret_val = registers[base + inst.rrr.dst];
+
+            thread->call_stack_count--;
+
+            if (thread->call_stack_count == 0) {
+                thread->is_completed = true;
+                return;
+            }
+
+            // Restore Caller's Frame
+            frame = &thread->call_stack[thread->call_stack_count - 1];
+            code = frame->closure->code;
+            constants = frame->closure->constants;
+            base = frame->frame_base;
+            ip = frame->ip;
+
+            // Look back at the Call instruction to find the original destination register
+            Instruction original_call = code[ip - 1];
+            registers[base + original_call.rrr.dst] = ret_val;
+
+            break;
         }
 
         case Opcode::Print: {
+            /* Output(R[dst]) -> Stream(src_a) */
             Value result = registers[base + inst.rrr.dst];
             uint8_t stream_flag = inst.rrr.src_a;
 
@@ -261,6 +373,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
 
         default: {
+            /* ??? */
             panic("Unrecognized or unimplemented Opcode: {}", opcode_to_string(inst.rrr.op));
             break;
         }

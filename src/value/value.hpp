@@ -234,8 +234,18 @@ public:
     static Value make_array(mem::Arena &arena, uint32_t capacity, uint8_t depth = 0);
     static Value make_model(mem::Arena &arena, types::Model_type sig, uint32_t field_count, uint8_t depth = 0);
     static Value make_union(mem::Arena &arena, String_data *u_name, String_data *v_name, Value payload, uint8_t depth = 0);
-    static Value
-    make_closure_native(mem::Arena &arena, String_data *name, size_t arity, types::Function_type sig, Native_fn func, uint8_t depth = 0);
+    static Value make_closure(Closure_data *closure, uint8_t depth = 0)
+    {
+        return Value(closure, depth);
+    }
+    static Value make_closure_native(
+        mem::Arena &arena,
+        String_data *name,
+        size_t arity,
+        types::Function_type sig,
+        Native_fn func,
+        uint8_t depth = 0
+    );
 
     Value() = default;
     Value(std::nullptr_t)
@@ -391,6 +401,41 @@ public:
     int64_t as_int() const;
     uint64_t as_uint() const;
     double as_float() const;
+
+    inline Closure_data *as_closure() const
+    {
+        return as.closure;
+    }
+
+    inline Array_data *as_array() const
+    {
+        return as.arr;
+    }
+
+    inline Model_data *as_model() const
+    {
+        return as.model;
+    }
+
+    inline Union_data *as_union() const
+    {
+        return as.un;
+    }
+
+    inline Iterator_data *as_iterator() const
+    {
+        return as.iter;
+    }
+
+    inline Green_thread_data *as_green_thread() const
+    {
+        return as.gt;
+    }
+
+    inline Upvalue_data *as_upvalue() const
+    {
+        return as.upvalue;
+    }
 
     std::optional<std::int64_t> try_as_i64() const;
     std::optional<std::uint64_t> try_as_u64() const;

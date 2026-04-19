@@ -11,7 +11,12 @@ Resolver::Resolver(ast::Ast_tree &tree, Type_environment &env, mem::Arena& arena
 
 void Resolver::resolver_error(const ast::Source_location &loc, const std::string &message)
 {
-    errors.push_back({message, this->phase, loc.l, loc.c});
+    errors.push_back(err::msg::error(this->phase, loc.l, loc.c, loc.file, "{}", message));
+}
+
+void Resolver::resolver_warning(const ast::Source_location &loc, const std::string &message)
+{
+    errors.push_back(err::msg::warning(this->phase, loc.l, loc.c, loc.file, "{}", message));
 }
 
 std::vector<err::msg> Resolver::resolve(const std::vector<ast::Stmt_id> &statements)

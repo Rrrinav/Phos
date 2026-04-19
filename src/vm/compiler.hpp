@@ -60,6 +60,8 @@ public:
     void compile_stmt_node(const ast::If_stmt &stmt);
     void compile_stmt_node(const ast::While_stmt &stmt);
     void compile_stmt_node(const ast::For_stmt &stmt);
+    void compile_stmt_node(const ast::Function_stmt &stmt);
+    void compile_stmt_node(const ast::Return_stmt &stmt);
 
     // Expression compilation visitors. Returns the register holding the result.
     uint8_t compile_expr(ast::Expr_id expr_id);
@@ -68,6 +70,7 @@ public:
     uint8_t compile_expr_node(const ast::Assignment_expr &expr);
     uint8_t compile_expr_node(const ast::Cast_expr &expr);
     uint8_t compile_expr_node(const ast::Binary_expr &expr);
+    uint8_t compile_expr_node(const ast::Call_expr &expr);
 
 public:
     struct Local

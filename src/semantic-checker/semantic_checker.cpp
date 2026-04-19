@@ -24,7 +24,12 @@ Semantic_checker::Semantic_checker(ast::Ast_tree &tree, Type_environment &env, m
 
 void Semantic_checker::type_error(const ast::Source_location &loc, const std::string &message)
 {
-    errors.push_back({message, this->phase, loc.l, loc.c});
+    errors.push_back(err::msg::error(this->phase, loc.l, loc.c, loc.file, "{}", message));
+}
+
+void Semantic_checker::type_warning(const ast::Source_location &loc, const std::string &message)
+{
+    errors.push_back(err::msg::warning(this->phase, loc.l, loc.c, loc.file, "{}", message));
 }
 
 std::vector<err::msg> Semantic_checker::check(const std::vector<ast::Stmt_id> &statements)
@@ -964,7 +969,9 @@ void Semantic_checker::check_stmt_node(ast::Var_stmt &stmt)
                         env.tt.to_string(stmt.type)));
             }
         } else {
-            type_error(stmt.loc, std::format("Initializer type '{}' does not match variable type.", env.tt.to_string(init_type)));
+            auto diagnostic = err::msg::error(this->phase, stmt.loc.l, stmt.loc.c, stmt.loc.file, "Initializer type mismatch.");
+            diagnostic.expected_got(env.tt.to_string(stmt.type), env.tt.to_string(init_type));
+            errors.push_back(std::move(diagnostic));
         }
     }
     declare(stmt.name, stmt.type, stmt.is_mut, stmt.loc);
@@ -1059,7 +1066,9 @@ void Semantic_checker::check_stmt_node(ast::Return_stmt &stmt)
     if (!stmt.expression.is_null()) {
         auto val_type = check_expr(stmt.expression, current_return_type);
         if (!is_compatible(*current_return_type, val_type)) {
-            type_error(stmt.loc, "Return type mismatch.");
+            auto diagnostic = err::msg::error(this->phase, stmt.loc.l, stmt.loc.c, stmt.loc.file, "Return type mismatch.");
+            diagnostic.expected_got(env.tt.to_string(*current_return_type), env.tt.to_string(val_type));
+            errors.push_back(std::move(diagnostic));
         }
     } else if (*current_return_type != env.tt.get_void()) {
         type_error(stmt.loc, "Function must return a value.");
@@ -1527,7 +1536,9 @@ types::Type_id Semantic_checker::check_expr_node(ast::Assignment_expr &expr, std
     auto val_type_res = check_expr(expr.value, var_type);
 
     if (!is_compatible(var_type, val_type_res)) {
-        type_error(expr.loc, "Assignment type mismatch");
+        auto diagnostic = err::msg::error(this->phase, expr.loc.l, expr.loc.c, expr.loc.file, "Assignment type mismatch.");
+        diagnostic.expected_got(env.tt.to_string(var_type), env.tt.to_string(val_type_res));
+        errors.push_back(std::move(diagnostic));
     }
     return expr.type = var_type;
 }
@@ -1834,7 +1845,10 @@ types::Type_id Semantic_checker::check_expr_node(ast::Call_expr &expr, std::opti
         for (size_t i = 0; i < expr.arguments.size(); ++i) {
             auto arg_type = check_expr(expr.arguments[i].value, sig.params[i]);
             if (!is_compatible(sig.params[i], arg_type)) {
-                type_error(ast::get_loc(tree.get(expr.arguments[i].value).node), "Argument type mismatch.");
+                auto loc = ast::get_loc(tree.get(expr.arguments[i].value).node);
+                auto diagnostic = err::msg::error(this->phase, loc.l, loc.c, loc.file, "Argument type mismatch.");
+                diagnostic.expected_got(env.tt.to_string(sig.params[i]), env.tt.to_string(arg_type));
+                errors.push_back(std::move(diagnostic));
             }
         }
     }

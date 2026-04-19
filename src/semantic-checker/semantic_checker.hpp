@@ -91,6 +91,7 @@ public:
     std::string phase = "semantic-checking";
 
     void type_error(const ast::Source_location &loc, const std::string &message);
+    void type_warning(const ast::Source_location &loc, const std::string &message);
 
     // --- Core Logic ---
     bool is_compatible(types::Type_id expected, types::Type_id actual) const;

@@ -85,12 +85,12 @@ int main(int argc, char *argv[])
             phos::lex::Lexer lexer(source, arena);
             auto tokens = lexer.tokenize();
             if (!tokens.has_value()) {
-                auto err = tokens.error();
-                std::println(std::cerr, "{}:{}:{} Invalid token: {}", filename, err.line, err.column, err.lexeme);
+                auto lex_error = phos::err::msg::error("lexing", tokens.error().line, tokens.error().column, filename, "Invalid token: {}", tokens.error().lexeme);
+                std::println(std::cerr, "{}", lex_error.format());
                 return EXIT_FAILURE;
             }
 
-            phos::Parser parser(*tokens, type_table, ast_tree, arena);
+            phos::Parser parser(*tokens, type_table, ast_tree, arena, filename);
             auto parse_result = parser.parse();
             if (!parse_result) {
                 std::println(std::cerr, "{}", parse_result.error().format());
@@ -109,23 +109,26 @@ int main(int argc, char *argv[])
             phos::Semantic_checker checker{ast_tree, env, arena};
             auto checked = checker.check(parse_result.value());
 
-            if (checked.size() > 0) {
-                for (auto& e : checked)
+            if (!checked.empty()) {
+                for (auto &e : checked) {
                     std::println(std::cerr, "{}", e.format());
+                }
 
-                if (print_ir) {
-                    auto ir = phos::vm::Assembler::serialize(main_function);
-                    std::ofstream out_file(ir_out_file);
-                    if (out_file.is_open()) {
-                        out_file << ir;
+                if (phos::err::has_errors(checked)) {
+                    if (print_ir) {
+                        auto ir = phos::vm::Assembler::serialize(main_function);
+                        std::ofstream out_file(ir_out_file);
+                        if (out_file.is_open()) {
+                            out_file << ir;
+                        }
                     }
-                }
 
-                if (print_ast) {
-                    phos::ast::Tree_printer printer(ast_tree, type_table, print_use_unicode);
-                    std::println("{}", printer.print_statements(parse_result.value()));
+                    if (print_ast) {
+                        phos::ast::Tree_printer printer(ast_tree, type_table, print_use_unicode);
+                        std::println("{}", printer.print_statements(parse_result.value()));
+                    }
+                    return EXIT_FAILURE;
                 }
-                return EXIT_FAILURE;
             }
 
             if (print_ast) {
