@@ -102,6 +102,9 @@ public:
     uint8_t compile_expr_node(const ast::Binary_expr &expr);
     uint8_t compile_expr_node(const ast::Closure_expr &expr);
     uint8_t compile_expr_node(const ast::Call_expr &expr);
+    uint8_t compile_expr_node(const ast::Array_literal_expr &expr);
+    uint8_t compile_expr_node(const ast::Array_access_expr &expr);
+    uint8_t compile_expr_node(const ast::Array_assignment_expr &expr);
 
 public:
     struct Local

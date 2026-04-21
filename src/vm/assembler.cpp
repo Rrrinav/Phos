@@ -162,8 +162,43 @@ std::string Assembler::disassemble_instruction(Instruction inst, const Closure_d
         comment = std::format("%r{} = %r{}", inst.rrr.dst, inst.rrr.src_a);
         break;
 
+    case Opcode::Get_upvalue:
+    case Opcode::Set_upvalue:
+        asm_str = std::format("{:<14} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
+        comment = std::format("upval[{}]", inst.rrr.src_a);
+        break;
+
+    case Opcode::Make_closure:
+        asm_str = std::format("{:<14} %r{}, $K{:03}", name, inst.ri.dst, inst.ri.imm);
+        if (closure && inst.ri.imm < closure->constant_count) {
+            Value val = closure->constants[inst.ri.imm];
+            if (val.is_closure()) {
+                std::string cname = "anon";
+                if (val.as_closure() && val.as_closure()->name && val.as_closure()->name->length > 0) {
+                    cname = std::string(val.as_closure()->name->chars, val.as_closure()->name->length);
+                }
+                comment = std::format("blueprint: <closure: {}>", cname);
+            }
+        }
+        break;
+
     case Opcode::Call:
         asm_str = std::format("{:<14} %r{}, %r{}, argc: {}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        break;
+
+    case Opcode::Make_array:
+        asm_str = std::format("{:<14} %r{}, %r{}, count: {}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        comment = std::format("%r{} = [%r{} ... %r{}]", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_a + inst.rrr.src_b - 1);
+        break;
+
+    case Opcode::Load_index:
+        asm_str = std::format("{:<14} %r{}, %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        comment = std::format("%r{} = %r{}[%r{}]", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        break;
+
+    case Opcode::Store_index:
+        asm_str = std::format("{:<14} %r{}, %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        comment = std::format("%r{}[%r{}] = %r{}", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
         break;
 
     case Opcode::Add_i64:
@@ -235,10 +270,10 @@ std::string Assembler::serialize(const Closure_data &closure)
     if (closure.constants != nullptr) {
         for (size_t i = 0; i < closure.constant_count; ++i) {
             if (closure.constants[i].is_closure() && closure.constants[i].as_closure() != nullptr) {
-                auto *inner = closure.constants[i].as_closure();
-
-                if (!inner->native_func.has_value()) {
-                    ss << serialize(*inner);
+                Closure_data *nested = closure.constants[i].as_closure();
+                // Skip native functions! They don't have bytecode to serialize.
+                if (!nested->native_func.has_value()) {
+                    ss << serialize(*nested);
                 }
             }
         }
@@ -302,8 +337,26 @@ std::string Assembler::serialize(const Closure_data &closure)
         if (is_target[i]) {
             ss << std::format("  .L{:04}:\n", i);
         }
-        std::string inst_str = disassemble_instruction(closure.code[i], &closure);
+        Instruction inst = closure.code[i];
+        std::string inst_str = disassemble_instruction(inst, &closure);
         ss << std::format("    {}\n", inst_str);
+
+        // Extract and format routing bytes instead of treating them as instructions
+        if (inst.rrr.op == Opcode::Make_closure) {
+            uint16_t const_idx = inst.ri.imm;
+            if (const_idx < closure.constant_count && closure.constants[const_idx].is_closure()) {
+                Closure_data *blueprint = closure.constants[const_idx].as_closure();
+                for (size_t u = 0; u < blueprint->upvalue_count; u++) {
+                    i++; // Consume the routing byte
+                    if (i < closure.code_count) {
+                        Instruction route = closure.code[i];
+                        bool is_local = (route.rrr.src_a == 1);
+                        uint8_t index = route.rrr.src_b;
+                        ss << std::format("      .route is_local: {}, index: {}\n", is_local ? "true" : "false", index);
+                    }
+                }
+            }
+        }
     }
 
     ss << "}\n\n";
@@ -550,5 +603,4 @@ Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &ar
 
     return Closure_data{};
 }
-
 } // namespace phos::vm

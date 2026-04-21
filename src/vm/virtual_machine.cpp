@@ -480,6 +480,63 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             break;
         }
 
+        case Opcode::Make_array: {
+            uint8_t base_reg = inst.rrr.src_a;
+            uint8_t count = inst.rrr.src_b;
+
+            // Allocate the array payload using your new factory
+            Value arr_val = Value::make_array(arena, count, 0);
+            Array_data *arr = arr_val.as_array();
+
+            // Bulk copy the evaluated elements from the VM registers into the Arena array
+            for (uint8_t i = 0; i < count; ++i) {
+                arr->elements[i] = registers[base + base_reg + i];
+            }
+            arr->count = count;
+
+            registers[base + inst.rrr.dst] = arr_val;
+            break;
+        }
+
+        case Opcode::Load_index: {
+            Value arr_val = registers[base + inst.rrr.src_a];
+            Value idx_val = registers[base + inst.rrr.src_b];
+
+            if (!arr_val.is_array()) {
+                panic("Attempted to index a non-array value at IP: {}", ip - 1);
+            }
+
+            Array_data *arr = arr_val.as_array();
+            int64_t index = idx_val.as_int();
+
+            if (index < 0 || index >= static_cast<int64_t>(arr->count)) {
+                panic("Array index out of bounds (index: {}, size: {}) at IP: {}", index, arr->count, ip - 1);
+            }
+
+            registers[base + inst.rrr.dst] = arr->elements[index];
+            break;
+        }
+
+        case Opcode::Store_index: {
+            Value arr_val = registers[base + inst.rrr.dst];
+            Value idx_val = registers[base + inst.rrr.src_a];
+            Value val = registers[base + inst.rrr.src_b];
+
+            if (!arr_val.is_array()) {
+                panic("Attempted to index assign a non-array value at IP: {}", ip - 1);
+            }
+
+            Array_data *arr = arr_val.as_array();
+            int64_t index = idx_val.as_int();
+
+            if (index < 0 || index >= static_cast<int64_t>(arr->count)) {
+                panic("Array index out of bounds (index: {}, size: {}) at IP: {}", index, arr->count, ip - 1);
+            }
+
+            arr->elements[index] = val;
+            break;
+        }
+
         default: {
             /* ??? */
             panic("Unrecognized or unimplemented Opcode: {}", opcode_to_string(inst.rrr.op));

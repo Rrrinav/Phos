@@ -698,6 +698,14 @@ uint8_t Compiler::compile_expr(ast::Expr_id expr_id)
                 return compile_expr_node(e);
             } else if constexpr (std::is_same_v<T, ast::Call_expr>) {
                 return compile_expr_node(e);
+                } else if constexpr (std::is_same_v<T, ast::Closure_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Array_literal_expr>) { // NEW
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Array_access_expr>) {  // NEW
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Array_assignment_expr>) { // NEW
+                return compile_expr_node(e);
             } else {
                 auto loc = ast::get_loc(e);
                 std::println("{}:{}: Unimplemented expression node", loc.l, loc.c);
@@ -1046,4 +1054,77 @@ uint8_t Compiler::compile_expr_node(const ast::Call_expr &expr)
 
     return dest_reg;
 }
+
+/*
+    Evaluates all elements, packs them into a contiguous block of registers,
+    and issues the Make_array instruction.
+*/
+uint8_t Compiler::compile_expr_node(const ast::Array_literal_expr &expr)
+{
+    // 1. Evaluate all elements into scattered registers
+    std::vector<uint8_t> element_regs;
+    for (const auto &element : expr.elements) {
+        element_regs.push_back(compile_expr(element));
+    }
+
+    // 2. Allocate a contiguous block of registers and move the elements in
+    uint8_t base_reg = allocate_register();
+    if (!element_regs.empty()) {
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, base_reg, element_regs[0], 0));
+        for (size_t i = 1; i < element_regs.size(); ++i) {
+            uint8_t next_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, next_reg, element_regs[i], 0));
+        }
+    }
+
+    // 3. Emit Make_array
+    uint8_t dest_reg = allocate_register();
+    uint8_t count = static_cast<uint8_t>(element_regs.size());
+    emit(vm::Instruction::make_rrr(vm::Opcode::Make_array, dest_reg, base_reg, count));
+
+    return dest_reg;
+}
+
+/*
+    %array = compile(expr.array)
+    %index = compile(expr.index)
+    %dest = allocate_register()
+    load_index %dest, %array, %index
+*/
+uint8_t Compiler::compile_expr_node(const ast::Array_access_expr &expr)
+{
+    uint8_t array_reg = compile_expr(expr.array);
+    uint8_t index_reg = compile_expr(expr.index);
+
+    uint8_t dest_reg = allocate_register();
+    emit(vm::Instruction::make_rrr(vm::Opcode::Load_index, dest_reg, array_reg, index_reg));
+
+    return dest_reg;
+}
+
+/*
+    %value = compile(expr.value)
+    %array = compile(expr.array)
+    %index = compile(expr.index)
+    store_index %array, %index, %value
+*/
+uint8_t Compiler::compile_expr_node(const ast::Array_assignment_expr &expr)
+{
+    // Evaluate the right-hand side first
+    uint8_t value_reg = compile_expr(expr.value);
+    types::Type_id source_type = ast::get_type(tree.get(expr.value).node);
+    if (source_type != expr.type) {
+        emit_numeric_normalize(value_reg, expr.type);
+    }
+
+    // Evaluate target array and index
+    uint8_t array_reg = compile_expr(expr.array);
+    uint8_t index_reg = compile_expr(expr.index);
+
+    emit(vm::Instruction::make_rrr(vm::Opcode::Store_index, array_reg, index_reg, value_reg));
+
+    // In C-like languages, assignment evaluates to the assigned value
+    return value_reg;
+}
+
 } // namespace phos::vm

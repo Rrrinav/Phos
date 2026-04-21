@@ -62,12 +62,10 @@ int main(int argc, char *argv[])
     std::string source = buffer.str();
     file.close();
 
-    // Allocate 10MB of memory for the script to use.
+    // Allocate 10MB of memory for the scrip  to use.
     phos::mem::Arena arena(10 * 1024 * 1024);
-
     // Create the VM exactly once
     phos::vm::Virtual_machine vm(arena);
-
     // Configure the debugger based on user flag
     vm.cfg.trace_execution = trace_vm;
 
@@ -92,6 +90,7 @@ int main(int argc, char *argv[])
 
             phos::Parser parser(*tokens, type_table, ast_tree, arena, filename);
             auto parse_result = parser.parse();
+
             if (!parse_result) {
                 std::println(std::cerr, "{}", parse_result.error().format());
 

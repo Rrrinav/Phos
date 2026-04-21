@@ -66,6 +66,7 @@ enum class Opcode : uint8_t {
     // Print
     Print,
 
+    // Closures
     Set_upvalue,
     Get_upvalue,
     Make_closure,
@@ -76,6 +77,11 @@ enum class Opcode : uint8_t {
     Unwrap_or,          // dst, src_a, imm_s16
     Call,               // dst, arg_base, ret_count
     Return,             // dst
+
+    // Array
+    Make_array,    // R[dst] = Array( R[src_a] ... R[src_a + src_b - 1] )
+    Load_index,    // R[dst] = R[src_a][ R[src_b] ]
+    Store_index,   // R[dst][R[src_a]] = R[src_b]
 
     None
 };
