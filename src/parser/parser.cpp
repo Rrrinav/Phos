@@ -1542,7 +1542,6 @@ Result<ast::Expr_id> Parser::primary()
     }
 
     // concurrency
-
     if (match({lex::TokenType::Spawn})) {
         ast::Source_location loc{previous().line, previous().column};
         auto call_expr = __Try(expression());
@@ -1595,7 +1594,7 @@ Result<ast::Expr_id> Parser::primary()
     }
 
     // closure
-    if (peek().type == lex::TokenType::Pipe || peek().type == lex::TokenType::LogicalOr) {
+    if (match({lex::TokenType::Fn})) {
         return parse_closure_expression();
     }
 
@@ -1736,12 +1735,8 @@ Result<ast::Expr_id> Parser::primary()
     return std::unexpected(create_error(peek(), "Expect expression. Found: " + peek().lexeme));
 }
 
-// =============================================================================
 // Specific Sub-Parsers
-// =============================================================================
-
-// closure -> ("|" param* "|" | "||") ("->" type)? block
-// param   -> "mut"? IDENT ":" type
+// closure -> "fn" "(" param* ")" ("->" type)? block
 Result<ast::Expr_id> Parser::parse_closure_expression()
 {
     size_t line = peek().line;
@@ -1749,27 +1744,28 @@ Result<ast::Expr_id> Parser::parse_closure_expression()
 
     std::vector<ast::Function_param> parameters;
 
-    // -------- params --------
-    if (match({lex::TokenType::LogicalOr})) {
-        // zero params
-    } else if (match({lex::TokenType::Pipe})) {
-        if (!check(lex::TokenType::Pipe)) {
-            do {
-                if (check(lex::TokenType::Pipe)) {
-                    break;
-                }
-                parameters.push_back(__Try(parse_function_parameter(false)));
-            } while (match({lex::TokenType::Comma}));
-        }
-        __TryIgnore(consume(lex::TokenType::Pipe, "Expect '|' after closure parameters"));
+    __TryIgnore(consume(lex::TokenType::LeftParen, "Expect '(' after 'fn' for closure parameters"));
+
+    // params
+    if (!check(lex::TokenType::RightParen)) {
+        do {
+            if (check(lex::TokenType::RightParen)) {
+                break;
+            }
+            parameters.push_back(__Try(parse_function_parameter(false)));
+        } while (match({lex::TokenType::Comma}));
     }
 
+    __TryIgnore(consume(lex::TokenType::RightParen, "Expect ')' after closure parameters"));
+
+    // return type
     types::Type_id return_type = type_table_.get_void();
 
     if (match({lex::TokenType::Arrow})) {
         return_type = __Try(parse_type());
     }
 
+    // body
     __TryIgnore(consume(lex::TokenType::LeftBrace, "Expect '{' before closure body"));
     auto body = __Try(block_statement());
 
@@ -1782,14 +1778,13 @@ Result<ast::Expr_id> Parser::parse_closure_expression()
 
     types::Type_id closure_type = type_table_.function(param_types, return_type);
 
-    return tree_.add_expr(
-        ast::Expr{ast::Closure_expr{
-            .parameters = parameters,
-            .return_type = return_type,
-            .body = body,
-            .type = closure_type,
-            .loc = {line, column},
-        }});
+    return tree_.add_expr(ast::Expr{ast::Closure_expr{
+        .parameters = parameters,
+        .return_type = return_type,
+        .body = body,
+        .type = closure_type,
+        .loc = {line, column},
+    }});
 }
 
 // array_literal -> "[" (expr ("," expr)*)? "]"
@@ -1934,12 +1929,12 @@ Result<ast::Expr_id> Parser::parse_fstring(const lex::Token &tok)
 // =============================================================================
 
 // type        -> "(" type ")"
-//              | ("|" param_types "|" | "||") "->" type    closure type
+//              | "fn" "(" param_types? ")" "->" type    closure type
 //              | "model" "{" (IDENT ":" type (";" IDENT ":" type)*)? ";"? "}"
 //              | type_name type_suffix*
-// type_suffix -> "[" "]"                                   array type
-//              | "?"                                       optional type
-// type_name   -> primitive_kw | IDENT                      (defaults to unresolved)
+// type_suffix -> "[" "]"                                array type
+//              | "?"                                    optional type
+// type_name   -> primitive_kw | IDENT                   (defaults to unresolved)
 Result<types::Type_id> Parser::parse_type()
 {
     using namespace types;
@@ -1950,25 +1945,23 @@ Result<types::Type_id> Parser::parse_type()
     if (match({lex::TokenType::LeftParen})) {
         current = __Try(parse_type());
         __TryIgnore(consume(lex::TokenType::RightParen, "Expected ')' after type"));
-    } else if (peek().type == lex::TokenType::Pipe || peek().type == lex::TokenType::LogicalOr) {
+    } else if (match({lex::TokenType::Fn})) {
         // function type
         std::vector<Type_id> params;
 
-        if (match({lex::TokenType::LogicalOr})) {
-            // no params
-        } else if (match({lex::TokenType::Pipe})) {
-            if (!check(lex::TokenType::Pipe)) {
-                do {
-                    if (check(lex::TokenType::Pipe)) {
-                        break;
-                    }
-                    params.push_back(__Try(parse_type()));
-                } while (match({lex::TokenType::Comma}));
-            }
-            __TryIgnore(consume(lex::TokenType::Pipe, "Expect '|' after params"));
+        __TryIgnore(consume(lex::TokenType::LeftParen, "Expect '(' after 'fn' for function type"));
+
+        if (!check(lex::TokenType::RightParen)) {
+            do {
+                if (check(lex::TokenType::RightParen)) {
+                    break;
+                }
+                params.push_back(__Try(parse_type()));
+            } while (match({lex::TokenType::Comma}));
         }
 
-        __TryIgnore(consume(lex::TokenType::Arrow, "Expect '->' after params"));
+        __TryIgnore(consume(lex::TokenType::RightParen, "Expect ')' after function type parameters"));
+        __TryIgnore(consume(lex::TokenType::Arrow, "Expect '->' after function type parameters"));
         Type_id ret = __Try(parse_type());
 
         current = type_table_.function(params, ret);

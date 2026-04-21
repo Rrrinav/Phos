@@ -8,15 +8,68 @@
 
 namespace phos::vm {
 
+static Upvalue_data *capture_upvalue(Green_thread_data *thread, size_t absolute_stack_index, mem::Arena &arena)
+{
+    Upvalue_data *prev_upvalue = nullptr;
+    Upvalue_data *upvalue = thread->open_upvalues;
+
+    // Get the physical memory address of the register
+    Value *target_location = &thread->value_stack[absolute_stack_index];
+
+    // Traverse the linked list to keep it sorted by stack address
+    while (upvalue != nullptr && upvalue->location > target_location) {
+        prev_upvalue = upvalue;
+        upvalue = upvalue->next;
+    }
+
+    // Reuse existing upvalue if already captured
+    if (upvalue != nullptr && upvalue->location == target_location) {
+        return upvalue;
+    }
+
+    // Allocate a new open upvalue and point it at the stack
+    Upvalue_data *created_upvalue = arena.allocate<Upvalue_data>();
+    new (created_upvalue) Upvalue_data();
+    created_upvalue->location = target_location;
+    created_upvalue->next = upvalue;
+
+    if (prev_upvalue == nullptr) {
+        thread->open_upvalues = created_upvalue;
+    } else {
+        prev_upvalue->next = created_upvalue;
+    }
+
+    return created_upvalue;
+}
+
+static void close_upvalues(Green_thread_data *thread, size_t last_stack_index, mem::Arena &arena)
+{
+    Value *limit_location = &thread->value_stack[last_stack_index];
+
+    while (thread->open_upvalues != nullptr && thread->open_upvalues->location >= limit_location) {
+        Upvalue_data *upvalue = thread->open_upvalues;
+
+        // Allocate a permanent 16-byte home on the heap
+        Value *permanent_home = arena.allocate<Value>();
+
+        // Copy the physical data from the stack into the heap
+        *permanent_home = *(upvalue->location);
+
+        // Reroute the pointer to the heap
+        upvalue->location = permanent_home;
+
+        // Advance the list
+        thread->open_upvalues = upvalue->next;
+    }
+}
+
 template <bool Is_Tracing>
 void Virtual_machine::execute_loop(Green_thread_data *thread)
 {
-    // Safety check: is there actually code to run?
     if (thread->call_stack_count == 0 || thread->is_completed) {
         return;
     }
 
-    // Grab the current active Call Frame
     Call_frame *frame = &thread->call_stack[thread->call_stack_count - 1];
 
     const Instruction *code = frame->closure->code;
@@ -26,7 +79,6 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
     size_t base = frame->frame_base;
 
     while (true) {
-        // Fetch the 32-bit instruction
         Instruction inst = code[ip];
 
         if constexpr (Is_Tracing) {
@@ -36,12 +88,29 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
 
         ip++;
 
-        // Dispatch based on the Opcode
         switch (inst.rrr.op) {
 
         case Opcode::Load_const: {
             /* R[dst] := K[imm] */
             registers[base + inst.ri.dst] = constants[inst.ri.imm];
+            break;
+        }
+
+        case Opcode::Load_nil: {
+            /* R[dst] := nil */
+            registers[base + inst.rrr.dst] = Value();
+            break;
+        }
+
+        case Opcode::Load_true: {
+            /* R[dst] := true */
+            registers[base + inst.rrr.dst] = Value(true);
+            break;
+        }
+
+        case Opcode::Load_false: {
+            /* R[dst] := false */
+            registers[base + inst.rrr.dst] = Value(false);
             break;
         }
 
@@ -291,12 +360,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
 
         case Opcode::Call: {
-            /*
-                R[src_a]     := Closure
-                R[src_a + 1] := Arg 0 ...
-                ---
-                Save IP -> Push Frame(base = base + src_a + 1) -> IP = 0
-            */
+            /* R[dst] := call R[src_a](args...) */
             Value callee = registers[base + inst.rrr.src_a];
             uint8_t arg_count = inst.rrr.src_b;
 
@@ -309,6 +373,12 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             if (target_closure->arity != arg_count) {
                 panic("Arity mismatch. Expected {} arguments, got {} at IP: {}", target_closure->arity, arg_count, ip - 1);
             }
+            if (target_closure->native_func.has_value()) {
+                std::span<Value> args(&registers[base + inst.rrr.src_a + 1], arg_count);
+                Value result = (*target_closure->native_func)(args);
+                registers[base + inst.rrr.dst] = result;
+                break;
+            }
 
             if (thread->call_stack_count >= 256) {
                 panic("Stack overflow! Maximum call depth exceeded.");
@@ -319,7 +389,6 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
 
             thread->call_stack[thread->call_stack_count++] = Call_frame(target_closure, new_base);
 
-            // Swap hot loop variables to new frame
             frame = &thread->call_stack[thread->call_stack_count - 1];
             code = frame->closure->code;
             constants = frame->closure->constants;
@@ -329,31 +398,27 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
 
         case Opcode::Return: {
-            /*
-                RetVal := R[dst]
-                Pop Frame
-                Caller.R[Call.dst] := RetVal
-            */
-            Value ret_val = registers[base + inst.rrr.dst];
+            /* return R[dst] */
+            Value result = registers[base + inst.rrr.dst];
 
+            close_upvalues(thread, base, arena);
             thread->call_stack_count--;
 
             if (thread->call_stack_count == 0) {
                 thread->is_completed = true;
-                return;
+                return; // Replaced break with return to actually exit execution loop
             }
 
-            // Restore Caller's Frame
             frame = &thread->call_stack[thread->call_stack_count - 1];
             code = frame->closure->code;
             constants = frame->closure->constants;
-            base = frame->frame_base;
+
             ip = frame->ip;
 
-            // Look back at the Call instruction to find the original destination register
-            Instruction original_call = code[ip - 1];
-            registers[base + original_call.rrr.dst] = ret_val;
-
+            // Route the return value to the caller's destination register
+            Instruction caller_inst = code[ip - 1];
+            base = frame->frame_base;
+            registers[base + caller_inst.rrr.dst] = result;
             break;
         }
 
@@ -369,6 +434,49 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             } else {
                 this->cfg.out << text_to_print;
             }
+            break;
+        }
+
+        case Opcode::Get_upvalue: {
+            /* R[dst] := Upvalue[src_a] */
+            Upvalue_data *uv = frame->closure->upvalues[inst.rrr.src_a];
+            registers[base + inst.rrr.dst] = *(uv->location);
+            break;
+        }
+
+        case Opcode::Set_upvalue: {
+            /* Upvalue[dst] := R[src_a] */
+            Upvalue_data *uv = frame->closure->upvalues[inst.rrr.dst];
+            *(uv->location) = registers[base + inst.rrr.src_a];
+            break;
+        }
+
+        case Opcode::Make_closure: {
+            /* R[dst] := Closure(K[imm], routing...) */
+            Value prototype_val = frame->closure->constants[inst.ri.imm];
+            Closure_data *prototype = prototype_val.as_closure();
+
+            Closure_data *instance = arena.allocate<Closure_data>();
+            *instance = *prototype;
+
+            if (instance->upvalue_count > 0) {
+                instance->upvalues = arena.allocate<Upvalue_data *>(instance->upvalue_count);
+            }
+
+            // Wire up the upvalues based on following routing instructions
+            for (std::size_t i = 0; i < instance->upvalue_count; ++i) {
+                Instruction route = code[ip++];
+                bool is_local = (route.rrr.src_a == 1);
+                uint8_t index = route.rrr.src_b;
+
+                if (is_local) {
+                    instance->upvalues[i] = capture_upvalue(thread, base + index, arena);
+                } else {
+                    instance->upvalues[i] = frame->closure->upvalues[index];
+                }
+            }
+
+            registers[base + inst.ri.dst] = Value::make_closure(instance, 0);
             break;
         }
 

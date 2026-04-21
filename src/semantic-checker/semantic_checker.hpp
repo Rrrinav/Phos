@@ -18,7 +18,6 @@ namespace phos {
 // Strictly decoupled from declaration tracking.
 class Semantic_checker
 {
-    // --- Structural Access Path (Place Expression) ---
     enum class Projection_kind { Field, Var_Index, Int_Index, Uint_Index };
 
     struct Projection
@@ -73,14 +72,14 @@ class Semantic_checker
         }
     };
 
+    ast::Ast_tree &tree;
+    Type_environment &env;
+    phos::mem::Arena& arena_;
 public:
     Semantic_checker(ast::Ast_tree &tree, Type_environment &env, mem::Arena& arena);
 
     std::vector<err::msg> check(const std::vector<ast::Stmt_id> &statements);
 
-    ast::Ast_tree &tree;
-    Type_environment &env;
-    phos::mem::Arena& arena_;
     Scope_tracker variables;
 
     std::vector<std::unordered_set<Access_path, Access_path_hash>> m_nil_checked_vars_stack;
@@ -100,6 +99,7 @@ public:
     void declare(const std::string &name, types::Type_id type, bool is_mut, const ast::Source_location &loc);
     std::optional<Scope_symbol> lookup(const std::string &name, const ast::Source_location &loc);
 
+    void hoist_globals(const std::vector<ast::Stmt_id> &statements);
     // --- Defaults & Nil Tracking ---
     bool default_expr_uses_forbidden_names(ast::Expr_id expr, const std::unordered_set<std::string> &forbidden_names) const;
     void validate_function_defaults(const ast::Function_stmt &stmt);

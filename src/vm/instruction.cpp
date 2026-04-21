@@ -55,11 +55,15 @@ std::string phos::vm::opcode_to_string(Opcode code)
         case Opcode::Gt_f64:        return "Gt_f64";
         case Opcode::Gte_f64:       return "Gte_f64";
         case Opcode::Print:         return "Print";
+        case Opcode::Set_upvalue:   return "Set_upvalue";
+        case Opcode::Get_upvalue:   return "Get_upvalue";
+        case Opcode::Make_closure:  return "Make_closure";
         case Opcode::Jump:          return "Jump";
         case Opcode::Jump_if_false: return "Jump_if_false";
         case Opcode::Unwrap_or:     return "Unwrap_or";
         case Opcode::Call:          return "Call";
         case Opcode::Return:        return "Return";
+        case Opcode::None:          return "None";
     }
     return std::format("UNKNOWN_{}", static_cast<uint8_t>(code));
 };
@@ -116,10 +120,14 @@ phos::vm::Opcode phos::vm::string_to_opcode(std::string code)
     if (code == "Gt_f64")        return Opcode::Gt_f64;
     if (code == "Gte_f64")       return Opcode::Gte_f64;
     if (code == "Print")         return Opcode::Print;
+    if (code == "Set_upvalue")   return Opcode::Set_upvalue;
+    if (code == "Get_upvalue")   return Opcode::Get_upvalue;
+    if (code == "Make_closure")  return Opcode::Make_closure;
     if (code == "Jump")          return Opcode::Jump;
     if (code == "Jump_if_false") return Opcode::Jump_if_false;
     if (code == "Unwrap_or")     return Opcode::Unwrap_or;
     if (code == "Call")          return Opcode::Call;
     if (code == "Return")        return Opcode::Return;
+    if (code == "None")          return Opcode::None;
     return Opcode::Return;
 }

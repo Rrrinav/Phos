@@ -24,7 +24,7 @@
 int main(int argc, char *argv[])
 {
     if (argc == 1) {
-        std::println(stderr, "REPL currently not properly working");
+        std::println(stderr, "REPL currently not implemented.");
         return 1;
     }
 
@@ -106,6 +106,7 @@ int main(int argc, char *argv[])
             }
 
             phos::Type_environment env(type_table);
+            env.register_core_methods();
             phos::Semantic_checker checker{ast_tree, env, arena};
             auto checked = checker.check(parse_result.value());
 

@@ -1,27 +1,37 @@
 #include "type_environment.hpp"
 
+#include "core_library.hpp"
+
 namespace phos {
 
 Type_environment::Type_environment(types::Type_table &tt) : tt(tt)
-{
-    register_core_methods();
-}
+{}
 
-void Type_environment::define_native(const std::string &name, const std::vector<std::string> &params, const std::string &ret)
+void Type_environment::define_native(
+    const std::string &name, const std::vector<std::string> &params, const std::string &ret, Native_fn func)
 {
     std::vector<types::Native_param> native_params;
     native_params.reserve(params.size());
 
     for (const auto &param : params) {
-        native_params.push_back({.name = "", .type_str = param, .default_value = std::nullopt});
+        native_params.push_back(types::Native_param{
+            .name = "",
+            .type_str = param,
+            .default_value = std::nullopt
+        });
     }
 
-    native_signatures[name].push_back({native_params, ret});
+    native_signatures[name].push_back(types::Native_sig{.params = std::move(native_params), .ret_type_str = ret, .func = func});
 }
 
-void Type_environment::define_native(const std::string &name, const std::vector<types::Native_param> &params, const std::string &ret)
+void Type_environment::define_native(
+    const std::string &name, const std::vector<types::Native_param> &params, const std::string &ret, Native_fn func)
 {
-    native_signatures[name].push_back({params, ret});
+    native_signatures[name].push_back(types::Native_sig{
+        .params = params,
+        .ret_type_str = ret,
+        .func = func
+    });
 }
 
 // Query API: Global Types
@@ -194,8 +204,9 @@ const std::vector<types::Native_sig> *Type_environment::get_native_signatures(co
 // Core Registration
 void Type_environment::register_core_methods()
 {
-    // Deliberately left empty to decouple native function definitions
-    // and signatures until the Virtual Machine implementation.
+    this->define_native("clock", std::vector<std::string>{}, "f64", vm::core::native_clock);
+    this->define_native("is_same", std::vector<std::string>{"T", "T"}, "bool", vm::core::native_clock);
+    this->define_native("exit", std::vector<std::string>{"T"}, "void", vm::core::exit);
 }
 
 } // namespace phos

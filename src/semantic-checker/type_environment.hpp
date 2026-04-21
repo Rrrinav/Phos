@@ -47,14 +47,12 @@ struct Native_sig
 {
     std::vector<Native_param> params;
     std::string ret_type_str;
+    Native_fn func = nullptr;
 };
 
 } // namespace types
 
-// =============================================================================
 // Global Type Environment
-// =============================================================================
-
 class Type_environment
 {
 public:
@@ -72,9 +70,9 @@ public:
     // Native FFI Signatures
     std::unordered_map<std::string, std::vector<types::Native_sig>> native_signatures;
 
-    // Registration API
-    void define_native(const std::string &name, const std::vector<std::string> &params, const std::string &ret);
-    void define_native(const std::string &name, const std::vector<types::Native_param> &params, const std::string &ret);
+    // Add native function
+    void define_native(const std::string &name, const std::vector<std::string> &params, const std::string &ret, Native_fn func = nullptr);
+    void define_native(const std::string &name, const std::vector<types::Native_param> &params, const std::string &ret, Native_fn func = nullptr);
 
     // Query API: Global Types
     bool is_type_defined(const std::string &name) const;

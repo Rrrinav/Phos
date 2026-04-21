@@ -129,9 +129,7 @@ class Type_table
 public:
     Type_table();
 
-    // =========================================================================
-    // Pre-interned Primitives (For ultra-fast O(1) access)
-    // =========================================================================
+    // Pre-interned Primitives
     Type_id t_i8, t_i16, t_i32, t_i64;
     Type_id t_u8, t_u16, t_u32, t_u64;
     Type_id t_f16, t_f32, t_f64;

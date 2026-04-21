@@ -9,13 +9,69 @@ namespace phos::vm {
 
 Compiler::Compiler(const ast::Ast_tree &tree, const Type_environment &env, mem::Arena &arena_) : tree(tree), env(env), arena(arena_)
 {
-    blocks_.push_back(Code_block{});
 }
 
-Code_block &Compiler::current_block()
+// CONTEXT & LEXICAL SCOPING ENGINE
+void Compiler::push_context(Compiler_context *ctx)
 {
-    return blocks_.back();
+    ctx->enclosing = current_ctx_;
+    current_ctx_ = ctx;
 }
+
+void Compiler::pop_context()
+{
+    current_ctx_ = current_ctx_->enclosing;
+}
+
+int Compiler::resolve_local(Compiler_context *ctx, const std::string &name)
+{
+    // Search backwards so we find the most recently declared variable with this name (shadowing)
+    for (int i = static_cast<int>(ctx->locals.size()) - 1; i >= 0; i--) {
+        if (ctx->locals[i].name == name) {
+            return ctx->locals[i].reg;
+        }
+    }
+    return -1; // Not found locally
+}
+
+int Compiler::add_upvalue(Compiler_context *ctx, uint8_t index, bool is_local)
+{
+    // Check if we already captured this exact variable! (Prevents duplicate captures)
+    for (size_t i = 0; i < ctx->upvalues.size(); i++) {
+        if (ctx->upvalues[i].index == index && ctx->upvalues[i].is_local == is_local) {
+            return static_cast<int>(i);
+        }
+    }
+
+    ctx->upvalues.push_back({index, is_local});
+    return static_cast<int>(ctx->upvalues.size() - 1);
+}
+
+int Compiler::resolve_upvalue(Compiler_context *ctx, const std::string &name)
+{
+    if (ctx->enclosing == nullptr) {
+        return -1; // We hit the global scope. It's not an upvalue.
+    }
+
+    // 1. Does the immediate parent have it as a local?
+    int local_index = resolve_local(ctx->enclosing, name);
+    if (local_index != -1) {
+        return add_upvalue(ctx, static_cast<uint8_t>(local_index), true);
+    }
+
+    // 2. If not, does the grandparent have it? (Recursion!)
+    int upvalue_index = resolve_upvalue(ctx->enclosing, name);
+    if (upvalue_index != -1) {
+        // The parent captured it, so we pass it down to ourselves as a non-local upvalue
+        return add_upvalue(ctx, static_cast<uint8_t>(upvalue_index), false);
+    }
+
+    return -1;
+}
+
+// =============================================================================
+// MAIN COMPILATION FLOW
+// =============================================================================
 
 /*
     Main Compilation Flow (Two-Pass Architecture):
@@ -36,7 +92,41 @@ Code_block &Compiler::current_block()
 */
 Closure_data Compiler::compile(const std::vector<ast::Stmt_id> &statements)
 {
-    // Pass 1: Forward Declarations (Hoisting)
+    // Push the global execution context
+    Compiler_context global_ctx;
+    global_ctx.enclosing = nullptr;
+    global_ctx.current_register = 0;
+    push_context(&global_ctx);
+
+    // Hoisting Natives
+    for (const auto &[name, sigs] : env.native_signatures) {
+        if (sigs.empty() || sigs[0].func == nullptr) {
+            continue;
+        }
+
+        Closure_data *closure = arena.allocate<Closure_data>();
+        new (closure) Closure_data();
+
+        size_t name_size = sizeof(String_data) + name.length() + 1;
+        closure->name = static_cast<String_data *>(arena.allocate_bytes(name_size));
+        closure->name->length = name.length();
+        std::copy(name.begin(), name.end(), closure->name->chars);
+        closure->name->chars[name.length()] = '\0';
+
+        closure->arity = sigs[0].params.size();
+        closure->native_func = sigs[0].func;
+
+        // Native functions don't have bytecode or constants!
+        closure->code_count = 0;
+        closure->code = nullptr;
+        closure->constant_count = 0;
+        closure->constants = nullptr;
+
+        uint16_t const_idx = add_constant(Value::make_closure(closure));
+        function_locations_[name] = const_idx;
+    }
+
+    // Hoisting User Functions
     for (auto stmt_id : statements) {
         if (stmt_id.is_null()) {
             continue;
@@ -72,25 +162,30 @@ Closure_data Compiler::compile(const std::vector<ast::Stmt_id> &statements)
         std::copy(final_block.constants.begin(), final_block.constants.end(), data.constants);
     }
 
+    pop_context();
     return data;
 }
 
+// =============================================================================
+// BYTECODE & REGISTER HELPERS
+// =============================================================================
+
 /*
     Virtual Register Allocation:
-    Claims the next available 8-bit register for temporary use.
+    Claims the next available 8-bit register for temporary use in the current context.
 */
 uint8_t Compiler::allocate_register()
 {
-    if (current_register_ >= 255) {
+    if (current_ctx_->current_register >= 255) {
         std::println(std::cerr, "Expression too complex! Exceeded 256 temporary registers.");
         std::exit(EXIT_FAILURE);
     }
-    return current_register_++;
+    return current_ctx_->current_register++;
 }
 
 void Compiler::reset_registers()
 {
-    current_register_ = 0;
+    current_ctx_->current_register = 0;
 }
 
 size_t Compiler::emit(vm::Instruction inst)
@@ -227,6 +322,10 @@ vm::Opcode Compiler::comparison_opcode_for(lex::TokenType op, types::Type_id lef
     }
 }
 
+// =============================================================================
+// STATEMENTS
+// =============================================================================
+
 void Compiler::compile_stmt(ast::Stmt_id stmt_id)
 {
     if (stmt_id.is_null()) {
@@ -250,39 +349,15 @@ void Compiler::compile_stmt(ast::Stmt_id stmt_id)
                 compile_stmt_node(s);
             } else if constexpr (std::is_same_v<T, ast::For_stmt>) {
                 compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Function_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Return_stmt>) {
+                compile_stmt_node(s);
             } else {
                 std::println(std::cerr, "Unimplemented stmt node");
             }
         },
         tree.get(stmt_id).node);
-}
-
-uint8_t Compiler::compile_expr(ast::Expr_id expr_id)
-{
-    if (expr_id.is_null()) {
-        return 0;
-    }
-
-    return std::visit(
-        [this](const auto &e) -> uint8_t {
-            using T = std::decay_t<decltype(e)>;
-
-            if constexpr (std::is_same_v<T, ast::Literal_expr>) {
-                return compile_expr_node(e);
-            } else if constexpr (std::is_same_v<T, ast::Binary_expr>) {
-                return compile_expr_node(e);
-            } else if constexpr (std::is_same_v<T, ast::Variable_expr>) {
-                return compile_expr_node(e);
-            } else if constexpr (std::is_same_v<T, ast::Assignment_expr>) {
-                return compile_expr_node(e);
-            } else if constexpr (std::is_same_v<T, ast::Cast_expr>) {
-                return compile_expr_node(e);
-            } else {
-                std::println("Unimplemented expression node");
-            }
-            return 0;
-        },
-        tree.get(expr_id).node);
 }
 
 /*
@@ -352,7 +427,7 @@ void Compiler::compile_stmt_node(const ast::Var_stmt &stmt)
         target_reg = allocate_register();
     }
 
-    locals_.push_back({stmt.name, target_reg});
+    current_ctx_->locals.push_back({stmt.name, target_reg});
 }
 
 /*
@@ -362,13 +437,13 @@ void Compiler::compile_stmt_node(const ast::Var_stmt &stmt)
 */
 void Compiler::compile_stmt_node(const ast::Block_stmt &stmt)
 {
-    auto prev_locals_size = this->locals_.size();
+    auto prev_locals_size = current_ctx_->locals.size();
 
     for (const auto &st : stmt.statements) {
         compile_stmt(st);
     }
 
-    this->locals_.resize(prev_locals_size);
+    current_ctx_->locals.resize(prev_locals_size);
 }
 
 /*
@@ -449,7 +524,7 @@ void Compiler::compile_stmt_node(const ast::While_stmt &stmt)
 */
 void Compiler::compile_stmt_node(const ast::For_stmt &stmt)
 {
-    auto prev_locals_size = this->locals_.size();
+    auto prev_locals_size = current_ctx_->locals.size();
 
     if (!stmt.initializer.is_null()) {
         compile_stmt(stmt.initializer);
@@ -476,35 +551,34 @@ void Compiler::compile_stmt_node(const ast::For_stmt &stmt)
         current_block().instructions[exit_jump_idx].ri.imm = exit_target;
     }
 
-    this->locals_.resize(prev_locals_size);
+    current_ctx_->locals.resize(prev_locals_size);
 }
 
 /*
-    1. Push a new isolated environment (Code_block, locals, registers)
+    1. Push a new isolated environment (Compiler_context)
     2. Assign the first registers to the parameters
     3. Compile the function body
     4. Emit a failsafe Return (in case the user forgot a return statement)
     5. Package everything into a Closure_data using the Arena directly
     6. Pop the environment
-    7. Store the Closure into the parent's Constant Pool
+    7. If it's a global function with no upvalues, update the hoisted Constant Pool entry.
+    8. Otherwise, emit Make_closure and routing bytes, and assign to a local register.
 */
 void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
 {
-    // Save locals
-    std::vector<Local> parent_locals = std::move(locals_);
-    uint8_t parent_register = current_register_;
-
-    // Make an empty state for the function
-    locals_.clear();
-    current_register_ = 0;
-
-    // Initiate a new code block (real code block)
-    blocks_.push_back(Code_block{});
+    Compiler_context fn_ctx;
+    fn_ctx.current_register = 0;
+    push_context(&fn_ctx);
 
     // Register the params from r[0].....r[arity - 1]
     for (const auto &param : stmt.parameters) {
         uint8_t reg = allocate_register();
-        locals_.push_back({param.name, reg});
+        current_ctx_->locals.push_back({param.name, reg});
+    }
+
+    // Body
+    if (!stmt.body.is_null()) {
+        compile_stmt(stmt.body);
     }
 
     // Emit a failsafe `return nil` at the very end
@@ -513,7 +587,6 @@ void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
     emit(vm::Instruction::make_rrr(vm::Opcode::Return, nil_reg, 0, 0));
 
     // Package the compiled block into a Closure_data manually
-    auto &fn_block = current_block();
     Closure_data *closure = arena.allocate<Closure_data>();
     new (closure) Closure_data();
 
@@ -528,34 +601,59 @@ void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
     closure->arity = stmt.parameters.size();
 
     // Code block
-    closure->code_count = fn_block.instructions.size();
+    closure->code_count = current_ctx_->block.instructions.size();
     if (closure->code_count > 0) {
         closure->code = arena.allocate<vm::Instruction>(closure->code_count);
-        std::copy(fn_block.instructions.begin(), fn_block.instructions.end(), closure->code);
+        std::copy(current_ctx_->block.instructions.begin(), current_ctx_->block.instructions.end(), closure->code);
     }
 
     // Constants
-    closure->constant_count = fn_block.constants.size();
+    closure->constant_count = current_ctx_->block.constants.size();
     if (closure->constant_count > 0) {
         closure->constants = arena.allocate<Value>(closure->constant_count);
-        std::copy(fn_block.constants.begin(), fn_block.constants.end(), closure->constants);
+        std::copy(current_ctx_->block.constants.begin(), current_ctx_->block.constants.end(), closure->constants);
     }
 
-    // Other fields
+    // Upvalues signature
     closure->native_func = std::nullopt;
-    closure->upvalue_count = 0;
+    closure->upvalue_count = current_ctx_->upvalues.size();
     closure->upvalues = nullptr;
 
-    // Remove this function's free hanging byte code
-    blocks_.pop_back();
+    pop_context(); // Return to the parent's compiler context
 
-    // Recover state
-    locals_ = std::move(parent_locals);
-    current_register_ = parent_register;
+    // If it's a global function and captures nothing, statically replace the hoisted placeholder.
+    // Do NOT add a new constant!
+    if (current_ctx_->enclosing == nullptr && closure->upvalue_count == 0) {
+        uint16_t hoisted_idx = function_locations_[stmt.name];
+        current_block().constants[hoisted_idx] = Value::make_closure(closure);
+        return;
+    }
 
-    // Store closure
-    uint16_t hoisted_idx = function_locations_[stmt.name];
-    current_block().constants[hoisted_idx] = Value::make_closure(closure);
+    // Add the blueprint to the parent's constant pool
+    uint16_t const_idx = add_constant(Value::make_closure(closure));
+
+    // If it's a global function and captures nothing, it can statically replace the hoisted placeholder
+    if (current_ctx_->enclosing == nullptr && closure->upvalue_count == 0) {
+        uint16_t hoisted_idx = function_locations_[stmt.name];
+        current_block().constants[hoisted_idx] = Value::make_closure(closure);
+        return;
+    }
+
+    // Otherwise, it requires a runtime Closure!
+    uint8_t dst_reg = allocate_register();
+    emit(vm::Instruction::make_ri(vm::Opcode::Make_closure, dst_reg, const_idx));
+
+    // Emit the dynamic upvalue routing bytes (Read by VM Make_closure loop)
+    for (const auto &uv : fn_ctx.upvalues) {
+        vm::Instruction route;
+        route.rrr.src_a = uv.is_local ? 1 : 0;
+        route.rrr.src_b = uv.index;
+        route.rrr.dst = 0;
+        emit(route);
+    }
+
+    // Bind this newly instantiated runtime closure to a local register!
+    current_ctx_->locals.push_back({stmt.name, dst_reg});
 }
 
 void Compiler::compile_stmt_node(const ast::Return_stmt &stmt)
@@ -572,24 +670,72 @@ void Compiler::compile_stmt_node(const ast::Return_stmt &stmt)
     emit(vm::Instruction::make_rrr(vm::Opcode::Return, ret_reg, 0, 0));
 }
 
-// == Compiling expressions
+// =============================================================================
+// EXPRESSIONS
+// =============================================================================
+
+uint8_t Compiler::compile_expr(ast::Expr_id expr_id)
+{
+    if (expr_id.is_null()) {
+        return 0;
+    }
+
+    return std::visit(
+        [this](const auto &e) -> uint8_t {
+            using T = std::decay_t<decltype(e)>;
+
+            if constexpr (std::is_same_v<T, ast::Literal_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Binary_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Variable_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Assignment_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Cast_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Closure_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Call_expr>) {
+                return compile_expr_node(e);
+            } else {
+                auto loc = ast::get_loc(e);
+                std::println("{}:{}: Unimplemented expression node", loc.l, loc.c);
+            }
+            return 0;
+        },
+        tree.get(expr_id).node);
+}
 
 /*
     Search backwards in locals (supports shadowing).
     If found: return physical register assigned.
-    If not local: Check if it's a hoisted global function.
+    If not local: Check upvalues (captured variables).
+    If upvalue:
+        %dest = allocate_register()
+        get_upvalue %dest, index
+    If not upvalue: Check hoisted global functions.
     If hoisted function:
         %dest = allocate_register()
         load_const %dest, $K_function_ptr
 */
 uint8_t Compiler::compile_expr_node(const ast::Variable_expr &expr)
 {
-    for (auto it = locals_.rbegin(); it != locals_.rend(); ++it) {
-        if (it->name == expr.name) {
-            return it->reg;
-        }
+    // 1. Is it a local variable?
+    int local_arg = resolve_local(current_ctx_, expr.name);
+    if (local_arg != -1) {
+        return static_cast<uint8_t>(local_arg);
     }
 
+    // 2. Is it a captured upvalue?
+    int upval_arg = resolve_upvalue(current_ctx_, expr.name);
+    if (upval_arg != -1) {
+        uint8_t target_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Get_upvalue, target_reg, static_cast<uint8_t>(upval_arg), 0));
+        return target_reg;
+    }
+
+    // 3. Is it a global/hoisted function?
     if (function_locations_.contains(expr.name)) {
         uint8_t target_reg = allocate_register();
         uint16_t const_idx = function_locations_[expr.name];
@@ -604,33 +750,34 @@ uint8_t Compiler::compile_expr_node(const ast::Variable_expr &expr)
 
 /*
     %rhs = compile(expr.value)
-    %target_reg = lookup_local(expr.name)
-    move %target_reg, %rhs
+    if local:
+        move %target_reg, %rhs
+    if upvalue:
+        set_upvalue %target_reg, %rhs
 */
 uint8_t Compiler::compile_expr_node(const ast::Assignment_expr &expr)
 {
-    // 1. Evaluate the right-hand side first
+    // Evaluate the right-hand side first
     uint8_t rhs_reg = compile_expr(expr.value);
     types::Type_id source_type = ast::get_type(tree.get(expr.value).node);
     if (source_type != expr.type) {
         emit_numeric_normalize(rhs_reg, expr.type);
     }
 
-    // 2. Search backward to find the physical register for the variable
-    for (auto it = locals_.rbegin(); it != locals_.rend(); ++it) {
-        if (it->name == expr.name) {
-
-            // 3. Move the evaluated value into the variable's physical register
-            emit(vm::Instruction::make_rrr(vm::Opcode::Move, it->reg, rhs_reg, 0));
-
-            // In C-style languages, assignment expressions resolve to the assigned value
-            // e.g., print(a = 5); prints 5. So we return the target register.
-            return it->reg;
-        }
+    // Search local
+    int local_arg = resolve_local(current_ctx_, expr.name);
+    if (local_arg != -1) {
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, static_cast<uint8_t>(local_arg), rhs_reg, 0));
+        return static_cast<uint8_t>(local_arg);
     }
 
-    // Global re-assignment (like overriding a hoisted function pointer)
-    // is usually illegal or requires a specific VM opcode we don't have yet.
+    // Search upvalues
+    int upval_arg = resolve_upvalue(current_ctx_, expr.name);
+    if (upval_arg != -1) {
+        emit(vm::Instruction::make_rrr(vm::Opcode::Set_upvalue, static_cast<uint8_t>(upval_arg), rhs_reg, 0));
+        return rhs_reg;
+    }
+
     std::println(std::cerr, "Compiler Bug: Reassignment of unresolved or global variable '{}'.", expr.name);
     std::exit(1);
     return 0;
@@ -771,6 +918,84 @@ uint8_t Compiler::compile_expr_node(const ast::Binary_expr &expr)
     emit(vm::Instruction::make_rrr(opcode, dest_reg, reg_a, reg_b));
     emit_numeric_normalize(dest_reg, expr.type);
     return dest_reg;
+}
+
+/*
+    Compiles an anonymous closure expression.
+    Operates identically to Function_stmt, but returns a register holding the closure.
+*/
+uint8_t Compiler::compile_expr_node(const ast::Closure_expr &expr)
+{
+    Compiler_context fn_ctx;
+    fn_ctx.current_register = 0;
+    push_context(&fn_ctx);
+
+    // Register parameters
+    for (const auto &param : expr.parameters) {
+        uint8_t reg = allocate_register();
+        current_ctx_->locals.push_back({param.name, reg});
+    }
+
+    // Body
+    if (!expr.body.is_null()) {
+        compile_stmt(expr.body);
+    }
+
+    // Failsafe return
+    uint8_t nil_reg = allocate_register();
+    emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, nil_reg, 0, 0));
+    emit(vm::Instruction::make_rrr(vm::Opcode::Return, nil_reg, 0, 0));
+
+    Closure_data *closure = arena.allocate<Closure_data>();
+    new (closure) Closure_data();
+
+    // Anonymous name
+    std::string name = "anon";
+    size_t name_size = sizeof(String_data) + name.length() + 1;
+    closure->name = static_cast<String_data *>(arena.allocate_bytes(name_size));
+    closure->name->length = name.length();
+    std::copy(name.begin(), name.end(), closure->name->chars);
+    closure->name->chars[name.length()] = '\0';
+
+    closure->arity = expr.parameters.size();
+
+    // Copy Bytecode
+    closure->code_count = current_ctx_->block.instructions.size();
+    if (closure->code_count > 0) {
+        closure->code = arena.allocate<vm::Instruction>(closure->code_count);
+        std::copy(current_ctx_->block.instructions.begin(), current_ctx_->block.instructions.end(), closure->code);
+    }
+
+    // Copy Constants
+    closure->constant_count = current_ctx_->block.constants.size();
+    if (closure->constant_count > 0) {
+        closure->constants = arena.allocate<Value>(closure->constant_count);
+        std::copy(current_ctx_->block.constants.begin(), current_ctx_->block.constants.end(), closure->constants);
+    }
+
+    closure->native_func = std::nullopt;
+    closure->upvalue_count = current_ctx_->upvalues.size();
+    closure->upvalues = nullptr;
+
+    pop_context(); // Back to parent context
+
+    // Since this is an expression, it is ALWAYS evaluated at runtime.
+    // We add the blueprint to the constant pool, and emit a Make_closure instruction.
+    uint16_t const_idx = add_constant(Value::make_closure(closure));
+    uint8_t dst_reg = allocate_register();
+    emit(vm::Instruction::make_ri(vm::Opcode::Make_closure, dst_reg, const_idx));
+
+    // Emit the routing bytes
+    for (const auto &uv : fn_ctx.upvalues) {
+        vm::Instruction route;
+        route.rrr.op = vm::Opcode::None;
+        route.rrr.src_a = uv.is_local ? 1 : 0;
+        route.rrr.src_b = uv.index;
+        route.rrr.dst = 0;
+        emit(route);
+    }
+
+    return dst_reg; // Returning the register that will hold the instantiated closure
 }
 
 /*

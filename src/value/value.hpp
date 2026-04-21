@@ -18,28 +18,33 @@ class Arena;
 }
 
 namespace phos::numeric {
+
 #if defined(__STDCPP_FLOAT16_T__)
-using float16_t = std::float16_t;
-inline constexpr bool has_native_float16 = true;
+    using float16_t = std::float16_t;
+    inline constexpr bool has_native_float16 = true;
+
 #elif defined(__FLT16_MANT_DIG__)
-using float16_t = _Float16;
-inline constexpr bool has_native_float16 = true;
+    using float16_t = _Float16;
+    inline constexpr bool has_native_float16 = true;
+
 #else
-struct float16_t
-{
-    float value = 0.0f;
-    constexpr float16_t() = default;
-    constexpr float16_t(float v) : value(v)
-    {}
-    constexpr float16_t(double v) : value(static_cast<float>(v))
-    {}
-    constexpr operator float() const
+
+    struct float16_t
     {
-        return value;
-    }
-    auto operator<=>(const float16_t &) const = default;
-};
-inline constexpr bool has_native_float16 = false;
+        float value = 0.0f;
+        constexpr float16_t() = default;
+        constexpr float16_t(float v) : value(v)
+        {}
+        constexpr float16_t(double v) : value(static_cast<float>(v))
+        {}
+        constexpr operator float() const
+        {
+            return value;
+        }
+        auto operator<=>(const float16_t &) const = default;
+    };
+    inline constexpr bool has_native_float16 = false;
+
 #endif
 } // namespace phos::numeric
 
@@ -48,14 +53,14 @@ namespace phos {
 struct Value;
 
 // Raw C-style function pointer for native FFI (VM context passed as void* for now)
-using Native_fn = Value (*)(void *vm_context, uint8_t arg_count);
+using Native_fn = Value (*)(std::span<Value> args);
 
 // 1. THE RAW DATA STRUCTS (Zero OOP, Zero Std Lib, Arena Allocated)
 
 struct String_data
 {
     uint32_t length;
-    char chars[]; // C99 Flexible Array Member
+    char chars[]; // Flexible Array Member
 };
 
 struct Array_data
@@ -81,9 +86,8 @@ struct Union_data
 
 struct Upvalue_data
 {
-    size_t stack_index;
-    bool is_closed;
-    struct Value *closed_value;
+    struct Value* location;
+    Upvalue_data* next;
 };
 
 struct Closure_data
@@ -122,7 +126,7 @@ struct Green_thread_data
     bool is_completed;
 
     // Variables that need to be saved to the heap before a function returns.
-    Upvalue_data **open_upvalues;
+    Upvalue_data* open_upvalues{nullptr};
     size_t open_upvalue_count;
 };
 
@@ -196,27 +200,27 @@ private:
     uint8_t option_depth_ = 0;
 
     // Private raw constructors (Only used by the Arena Factories)
-    Value(String_data *s, uint8_t d) : tag_(Value_tag::String), option_depth_(d)
+    Value(String_data *s, uint8_t d)       : tag_(Value_tag::String), option_depth_(d)
     {
         as.str = s;
     }
-    Value(Array_data *a, uint8_t d) : tag_(Value_tag::Array), option_depth_(d)
+    Value(Array_data *a, uint8_t d)        : tag_(Value_tag::Array), option_depth_(d)
     {
         as.arr = a;
     }
-    Value(Model_data *m, uint8_t d) : tag_(Value_tag::Model), option_depth_(d)
+    Value(Model_data *m, uint8_t d)        : tag_(Value_tag::Model), option_depth_(d)
     {
         as.model = m;
     }
-    Value(Union_data *u, uint8_t d) : tag_(Value_tag::Union), option_depth_(d)
+    Value(Union_data *u, uint8_t d)        : tag_(Value_tag::Union), option_depth_(d)
     {
         as.un = u;
     }
-    Value(Closure_data *c, uint8_t d) : tag_(Value_tag::Closure), option_depth_(d)
+    Value(Closure_data *c, uint8_t d)      : tag_(Value_tag::Closure), option_depth_(d)
     {
         as.closure = c;
     }
-    Value(Iterator_data *i, uint8_t d) : tag_(Value_tag::Iterator), option_depth_(d)
+    Value(Iterator_data *i, uint8_t d)     : tag_(Value_tag::Iterator), option_depth_(d)
     {
         as.iter = i;
     }
@@ -224,7 +228,7 @@ private:
     {
         as.gt = g;
     }
-    Value(Upvalue_data *u, uint8_t d) : tag_(Value_tag::Upvalue), option_depth_(d)
+    Value(Upvalue_data *u, uint8_t d)      : tag_(Value_tag::Upvalue), option_depth_(d)
     {
         as.upvalue = u;
     }

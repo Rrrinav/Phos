@@ -32,8 +32,65 @@ void Semantic_checker::type_warning(const ast::Source_location &loc, const std::
     errors.push_back(err::msg::warning(this->phase, loc.l, loc.c, loc.file, "{}", message));
 }
 
+void Semantic_checker::hoist_globals(const std::vector<ast::Stmt_id> &statements)
+{
+    for (auto stmt_id : statements) {
+        if (stmt_id.is_null()) {
+            continue;
+        }
+        auto &node = tree.get(stmt_id).node;
+
+        if (auto *fn = std::get_if<ast::Function_stmt>(&node)) {
+            env.functions[fn->name] = types::Function_type_data{stmt_id};
+
+        } else if (auto *model = std::get_if<ast::Model_stmt>(&node)) {
+            types::Model_type_data m_data;
+
+            for (const auto &field : model->fields) {
+                if (!field.default_value.is_null()) {
+                    m_data.field_defaults[field.name] = field.default_value;
+                }
+            }
+
+            for (auto method_id : model->methods) {
+                if (method_id.is_null()) {
+                    continue;
+                }
+                auto &m_node = tree.get(method_id).node;
+
+                if (auto *m_fn = std::get_if<ast::Function_stmt>(&m_node)) {
+                    if (m_fn->is_static) {
+                        m_data.static_methods[m_fn->name] = types::Function_type_data{method_id};
+                    } else {
+                        m_data.methods[m_fn->name] = types::Function_type_data{method_id};
+                    }
+                }
+            }
+
+            env.model_data[model->name] = std::move(m_data);
+        } else if (auto *un = std::get_if<ast::Union_stmt>(&node)) {
+            types::Union_type_data u_data;
+
+            for (const auto &variant : un->variants) {
+                if (!variant.default_value.is_null()) {
+                    u_data.variant_defaults[variant.name] = variant.default_value;
+                }
+            }
+
+            env.union_data[un->name] = std::move(u_data);
+        } else if (auto *en = std::get_if<ast::Enum_stmt>(&node)) {
+            // Register enum. (Variants are typically evaluated/populated
+            // during the second pass or a dedicated type-resolution pass)
+            types::Enum_type_data e_data;
+            env.enum_data[en->name] = std::move(e_data);
+        }
+    }
+}
+
 std::vector<err::msg> Semantic_checker::check(const std::vector<ast::Stmt_id> &statements)
 {
+    hoist_globals(statements);
+
     variables.begin_scope();
     m_nil_checked_vars_stack.emplace_back();
 
@@ -911,16 +968,23 @@ void Semantic_checker::check_stmt_node(ast::Function_stmt &stmt)
     auto saved_return = current_return_type;
     current_return_type = stmt.return_type;
     validate_function_defaults(stmt);
+
     variables.begin_scope();
+
     if (current_model_type && !stmt.is_static) {
         declare("this", *current_model_type, false, stmt.loc);
     }
+
+    // Declare parameters in the local scope
     for (const auto &p : stmt.parameters) {
         declare(p.name, p.type, p.is_mut, stmt.loc);
     }
+
+    // Check the body
     if (!stmt.body.is_null()) {
         check_stmt(stmt.body);
     }
+
     variables.end_scope();
     current_return_type = saved_return;
 }
@@ -2167,7 +2231,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Method_call_expr &expr, st
         }
     }
 
-    // --- FFI METHOD MATCHER ---
+    // FFI METHOD MATCHER
     std::string ffi_name;
     if (env.tt.is_array(obj_type)) {
         ffi_name = "Array::" + expr.method_name;

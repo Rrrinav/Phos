@@ -4,6 +4,7 @@
 #include <cctype>
 #include <format>
 #include <sstream>
+#include <unordered_map>
 #include <vector>
 
 namespace phos::vm {
@@ -130,6 +131,12 @@ std::string Assembler::disassemble_instruction(Instruction inst, const Closure_d
                 comment = std::format("%r{} = {}", inst.ri.dst, val.as_float());
             } else if (val.is_string()) {
                 comment = std::format("%r{} = \"{}\"", inst.ri.dst, escape_string(val.as_string()));
+            } else if (val.is_closure()) {
+                std::string cname = "anon";
+                if (val.as_closure() && val.as_closure()->name && val.as_closure()->name->length > 0) {
+                    cname = std::string(val.as_closure()->name->chars, val.as_closure()->name->length);
+                }
+                comment = std::format("%r{} = <closure: {}>", inst.ri.dst, cname);
             }
         }
         break;
@@ -153,6 +160,10 @@ std::string Assembler::disassemble_instruction(Instruction inst, const Closure_d
     case Opcode::Move:
         asm_str = std::format("{:<14} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
         comment = std::format("%r{} = %r{}", inst.rrr.dst, inst.rrr.src_a);
+        break;
+
+    case Opcode::Call:
+        asm_str = std::format("{:<14} %r{}, %r{}, argc: {}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
         break;
 
     case Opcode::Add_i64:
@@ -220,6 +231,20 @@ std::string Assembler::serialize(const Closure_data &closure)
 {
     std::stringstream ss;
 
+    // 1. Recursively find and print nested closures FIRST
+    if (closure.constants != nullptr) {
+        for (size_t i = 0; i < closure.constant_count; ++i) {
+            if (closure.constants[i].is_closure() && closure.constants[i].as_closure() != nullptr) {
+                auto *inner = closure.constants[i].as_closure();
+
+                if (!inner->native_func.has_value()) {
+                    ss << serialize(*inner);
+                }
+            }
+        }
+    }
+
+    // 2. Print current closure
     std::string func_name = "main";
     if (closure.name && closure.name->length > 0) {
         func_name = std::string(closure.name->chars, closure.name->length);
@@ -244,6 +269,12 @@ std::string Assembler::serialize(const Closure_data &closure)
             ss << std::format("    $K{:03} = str \"{}\"\n", i, escape_string(val.as_string()));
         } else if (val.is_nil()) {
             ss << std::format("    $K{:03} = nil\n", i);
+        } else if (val.is_closure()) {
+            std::string cname = "anon";
+            if (val.as_closure() && val.as_closure()->name && val.as_closure()->name->length > 0) {
+                cname = std::string(val.as_closure()->name->chars, val.as_closure()->name->length);
+            }
+            ss << std::format("    $K{:03} = <closure: {}>\n", i, cname);
         } else {
             ss << std::format("    $K{:03} = unknown\n", i);
         }
@@ -282,15 +313,28 @@ std::string Assembler::serialize(const Closure_data &closure)
 
 Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &arena)
 {
-    Closure_data closure{};
-    std::vector<Value> temp_constants;
-    std::vector<Instruction> temp_code;
-
     std::istringstream ss(ir_source);
     std::string line;
 
     bool in_constants = false;
     bool in_code = false;
+
+    // We hold all parsed closures until the end to resolve them.
+    std::unordered_map<std::string, Closure_data *> parsed_closures;
+    Closure_data *main_closure = nullptr;
+
+    Closure_data *current_closure = nullptr;
+    std::vector<Value> temp_constants;
+    std::vector<Instruction> temp_code;
+
+    // Deferred linking for hoisted closures in constants.
+    struct DeferredLink
+    {
+        Closure_data *owner;
+        size_t const_index;
+        std::string target_name;
+    };
+    std::vector<DeferredLink> deferred_links;
 
     while (std::getline(ss, line)) {
         size_t comment_pos = line.find(';');
@@ -304,16 +348,25 @@ Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &ar
         }
 
         if (line.starts_with("@fn")) {
+            current_closure = arena.allocate<Closure_data>();
+            new (current_closure) Closure_data();
+
+            temp_constants.clear();
+            temp_code.clear();
+
             size_t name_start = 4;
             size_t name_end = line.find('(');
             std::string name = line.substr(name_start, name_end - name_start);
-            closure.name = static_cast<String_data *>(arena.allocate_bytes(sizeof(String_data) + name.length() + 1));
-            closure.name->length = name.length();
-            std::copy(name.begin(), name.end(), closure.name->chars);
-            closure.name->chars[name.length()] = '\0';
+            current_closure->name = static_cast<String_data *>(arena.allocate_bytes(sizeof(String_data) + name.length() + 1));
+            current_closure->name->length = name.length();
+            std::copy(name.begin(), name.end(), current_closure->name->chars);
+            current_closure->name->chars[name.length()] = '\0';
 
             size_t arity_pos = line.find("arity:");
-            closure.arity = std::stoi(line.substr(arity_pos + 6));
+            current_closure->arity = std::stoi(line.substr(arity_pos + 6));
+
+            in_constants = false;
+            in_code = false;
         } else if (line == ".constants:") {
             in_constants = true;
             in_code = false;
@@ -321,8 +374,32 @@ Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &ar
             in_constants = false;
             in_code = true;
         } else if (line == "}") {
-            break;
-        } else if (in_constants) {
+            // Finalize the current closure
+            if (current_closure) {
+                current_closure->constant_count = temp_constants.size();
+                if (current_closure->constant_count > 0) {
+                    current_closure->constants = arena.allocate<Value>(current_closure->constant_count);
+                    std::copy(temp_constants.begin(), temp_constants.end(), current_closure->constants);
+                }
+
+                current_closure->code_count = temp_code.size();
+                if (current_closure->code_count > 0) {
+                    current_closure->code = arena.allocate<Instruction>(current_closure->code_count);
+                    std::copy(temp_code.begin(), temp_code.end(), current_closure->code);
+                }
+
+                std::string c_name(current_closure->name->chars, current_closure->name->length);
+                parsed_closures[c_name] = current_closure;
+
+                if (c_name == "main") {
+                    main_closure = current_closure;
+                }
+
+                current_closure = nullptr;
+            }
+            in_constants = false;
+            in_code = false;
+        } else if (in_constants && current_closure) {
             size_t eq_pos = line.find('=');
             if (eq_pos == std::string::npos) {
                 continue;
@@ -378,8 +455,14 @@ Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &ar
                     }
                     temp_constants.push_back(Value::make_string(arena, unescape_string(escaped_content)));
                 }
+            } else if (type_val.starts_with("<closure:")) {
+                std::string target = type_val.substr(10, type_val.length() - 11);
+                temp_constants.push_back(Value(nullptr)); // Put a placeholder, we link it later.
+                deferred_links.push_back({current_closure, temp_constants.size() - 1, target});
+            } else {
+                temp_constants.push_back(Value(nullptr));
             }
-        } else if (in_code) {
+        } else if (in_code && current_closure) {
             // Ignore label definitions completely during deserialization
             if (line.starts_with(".L") && line.ends_with(":")) {
                 continue;
@@ -401,58 +484,71 @@ Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &ar
                 args.push_back(trim(item));
             }
 
-            auto parse_arg = [](const std::string &s) -> uint16_t {
-                if (s.empty()) {
-                    return 0;
+            // SAFE vector access fix: Check array length before access!
+            auto get_arg = [&](size_t idx) -> uint16_t {
+                if (idx < args.size()) {
+                    std::string s = args[idx];
+                    if (s.empty()) {
+                        return 0;
+                    }
+                    if (s.starts_with("argc:")) {
+                        return static_cast<uint16_t>(std::stoi(trim(s.substr(5))));
+                    }
+                    if (s.starts_with("%r") || s.starts_with("$K")) {
+                        return static_cast<uint16_t>(std::stoi(s.substr(2)));
+                    }
+                    return static_cast<uint16_t>(std::stoi(s));
                 }
-                return static_cast<uint16_t>(std::stoi(s.substr(2)));
+                return 0; // Return 0 if the argument was omitted (like for Return or Load_nil)
             };
 
-            auto parse_jump = [](const std::string &s) -> uint32_t {
-                if (s.empty()) {
-                    return 0;
-                }
-                if (s.starts_with(".L")) {
-                    return static_cast<uint32_t>(std::stoul(s.substr(2)));
-                }
-                if (s.starts_with("@")) {
-                    return static_cast<uint32_t>(std::stoul(s.substr(1)));
+            auto get_jump = [&](size_t idx) -> uint32_t {
+                if (idx < args.size()) {
+                    std::string s = args[idx];
+                    if (s.empty()) {
+                        return 0;
+                    }
+                    if (s.starts_with(".L")) {
+                        return static_cast<uint32_t>(std::stoul(s.substr(2)));
+                    }
+                    if (s.starts_with("@")) {
+                        return static_cast<uint32_t>(std::stoul(s.substr(1)));
+                    }
                 }
                 return 0;
             };
 
             if (op == Opcode::Load_const) {
-                temp_code.push_back(Instruction::make_ri(op, parse_arg(args[0]), parse_arg(args[1])));
+                temp_code.push_back(Instruction::make_ri(op, get_arg(0), get_arg(1)));
             } else if (op == Opcode::Jump) {
-                temp_code.push_back(Instruction::make_i(op, parse_jump(args[0])));
+                temp_code.push_back(Instruction::make_i(op, get_jump(0)));
             } else if (op == Opcode::Jump_if_false) {
-                temp_code.push_back(Instruction::make_ri(op, parse_arg(args[0]), parse_jump(args[1])));
-            } else if (
-                op == Opcode::Return || op == Opcode::Print || op == Opcode::Cast_i8 || op == Opcode::Cast_i16 || op == Opcode::Cast_i32
-                || op == Opcode::Cast_i64 || op == Opcode::Cast_u8 || op == Opcode::Cast_u16 || op == Opcode::Cast_u32
-                || op == Opcode::Cast_u64 || op == Opcode::Cast_f16 || op == Opcode::Cast_f32 || op == Opcode::Cast_f64) {
-                temp_code.push_back(Instruction::make_rrr(op, parse_arg(args[0]), 0, 0));
-            } else if (op == Opcode::Move) {
-                temp_code.push_back(Instruction::make_rrr(op, parse_arg(args[0]), parse_arg(args[1]), 0));
+                temp_code.push_back(Instruction::make_ri(op, get_arg(0), get_jump(1)));
             } else {
-                temp_code.push_back(Instruction::make_rrr(op, parse_arg(args[0]), parse_arg(args[1]), parse_arg(args[2])));
+                // Safely grabs up to 3 arguments. Missing args perfectly default to 0.
+                temp_code.push_back(Instruction::make_rrr(op, get_arg(0), get_arg(1), get_arg(2)));
             }
         }
     }
 
-    closure.constant_count = temp_constants.size();
-    if (closure.constant_count > 0) {
-        closure.constants = arena.allocate<Value>(closure.constant_count);
-        std::copy(temp_constants.begin(), temp_constants.end(), closure.constants);
+    // Map deferred closure pointers
+    for (const auto &link : deferred_links) {
+        if (parsed_closures.contains(link.target_name)) {
+            link.owner->constants[link.const_index] = Value::make_closure(parsed_closures[link.target_name]);
+        }
     }
 
-    closure.code_count = temp_code.size();
-    if (closure.code_count > 0) {
-        closure.code = arena.allocate<Instruction>(closure.code_count);
-        std::copy(temp_code.begin(), temp_code.end(), closure.code);
+    // Return the 'main' block
+    if (main_closure) {
+        return *main_closure;
     }
 
-    return closure;
+    // Fallback: If no "main" was explicitly found, just return whatever the last parsed block was.
+    if (!parsed_closures.empty()) {
+        return *parsed_closures.begin()->second;
+    }
+
+    return Closure_data{};
 }
 
 } // namespace phos::vm

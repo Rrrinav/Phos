@@ -66,12 +66,18 @@ enum class Opcode : uint8_t {
     // Print
     Print,
 
+    Set_upvalue,
+    Get_upvalue,
+    Make_closure,
+
     // Control flow
     Jump,               // imm_s16           : IP += offset
     Jump_if_false,      // dst, imm_s16      : if (!R(dst)) IP += offset
     Unwrap_or,          // dst, src_a, imm_s16
     Call,               // dst, arg_base, ret_count
     Return,             // dst
+
+    None
 };
 
 // 32-bit instruction
