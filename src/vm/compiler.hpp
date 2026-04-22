@@ -95,6 +95,7 @@ public:
     void compile_stmt_node(const ast::Model_stmt &stmt);
     void compile_stmt_node(const ast::Union_stmt &stmt);
     void compile_stmt_node(const ast::Enum_stmt &stmt);
+    void compile_stmt_node(const ast::Match_stmt &stmt);
 
     // Expression compilation visitors. Returns the register holding the result.
     uint8_t compile_expr(ast::Expr_id expr_id);
@@ -103,6 +104,7 @@ public:
     uint8_t compile_expr_node(const ast::Assignment_expr &expr);
     uint8_t compile_expr_node(const ast::Cast_expr &expr);
     uint8_t compile_expr_node(const ast::Binary_expr &expr);
+    uint8_t compile_expr_node(const ast::Unary_expr &expr);
     uint8_t compile_expr_node(const ast::Closure_expr &expr);
     uint8_t compile_expr_node(const ast::Call_expr &expr);
     uint8_t compile_expr_node(const ast::Array_literal_expr &expr);
@@ -110,7 +112,11 @@ public:
     uint8_t compile_expr_node(const ast::Array_assignment_expr &expr);
     uint8_t compile_expr_node(const ast::Field_access_expr &expr);
     uint8_t compile_expr_node(const ast::Model_literal_expr &expr);
+    uint8_t compile_expr_node(const ast::Anon_model_literal_expr &expr);
+    uint8_t compile_expr_node(const ast::Method_call_expr &expr);
     uint8_t compile_expr_node(const ast::Field_assignment_expr &expr);
+    uint8_t compile_expr_node(const ast::Enum_member_expr &expr);
+    uint8_t compile_expr_node(const ast::Static_path_expr &expr);
 
 public:
     struct Local

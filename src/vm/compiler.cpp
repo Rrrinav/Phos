@@ -8,10 +8,12 @@
 namespace phos::vm {
 
 Compiler::Compiler(const ast::Ast_tree &tree, const Type_environment &env, mem::Arena &arena_) : tree(tree), env(env), arena(arena_)
-{
-}
+{}
 
+// =============================================================================
 // CONTEXT & LEXICAL SCOPING ENGINE
+// =============================================================================
+
 void Compiler::push_context(Compiler_context *ctx)
 {
     ctx->enclosing = current_ctx_;
@@ -353,35 +355,19 @@ void Compiler::compile_stmt(ast::Stmt_id stmt_id)
                 compile_stmt_node(s);
             } else if constexpr (std::is_same_v<T, ast::Return_stmt>) {
                 compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Enum_stmt>) {
+                compile_stmt_node(s);
             } else if constexpr (std::is_same_v<T, ast::Model_stmt>) {
                 compile_stmt_node(s);
             } else if constexpr (std::is_same_v<T, ast::Union_stmt>) {
                 compile_stmt_node(s);
-            } else if constexpr (std::is_same_v<T, ast::Enum_stmt>) {
+            } else if constexpr (std::is_same_v<T, ast::Match_stmt>) {
                 compile_stmt_node(s);
             } else {
                 std::println(std::cerr, "Unimplemented stmt node");
             }
         },
         tree.get(stmt_id).node);
-}
-
-void Compiler::compile_stmt_node(const ast::Model_stmt &stmt)
-{
-    // The model fields are purely compile-time info, but we MUST compile the methods!
-    for (auto method_id : stmt.methods) {
-        compile_stmt(method_id);
-    }
-}
-
-void Compiler::compile_stmt_node(const ast::Union_stmt &stmt)
-{
-    // Purely compile-time construct. No bytecode needed.
-}
-
-void Compiler::compile_stmt_node(const ast::Enum_stmt &stmt)
-{
-    // Purely compile-time construct. No bytecode needed.
 }
 
 /*
@@ -645,14 +631,6 @@ void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
 
     pop_context(); // Return to the parent's compiler context
 
-    // If it's a global function and captures nothing, statically replace the hoisted placeholder.
-    // Do NOT add a new constant!
-    if (current_ctx_->enclosing == nullptr && closure->upvalue_count == 0) {
-        uint16_t hoisted_idx = function_locations_[stmt.name];
-        current_block().constants[hoisted_idx] = Value::make_closure(closure);
-        return;
-    }
-
     // Add the blueprint to the parent's constant pool
     uint16_t const_idx = add_constant(Value::make_closure(closure));
 
@@ -670,6 +648,7 @@ void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
     // Emit the dynamic upvalue routing bytes (Read by VM Make_closure loop)
     for (const auto &uv : fn_ctx.upvalues) {
         vm::Instruction route;
+        route.rrr.op = vm::Opcode::None; // Safe No-Op padding
         route.rrr.src_a = uv.is_local ? 1 : 0;
         route.rrr.src_b = uv.index;
         route.rrr.dst = 0;
@@ -694,6 +673,94 @@ void Compiler::compile_stmt_node(const ast::Return_stmt &stmt)
     emit(vm::Instruction::make_rrr(vm::Opcode::Return, ret_reg, 0, 0));
 }
 
+void Compiler::compile_stmt_node(const ast::Enum_stmt &stmt)
+{
+}
+void Compiler::compile_stmt_node(const ast::Model_stmt &stmt)
+{
+    // The model fields are purely compile-time info, but we MUST compile the methods!
+    for (auto method_id : stmt.methods) {
+        compile_stmt(method_id);
+    }
+}
+
+void Compiler::compile_stmt_node(const ast::Union_stmt &stmt)
+{
+    // Purely compile-time construct. No bytecode needed.
+}
+
+void Compiler::compile_stmt_node(const ast::Match_stmt &stmt)
+{
+    // 1. Evaluate the subject once
+    uint8_t subject_reg = compile_expr(stmt.subject);
+
+    std::vector<size_t> end_jumps;
+
+    // 2. Iterate through each arm
+    for (const auto &arm : stmt.arms) {
+        if (arm.is_wildcard) {
+            // Wildcard is a catch-all, just execute the body and skip the rest
+            if (!arm.body.is_null()) {
+                compile_stmt(arm.body);
+            }
+            break;
+        }
+
+        // Extract the target variant name from the arm's pattern
+        std::string variant_str;
+        auto &pattern_node = tree.get(arm.pattern).node;
+        if (auto *sp = std::get_if<ast::Static_path_expr>(&pattern_node)) {
+            variant_str = sp->member.lexeme;
+        } else if (auto *em = std::get_if<ast::Enum_member_expr>(&pattern_node)) {
+            variant_str = em->member_name;
+        } else {
+            std::println(std::cerr, "Compiler Bug: Unsupported pattern type in match arm.");
+            std::exit(EXIT_FAILURE);
+        }
+
+        // 3. Load the target variant string and emit Test_union
+        uint8_t str_reg = allocate_register();
+        uint16_t str_idx = add_constant(Value::make_string(arena, variant_str));
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, str_reg, str_idx));
+
+        uint8_t test_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Test_union, test_reg, subject_reg, str_reg));
+
+        // 4. Jump to the next arm if this test fails
+        size_t jump_next_arm_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, test_reg, 0));
+
+        // 5. Set up scope for the arm body
+        auto prev_locals_size = current_ctx_->locals.size();
+
+        // 6. If the user requested the payload, extract it and bind it to a local variable!
+        if (!arm.bind_name.empty()) {
+            uint8_t payload_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Load_union_payload, payload_reg, subject_reg, 0));
+            current_ctx_->locals.push_back({arm.bind_name, payload_reg});
+        }
+
+        // 7. Compile the arm body
+        if (!arm.body.is_null()) {
+            compile_stmt(arm.body);
+        }
+
+        // 8. Restore scope
+        current_ctx_->locals.resize(prev_locals_size);
+
+        // 9. Jump to the end of the entire match statement so we don't fall through into the next arm
+        end_jumps.push_back(emit(vm::Instruction::make_i(vm::Opcode::Jump, 0)));
+
+        // 10. Patch the jump_next_arm instruction to land right here
+        uint16_t next_arm_target = static_cast<uint16_t>(current_block().instructions.size());
+        current_block().instructions[jump_next_arm_idx].ri.imm = next_arm_target;
+    }
+
+    // 11. Patch all the successful arm executions to jump to the very end
+    uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
+    for (size_t jump_idx : end_jumps) {
+        current_block().instructions[jump_idx].i.imm = end_target;
+    }
+}
 // =============================================================================
 // EXPRESSIONS
 // =============================================================================
@@ -722,23 +789,24 @@ uint8_t Compiler::compile_expr(ast::Expr_id expr_id)
                 return compile_expr_node(e);
             } else if constexpr (std::is_same_v<T, ast::Call_expr>) {
                 return compile_expr_node(e);
-            } else if constexpr (std::is_same_v<T, ast::Closure_expr>) {
+            } else if constexpr (std::is_same_v<T, ast::Enum_member_expr>) {
                 return compile_expr_node(e);
-            } else if constexpr (std::is_same_v<T, ast::Array_literal_expr>) {
-                return compile_expr_node(e);
-            } else if constexpr (std::is_same_v<T, ast::Array_access_expr>) {
-                return compile_expr_node(e);
-            } else if constexpr (std::is_same_v<T, ast::Array_assignment_expr>) {
+            } else if constexpr (std::is_same_v<T, ast::Static_path_expr>) {
                 return compile_expr_node(e);
             } else if constexpr (std::is_same_v<T, ast::Model_literal_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Anon_model_literal_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Method_call_expr>) {
                 return compile_expr_node(e);
             } else if constexpr (std::is_same_v<T, ast::Field_access_expr>) {
                 return compile_expr_node(e);
             } else if constexpr (std::is_same_v<T, ast::Field_assignment_expr>) {
                 return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Unary_expr>) {
+                return compile_expr_node(e);
             } else {
-                auto loc = ast::get_loc(e);
-                std::println("{}:{}: Unimplemented expression node", loc.l, loc.c);
+                std::println("Unimplemented expression node");
             }
             return 0;
         },
@@ -835,6 +903,58 @@ uint8_t Compiler::compile_expr_node(const ast::Literal_expr &expr)
     return target_reg;
 }
 
+uint8_t Compiler::compile_expr_node(const ast::Enum_member_expr &expr)
+{
+    // 1. Get the enum type
+    const auto &enum_t = std::get<types::Enum_type>(env.tt.get(expr.type).data);
+
+    // 2. Fetch the resolved variant map from the environment
+    auto enum_data_ptr = env.get_enum(enum_t.name);
+
+    Value variant_val(nullptr);
+    if (enum_data_ptr && enum_data_ptr->variants.contains(expr.member_name)) {
+        variant_val = enum_data_ptr->variants.at(expr.member_name);
+    } else {
+        std::println(std::cerr, "Compiler Bug: Enum variant not found: {}::{}", enum_t.name, expr.member_name);
+        std::exit(EXIT_FAILURE);
+    }
+
+    // 3. Treat the enum exactly like a hardcoded primitive literal!
+    uint8_t target_reg = allocate_register();
+    uint16_t const_idx = add_constant(variant_val);
+    emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
+
+    return target_reg;
+}
+
+uint8_t Compiler::compile_expr_node(const ast::Static_path_expr &expr)
+{
+    types::Type_id base_type = ast::get_type(tree.get(expr.base).node);
+
+    if (env.tt.is_enum(base_type)) {
+        const auto &enum_t = std::get<types::Enum_type>(env.tt.get(base_type).data);
+        auto enum_data_ptr = env.get_enum(enum_t.name);
+
+        Value variant_val(nullptr);
+        if (enum_data_ptr && enum_data_ptr->variants.contains(expr.member.lexeme)) {
+            variant_val = enum_data_ptr->variants.at(expr.member.lexeme);
+        } else {
+            std::println(std::cerr, "Compiler Bug: Enum variant not found: {}::{}", enum_t.name, expr.member.lexeme);
+            std::exit(EXIT_FAILURE);
+        }
+
+        uint8_t target_reg = allocate_register();
+        uint16_t const_idx = add_constant(variant_val);
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
+
+        return target_reg;
+    }
+
+    std::println(std::cerr, "Compiler Bug: Static path expressions are currently only implemented for Enums.");
+    std::exit(EXIT_FAILURE);
+    return 0;
+}
+
 uint8_t Compiler::compile_expr_node(const ast::Cast_expr &expr)
 {
     uint8_t value_reg = compile_expr(expr.expression);
@@ -849,113 +969,6 @@ uint8_t Compiler::compile_expr_node(const ast::Cast_expr &expr)
 
     emit(vm::Instruction::make_rrr(cast_opcode_for(expr.target_type), value_reg, 0, 0));
     return value_reg;
-}
-
-/*
-    Binary Expression Dispatcher
-    Contains Short-Circuit execution flows for Logical AND/OR,
-    followed by standard post-order generation for math operators.
-*/
-uint8_t Compiler::compile_expr_node(const ast::Binary_expr &expr)
-{
-    /*
-            %left = compile(expr.left)
-            %dest = move %left
-            jump_if_false %left, .short_circuit_end
-        .eval_right:
-            %right = compile(expr.right)
-            %dest = move %right
-        .short_circuit_end:
-    */
-    if (expr.op == lex::TokenType::LogicalAnd) {
-        uint8_t reg_a = compile_expr(expr.left);
-        uint8_t dest_reg = allocate_register();
-
-        emit(vm::Instruction::make_rrr(vm::Opcode::Move, dest_reg, reg_a, 0));
-
-        size_t jump_end_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, reg_a, 0));
-
-        uint8_t reg_b = compile_expr(expr.right);
-        emit(vm::Instruction::make_rrr(vm::Opcode::Move, dest_reg, reg_b, 0));
-
-        uint16_t end_target = static_cast<uint16_t>(current_block().instructions.size());
-        current_block().instructions[jump_end_idx].ri.imm = end_target;
-
-        return dest_reg;
-    }
-
-    /*
-            %left = compile(expr.left)
-            %dest = move %left
-            jump_if_false %left, .eval_right
-        .short_circuit_true:
-            jump .short_circuit_end
-        .eval_right:
-            %right = compile(expr.right)
-            %dest = move %right
-        .short_circuit_end:
-    */
-    if (expr.op == lex::TokenType::LogicalOr) {
-        uint8_t reg_a = compile_expr(expr.left);
-        uint8_t dest_reg = allocate_register();
-
-        emit(vm::Instruction::make_rrr(vm::Opcode::Move, dest_reg, reg_a, 0));
-
-        size_t jump_eval_b_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, reg_a, 0));
-
-        size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
-
-        uint16_t eval_b_target = static_cast<uint16_t>(current_block().instructions.size());
-        current_block().instructions[jump_eval_b_idx].ri.imm = eval_b_target;
-
-        uint8_t reg_b = compile_expr(expr.right);
-        emit(vm::Instruction::make_rrr(vm::Opcode::Move, dest_reg, reg_b, 0));
-
-        uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
-        current_block().instructions[jump_end_idx].i.imm = end_target;
-
-        return dest_reg;
-    }
-
-    /*
-        %left = compile(left)
-        %right = compile(right)
-        %dest = allocate_register()
-        [opcode] %dest, %left, %right
-    */
-    uint8_t reg_a = compile_expr(expr.left);
-    uint8_t reg_b = compile_expr(expr.right);
-
-    uint8_t dest_reg = allocate_register();
-    types::Type_id left_type = ast::get_type(tree.get(expr.left).node);
-    types::Type_id right_type = ast::get_type(tree.get(expr.right).node);
-
-    vm::Opcode opcode = vm::Opcode::Move;
-    switch (expr.op) {
-    case lex::TokenType::Plus:
-    case lex::TokenType::Minus:
-    case lex::TokenType::Star:
-    case lex::TokenType::Slash:
-    case lex::TokenType::Percent:
-        opcode = arithmetic_opcode_for(expr.op, expr.type);
-        break;
-    case lex::TokenType::Equal:
-    case lex::TokenType::NotEqual:
-    case lex::TokenType::Less:
-    case lex::TokenType::LessEqual:
-    case lex::TokenType::Greater:
-    case lex::TokenType::GreaterEqual: {
-        opcode = comparison_opcode_for(expr.op, left_type, right_type);
-        break;
-    }
-    default:
-        std::println(std::cerr, "Unsupported binary operator in compiler");
-        std::exit(EXIT_FAILURE);
-    }
-
-    emit(vm::Instruction::make_rrr(opcode, dest_reg, reg_a, reg_b));
-    emit_numeric_normalize(dest_reg, expr.type);
-    return dest_reg;
 }
 
 /*
@@ -1037,23 +1050,105 @@ uint8_t Compiler::compile_expr_node(const ast::Closure_expr &expr)
 }
 
 /*
-    %callee = compile(expr.callee)
-    %arg0 = compile(expr.arguments[0])
-    %arg1 = compile(expr.arguments[1])
-
-    // Pack into contiguous ABI layout
-    %call_base = allocate()
-    move %call_base, %callee
-
-    %packed0 = allocate()
-    move %packed0, %arg0
-
-    %packed1 = allocate()
-    move %packed1, %arg1
-
-    %dest = allocate()
-    call %dest, %call_base, argc
+    Binary Expression Dispatcher
 */
+uint8_t Compiler::compile_expr_node(const ast::Binary_expr &expr)
+{
+    if (expr.op == lex::TokenType::LogicalAnd) {
+        uint8_t reg_a = compile_expr(expr.left);
+        uint8_t dest_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, dest_reg, reg_a, 0));
+        size_t jump_end_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, reg_a, 0));
+        uint8_t reg_b = compile_expr(expr.right);
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, dest_reg, reg_b, 0));
+        uint16_t end_target = static_cast<uint16_t>(current_block().instructions.size());
+        current_block().instructions[jump_end_idx].ri.imm = end_target;
+        return dest_reg;
+    }
+
+    if (expr.op == lex::TokenType::LogicalOr) {
+        uint8_t reg_a = compile_expr(expr.left);
+        uint8_t dest_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, dest_reg, reg_a, 0));
+        size_t jump_eval_b_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, reg_a, 0));
+        size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+        uint16_t eval_b_target = static_cast<uint16_t>(current_block().instructions.size());
+        current_block().instructions[jump_eval_b_idx].ri.imm = eval_b_target;
+        uint8_t reg_b = compile_expr(expr.right);
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, dest_reg, reg_b, 0));
+        uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
+        current_block().instructions[jump_end_idx].i.imm = end_target;
+        return dest_reg;
+    }
+
+    uint8_t reg_a = compile_expr(expr.left);
+    uint8_t reg_b = compile_expr(expr.right);
+
+    uint8_t dest_reg = allocate_register();
+    types::Type_id left_type = ast::get_type(tree.get(expr.left).node);
+    types::Type_id right_type = ast::get_type(tree.get(expr.right).node);
+
+    vm::Opcode opcode = vm::Opcode::Move;
+    switch (expr.op) {
+    case lex::TokenType::Plus:
+    case lex::TokenType::Minus:
+    case lex::TokenType::Star:
+    case lex::TokenType::Slash:
+    case lex::TokenType::Percent:
+        opcode = arithmetic_opcode_for(expr.op, expr.type);
+        break;
+    case lex::TokenType::Equal:
+    case lex::TokenType::NotEqual:
+    case lex::TokenType::Less:
+    case lex::TokenType::LessEqual:
+    case lex::TokenType::Greater:
+    case lex::TokenType::GreaterEqual: {
+        opcode = comparison_opcode_for(expr.op, left_type, right_type);
+        break;
+    }
+    default:
+        std::println(std::cerr, "Unsupported binary operator in compiler");
+        std::exit(EXIT_FAILURE);
+    }
+
+    emit(vm::Instruction::make_rrr(opcode, dest_reg, reg_a, reg_b));
+    emit_numeric_normalize(dest_reg, expr.type);
+    return dest_reg;
+}
+
+uint8_t Compiler::compile_expr_node(const ast::Unary_expr &expr)
+{
+    uint8_t right_reg = compile_expr(expr.right);
+    uint8_t dest_reg = allocate_register();
+
+    types::Type_id right_type = ast::get_type(tree.get(expr.right).node);
+    vm::Opcode opcode = vm::Opcode::Move;
+
+    if (expr.op == lex::TokenType::Minus) {
+        if (env.tt.is_float_primitive(right_type)) {
+            opcode = vm::Opcode::Neg_f64;
+        } else {
+            opcode = vm::Opcode::Neg_i64;
+        }
+    } else if (expr.op == lex::TokenType::LogicalNot) {
+        opcode = vm::Opcode::Not;
+    } else if (expr.op == lex::TokenType::BitNot) {
+        if (env.tt.is_unsigned_integer_primitive(right_type)) {
+            opcode = vm::Opcode::BitNot_u64;
+        } else {
+            opcode = vm::Opcode::BitNot_i64;
+        }
+    } else {
+        std::println(std::cerr, "Compiler Bug: Unsupported unary operator");
+        std::exit(EXIT_FAILURE);
+    }
+
+    // src_b is unused (0) for unary operations
+    emit(vm::Instruction::make_rrr(opcode, dest_reg, right_reg, 0));
+
+    return dest_reg;
+}
+
 uint8_t Compiler::compile_expr_node(const ast::Call_expr &expr)
 {
     // 1. Evaluate callee
@@ -1066,7 +1161,6 @@ uint8_t Compiler::compile_expr_node(const ast::Call_expr &expr)
     }
 
     // 3. Allocate a strictly contiguous block of registers for the ABI.
-    // The first register MUST hold the callee pointer.
     uint8_t call_base_reg = allocate_register();
     emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base_reg, callee_eval_reg, 0));
 
@@ -1084,91 +1178,44 @@ uint8_t Compiler::compile_expr_node(const ast::Call_expr &expr)
 
     return dest_reg;
 }
-
-/*
-    Evaluates all elements, packs them into a contiguous block of registers,
-    and issues the Make_array instruction.
-*/
-uint8_t Compiler::compile_expr_node(const ast::Array_literal_expr &expr)
-{
-    // 1. Evaluate all elements into scattered registers
-    std::vector<uint8_t> element_regs;
-    for (const auto &element : expr.elements) {
-        element_regs.push_back(compile_expr(element));
-    }
-
-    // 2. Allocate a contiguous block of registers and move the elements in
-    uint8_t base_reg = allocate_register();
-    if (!element_regs.empty()) {
-        emit(vm::Instruction::make_rrr(vm::Opcode::Move, base_reg, element_regs[0], 0));
-        for (size_t i = 1; i < element_regs.size(); ++i) {
-            uint8_t next_reg = allocate_register();
-            emit(vm::Instruction::make_rrr(vm::Opcode::Move, next_reg, element_regs[i], 0));
-        }
-    }
-
-    // 3. Emit Make_array
-    uint8_t dest_reg = allocate_register();
-    uint8_t count = static_cast<uint8_t>(element_regs.size());
-    emit(vm::Instruction::make_rrr(vm::Opcode::Make_array, dest_reg, base_reg, count));
-
-    return dest_reg;
-}
-
-/*
-    %array = compile(expr.array)
-    %index = compile(expr.index)
-    %dest = allocate_register()
-    load_index %dest, %array, %index
-*/
-uint8_t Compiler::compile_expr_node(const ast::Array_access_expr &expr)
-{
-    uint8_t array_reg = compile_expr(expr.array);
-    uint8_t index_reg = compile_expr(expr.index);
-
-    uint8_t dest_reg = allocate_register();
-    emit(vm::Instruction::make_rrr(vm::Opcode::Load_index, dest_reg, array_reg, index_reg));
-
-    return dest_reg;
-}
-
-/*
-    %value = compile(expr.value)
-    %array = compile(expr.array)
-    %index = compile(expr.index)
-    store_index %array, %index, %value
-*/
-uint8_t Compiler::compile_expr_node(const ast::Array_assignment_expr &expr)
-{
-    // Evaluate the right-hand side first
-    uint8_t value_reg = compile_expr(expr.value);
-    types::Type_id source_type = ast::get_type(tree.get(expr.value).node);
-    if (source_type != expr.type) {
-        emit_numeric_normalize(value_reg, expr.type);
-    }
-
-    // Evaluate target array and index
-    uint8_t array_reg = compile_expr(expr.array);
-    uint8_t index_reg = compile_expr(expr.index);
-
-    emit(vm::Instruction::make_rrr(vm::Opcode::Store_index, array_reg, index_reg, value_reg));
-
-    // In C-like languages, assignment evaluates to the assigned value
-    return value_reg;
-}
-
-/*
-    Instantiates a model by evaluating its fields and packing them contiguously.
-*/
 uint8_t Compiler::compile_expr_node(const ast::Model_literal_expr &expr)
 {
-    // 1. Evaluate all fields into scattered registers
+    // --- UNION INSTANTIATION ---
+    if (env.tt.is_union(expr.type)) {
+        auto &union_t = std::get<types::Union_type>(env.tt.get(expr.type).data);
+        std::string variant_name = expr.fields[0].first;
+        ast::Expr_id payload_expr = expr.fields[0].second;
+
+        // 1. Evaluate payload
+        uint8_t payload_reg = 0;
+        if (!payload_expr.is_null()) {
+            payload_reg = compile_expr(payload_expr);
+        } else {
+            payload_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, payload_reg, 0, 0));
+        }
+
+        // 2. Load strings into contiguous ABI registers
+        uint8_t names_base = allocate_register();
+        uint16_t u_name_idx = add_constant(Value::make_string(arena, union_t.name));
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, names_base, u_name_idx));
+
+        uint8_t v_name_reg = allocate_register(); // Guaranteed to be names_base + 1
+        uint16_t v_name_idx = add_constant(Value::make_string(arena, variant_name));
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, v_name_reg, v_name_idx));
+
+        // 3. Emit Make_union
+        uint8_t dst_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Make_union, dst_reg, names_base, payload_reg));
+        return dst_reg;
+    }
+
+    // --- MODEL INSTANTIATION ---
     std::vector<uint8_t> field_regs;
     for (const auto &[name, value_expr] : expr.fields) {
         field_regs.push_back(compile_expr(value_expr));
     }
 
-    // 2. Allocate a contiguous block of registers and move the elements in
     uint8_t base_reg = allocate_register();
     if (!field_regs.empty()) {
         emit(vm::Instruction::make_rrr(vm::Opcode::Move, base_reg, field_regs[0], 0));
@@ -1178,7 +1225,6 @@ uint8_t Compiler::compile_expr_node(const ast::Model_literal_expr &expr)
         }
     }
 
-    // 3. Emit Make_model
     uint8_t dest_reg = allocate_register();
     uint8_t count = static_cast<uint8_t>(field_regs.size());
     emit(vm::Instruction::make_rrr(vm::Opcode::Make_model, dest_reg, base_reg, count));
@@ -1186,48 +1232,125 @@ uint8_t Compiler::compile_expr_node(const ast::Model_literal_expr &expr)
     return dest_reg;
 }
 
-/*
-    %obj = compile(expr.object)
-    %dest = allocate_register()
-    load_field %dest, %obj, <field_index>
-*/
+uint8_t Compiler::compile_expr_node(const ast::Anon_model_literal_expr &expr)
+{
+    // --- UNION INSTANTIATION ---
+    if (env.tt.is_union(expr.type)) {
+        auto &union_t = std::get<types::Union_type>(env.tt.get(expr.type).data);
+        std::string variant_name = expr.fields[0].first;
+        ast::Expr_id payload_expr = expr.fields[0].second;
+
+        uint8_t payload_reg = 0;
+        if (!payload_expr.is_null()) {
+            payload_reg = compile_expr(payload_expr);
+        } else {
+            payload_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, payload_reg, 0, 0));
+        }
+
+        uint8_t names_base = allocate_register();
+        uint16_t u_name_idx = add_constant(Value::make_string(arena, union_t.name));
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, names_base, u_name_idx));
+
+        uint8_t v_name_reg = allocate_register();
+        uint16_t v_name_idx = add_constant(Value::make_string(arena, variant_name));
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, v_name_reg, v_name_idx));
+
+        uint8_t dst_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Make_union, dst_reg, names_base, payload_reg));
+        return dst_reg;
+    }
+
+    // --- MODEL INSTANTIATION ---
+    std::vector<uint8_t> field_regs;
+    for (const auto &[name, value_expr] : expr.fields) {
+        field_regs.push_back(compile_expr(value_expr));
+    }
+
+    uint8_t base_reg = allocate_register();
+    if (!field_regs.empty()) {
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, base_reg, field_regs[0], 0));
+        for (size_t i = 1; i < field_regs.size(); ++i) {
+            uint8_t next_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, next_reg, field_regs[i], 0));
+        }
+    }
+
+    uint8_t dest_reg = allocate_register();
+    uint8_t count = static_cast<uint8_t>(field_regs.size());
+    emit(vm::Instruction::make_rrr(vm::Opcode::Make_model, dest_reg, base_reg, count));
+
+    return dest_reg;
+}
+
+uint8_t Compiler::compile_expr_node(const ast::Method_call_expr &expr)
+{
+    types::Type_id obj_type = ast::get_type(tree.get(expr.object).node);
+
+    // --- UNION .has() INTERCEPT ---
+    if (env.tt.is_union(obj_type) && expr.method_name == "has") {
+        uint8_t obj_reg = compile_expr(expr.object);
+
+        std::string variant_str;
+        auto &arg_node = tree.get(expr.arguments[0].value).node;
+        if (auto *sp = std::get_if<ast::Static_path_expr>(&arg_node)) {
+            variant_str = sp->member.lexeme;
+        } else if (auto *em = std::get_if<ast::Enum_member_expr>(&arg_node)) {
+            variant_str = em->member_name;
+        }
+
+        uint8_t str_reg = allocate_register();
+        uint16_t str_idx = add_constant(Value::make_string(arena, variant_str));
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, str_reg, str_idx));
+
+        uint8_t dst_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Test_union, dst_reg, obj_reg, str_reg));
+        return dst_reg;
+    }
+
+    std::println(std::cerr, "Compiler Bug: Regular Method Calls not fully implemented in Bytecode yet!");
+    std::exit(EXIT_FAILURE);
+    return 0;
+}
+
 uint8_t Compiler::compile_expr_node(const ast::Field_access_expr &expr)
 {
     uint8_t obj_reg = compile_expr(expr.object);
-
     types::Type_id obj_type = ast::get_type(tree.get(expr.object).node);
-    uint8_t field_idx = static_cast<uint8_t>(env.tt.get_model_field_index(obj_type, expr.field_name).value());
 
+    auto field_idx_opt = env.tt.get_model_field_index(obj_type, expr.field_name);
+    if (!field_idx_opt) {
+        std::println(std::cerr, "Compiler Bug: Field access offset missing.");
+        std::exit(1);
+    }
+
+    uint8_t field_idx = static_cast<uint8_t>(*field_idx_opt);
     uint8_t dest_reg = allocate_register();
     emit(vm::Instruction::make_rrr(vm::Opcode::Load_field, dest_reg, obj_reg, field_idx));
 
     return dest_reg;
 }
 
-/*
-    %value = compile(expr.value)
-    %obj = compile(expr.object)
-    store_field %obj, <field_index>, %value
-*/
 uint8_t Compiler::compile_expr_node(const ast::Field_assignment_expr &expr)
 {
-    // 1. Evaluate RHS
     uint8_t value_reg = compile_expr(expr.value);
     types::Type_id source_type = ast::get_type(tree.get(expr.value).node);
     if (source_type != expr.type) {
         emit_numeric_normalize(value_reg, expr.type);
     }
 
-    // 2. Evaluate LHS Object
     uint8_t obj_reg = compile_expr(expr.object);
-
-    // Look up field index (Guaranteed to exist by the Semantic Checker)
     types::Type_id obj_type = ast::get_type(tree.get(expr.object).node);
-    uint8_t field_idx = static_cast<uint8_t>(env.tt.get_model_field_index(obj_type, expr.field_name).value());
-    // 4. Emit assignment
+
+    auto field_idx_opt = env.tt.get_model_field_index(obj_type, expr.field_name);
+    if (!field_idx_opt) {
+        std::println(std::cerr, "Compiler Bug: Field assignment offset missing.");
+        std::exit(1);
+    }
+
+    uint8_t field_idx = static_cast<uint8_t>(*field_idx_opt);
     emit(vm::Instruction::make_rrr(vm::Opcode::Store_field, obj_reg, field_idx, value_reg));
 
-    return value_reg; // Assignment expressions return the assigned value
+    return value_reg;
 }
-
 } // namespace phos::vm

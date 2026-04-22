@@ -92,6 +92,29 @@ void Semantic_checker::hoist_globals(const std::vector<ast::Stmt_id> &statements
             env.global_types[en->name] = env.tt.enum_(en->name, en->base_type);
 
             types::Enum_type_data e_data;
+
+            bool is_string_enum = env.tt.is_string(en->base_type);
+            int64_t current_val = 0;
+
+            for (const auto &variant : en->variants) {
+                if (variant.second.has_value()) {
+                    if (!is_string_enum) {
+                        current_val = variant.second->as_int();
+                    }
+                    e_data.variants[variant.first] = *variant.second;
+                } else {
+                    if (is_string_enum) {
+                        e_data.variants[variant.first] = Value::make_string(arena_, variant.first);
+                    } else {
+                        e_data.variants[variant.first] = Value(current_val);
+                    }
+                }
+
+                if (!is_string_enum) {
+                    current_val++;
+                }
+            }
+
             env.enum_data[en->name] = std::move(e_data);
         }
     }
@@ -1001,6 +1024,15 @@ void Semantic_checker::check_stmt_node(ast::Function_stmt &stmt)
 
 void Semantic_checker::check_stmt_node(ast::Var_stmt &stmt)
 {
+    if (!stmt.type_inferred && env.tt.is_unresolved(stmt.type)) {
+        auto type_name = env.tt.get(stmt.type).as<types::Unresolved_type>().name;
+        if (env.is_type_defined(type_name)) {
+            stmt.type = *env.get_type(type_name);
+        } else {
+            type_error(stmt.loc, "Unknown type '" + type_name + "'.");
+            stmt.type = env.tt.get_unknown();
+        }
+    }
     types::Type_id init_type = env.tt.get_void();
     bool initializer_failed = false;
 
@@ -1067,8 +1099,43 @@ void Semantic_checker::check_stmt_node(ast::Union_stmt &stmt)
 {
     validate_union_defaults(stmt);
 }
+
 void Semantic_checker::check_stmt_node(ast::Enum_stmt &stmt)
-{}
+{
+    auto enum_data_ptr = env.get_enum(stmt.name);
+    if (!enum_data_ptr) {
+        return;
+    }
+
+    std::unordered_set<std::string> used_names;
+    std::unordered_set<int64_t> used_ints;
+    std::unordered_set<std::string> used_strings;
+
+    for (const auto &variant : stmt.variants) {
+        if (!used_names.insert(variant.first).second) {
+            type_error(stmt.loc, std::format("Duplicate enum variant name '{}'.", variant.first));
+            continue;
+        }
+
+        auto val = enum_data_ptr->variants.at(variant.first);
+        if (val.is_integer()) {
+            int64_t i = val.as_int();
+            if (!used_ints.insert(i).second) {
+                type_error(
+                    stmt.loc,
+                    std::format("Duplicate enum value '{}' in variant '{}'. Enum values must be unique.", i, variant.first));
+            }
+        } else if (val.is_string()) {
+            std::string s(val.as_string());
+            if (!used_strings.insert(s).second) {
+                type_error(
+                    stmt.loc,
+                    std::format("Duplicate enum value '\"{}\"' in variant '{}'. Enum values must be unique.", s, variant.first));
+            }
+        }
+    }
+}
+
 void Semantic_checker::check_stmt_node(ast::Block_stmt &stmt)
 {
     variables.begin_scope();
@@ -1973,8 +2040,12 @@ types::Type_id Semantic_checker::check_expr_node(ast::Cast_expr &expr, std::opti
     if (env.tt.is_enum(original_type) && target_type == std::get<types::Enum_type>(env.tt.get(original_type).data).base) {
         return target_type;
     }
-    if (env.tt.is_enum(target_type) && original_type == std::get<types::Enum_type>(env.tt.get(target_type).data).base) {
-        return target_type;
+
+    if (env.tt.is_enum(original_type)) {
+        auto base = std::get<types::Enum_type>(env.tt.get(original_type).data).base;
+        if (target_type == base || (env.tt.is_numeric_primitive(base) && env.tt.is_numeric_primitive(target_type))) {
+            return target_type;
+        }
     }
 
     if (env.tt.is_optional(original_type) && !env.tt.is_optional(target_type)) {

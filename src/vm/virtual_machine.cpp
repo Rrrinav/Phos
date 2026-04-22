@@ -345,6 +345,32 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             break;
         }
 
+        case Opcode::Neg_i64: {
+            int64_t val = registers[base + inst.rrr.src_a].as_int();
+            registers[base + inst.rrr.dst] = Value(-val);
+            break;
+        }
+        case Opcode::Neg_f64: {
+            double val = registers[base + inst.rrr.src_a].as_float();
+            registers[base + inst.rrr.dst] = Value(-val);
+            break;
+        }
+        case Opcode::Not: {
+            bool val = registers[base + inst.rrr.src_a].as_bool();
+            registers[base + inst.rrr.dst] = Value(!val);
+            break;
+        }
+        case Opcode::BitNot_i64: {
+            int64_t val = registers[base + inst.rrr.src_a].as_int();
+            registers[base + inst.rrr.dst] = Value(~val);
+            break;
+        }
+        case Opcode::BitNot_u64: {
+            uint64_t val = registers[base + inst.rrr.src_a].as_uint();
+            registers[base + inst.rrr.dst] = Value(~val);
+            break;
+        }
+
         case Opcode::Jump: {
             /* IP := imm */
             ip = inst.i.imm;
@@ -538,18 +564,11 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
 
         case Opcode::Make_model: {
-            uint8_t base_reg = inst.rrr.src_a;
             uint8_t count = inst.rrr.src_b;
+            Value model_val = Value::make_model(arena, {}, count);
 
-            // Allocate the model on the Arena heap
-            // Note: If you need to pass a specific type signature, it requires a
-            // constant pool lookup, but for now we pass an empty/default signature.
-            Value model_val = Value::make_model(arena, types::Model_type{}, count, 0);
-            Model_data *model = model_val.as_model();
-
-            // Bulk copy the evaluated fields into the Model
-            for (uint8_t i = 0; i < count; ++i) {
-                model->fields[i] = registers[base + base_reg + i];
+            for (uint8_t i = 0; i < count; i++) {
+                model_val.as_model()->fields[i] = registers[base + inst.rrr.src_a + i];
             }
 
             registers[base + inst.rrr.dst] = model_val;
@@ -595,7 +614,41 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             model->fields[index] = val;
             break;
         }
+        case Opcode::Make_union: {
+            Value union_name_val = registers[base + inst.rrr.src_a];
+            Value variant_name_val = registers[base + inst.rrr.src_a + 1];
+            Value payload_val = registers[base + inst.rrr.src_b];
 
+            registers[base + inst.rrr.dst] = Value::make_union(arena, union_name_val.as_string_data(), variant_name_val.as_string_data(), payload_val);
+            break;
+        }
+
+        case Opcode::Test_union: {
+            Value union_val = registers[base + inst.rrr.src_a];
+            Value target_variant = registers[base + inst.rrr.src_b];
+
+            if (!union_val.is_union()) {
+                panic("Attempted .has() on a non-union value at IP: {}", ip - 1);
+            }
+
+            String_data *active_variant = union_val.as_union()->variant_name;
+            String_data *target_str = target_variant.as_string_data();
+
+            bool match = (active_variant->length == target_str->length)
+                && (std::strncmp(active_variant->chars, target_str->chars, active_variant->length) == 0);
+
+            registers[base + inst.rrr.dst] = Value(match);
+            break;
+        }
+
+        case Opcode::Load_union_payload: {
+            Value union_val = registers[base + inst.rrr.src_a];
+            if (!union_val.is_union()) {
+                panic("Attempted to load payload from non-union at IP: {}", ip - 1);
+            }
+            registers[base + inst.rrr.dst] = *(union_val.as_union()->payload);
+            break;
+        }
         default: {
             /* ??? */
             panic("Unrecognized or unimplemented Opcode: {}", opcode_to_string(inst.rrr.op));

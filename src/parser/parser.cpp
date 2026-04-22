@@ -611,6 +611,9 @@ Result<ast::Stmt_id> Parser::enum_declaration()
         if (!(type_table_.is_primitive(base_type) && (type_table_.is_integer_primitive(base_type) || type_table_.is_string(base_type)))) {
             return std::unexpected(create_error(previous(), "Enum base type must be an integer type or 'string'"));
         }
+    } else {
+        // NEW: Default to a 64-bit integer if no base type is explicitly provided!
+        base_type = type_table_.get_i64();
     }
 
     __TryIgnore(consume(lex::TokenType::LeftBrace, "Expect '{' after enum name"));
@@ -649,13 +652,12 @@ Result<ast::Stmt_id> Parser::enum_declaration()
 
     __TryIgnore(consume(lex::TokenType::RightBrace, "Expect '}' after enum body"));
 
-    return tree_.add_stmt(
-        ast::Stmt{ast::Enum_stmt{
-            .name = name.lexeme,
-            .base_type = base_type,
-            .variants = variants,
-            .loc = {name.line, name.column},
-        }});
+    return tree_.add_stmt(ast::Stmt{ast::Enum_stmt{
+        .name = name.lexeme,
+        .base_type = base_type,
+        .variants = variants,
+        .loc = {name.line, name.column},
+    }});
 }
 
 // field_decl -> IDENT ":" type ";"

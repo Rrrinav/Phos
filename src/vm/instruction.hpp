@@ -63,6 +63,11 @@ enum class Opcode : uint8_t {
     Eq_u64, Neq_u64, Lt_u64, Lte_u64, Gt_u64, Gte_u64, // dest, src_a, src_b
     Eq_f64, Neq_f64, Lt_f64, Lte_f64, Gt_f64, Gte_f64, // dest, src_a, src_b
 
+    // Unary
+    Neg_i64, Neg_f64,
+    Not,
+    BitNot_i64, BitNot_u64,
+
     // Print
     Print,
 
@@ -87,6 +92,11 @@ enum class Opcode : uint8_t {
     Make_model,    // R[dst] = Model( R[src_a] ... R[src_a + src_b - 1] )
     Load_field,    // R[dst] = R[src_a].field[ src_b ]
     Store_field,   // R[dst].field[ src_a ] = R[src_b]
+
+    // Union
+    Make_union,          // dest, src_a (names_base), src_b (payload)
+    Test_union,          // dest, src_a (union_obj), src_b (variant_string)
+    Load_union_payload,  // dest, src_a (union_obj)
 
     None
 };

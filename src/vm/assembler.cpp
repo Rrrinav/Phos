@@ -251,7 +251,13 @@ std::string Assembler::disassemble_instruction(Instruction inst, const Closure_d
     case Opcode::Gte_f64:
         asm_str = std::format("{:<14} %r{}, %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
         break;
-
+    case Opcode::Neg_i64:
+    case Opcode::Neg_f64:
+    case Opcode::Not:
+    case Opcode::BitNot_i64:
+    case Opcode::BitNot_u64:
+        asm_str = std::format("{:<14} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
+        break;
     case Opcode::Cast_i8:
     case Opcode::Cast_i16:
     case Opcode::Cast_i32:

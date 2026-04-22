@@ -291,11 +291,11 @@ struct Expr
         Array_literal_expr,
         Array_access_expr,
         Static_path_expr,
-        Range_expr,
+        Range_expr, //
         Spawn_expr,
         Await_expr,
         Yield_expr,
-        Fstring_expr,
+        Fstring_expr, //
         Enum_member_expr,
         Anon_model_literal_expr>;
 
@@ -436,9 +436,9 @@ struct Stmt
         If_stmt,
         While_stmt,
         For_stmt,
-        For_in_stmt,
+        For_in_stmt, //
         Union_stmt,
-        Match_stmt,
+        Match_stmt, //
         Enum_stmt>;
 
     Node node;

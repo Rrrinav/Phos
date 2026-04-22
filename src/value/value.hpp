@@ -383,6 +383,16 @@ public:
         return std::string_view(as.str->chars, as.str->length);
     }
 
+    inline String_data* as_string_data() const
+    {
+        return as.str;
+    }
+
+    inline Array_data *as_array() const
+    {
+        return as.arr;
+    }
+
     std::span<Value> as_array_elements() const
     {
         return std::span<Value>(as.arr->elements, as.arr->count);
@@ -409,11 +419,6 @@ public:
     inline Closure_data *as_closure() const
     {
         return as.closure;
-    }
-
-    inline Array_data *as_array() const
-    {
-        return as.arr;
     }
 
     inline Model_data *as_model() const
