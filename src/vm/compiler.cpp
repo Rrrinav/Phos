@@ -353,11 +353,35 @@ void Compiler::compile_stmt(ast::Stmt_id stmt_id)
                 compile_stmt_node(s);
             } else if constexpr (std::is_same_v<T, ast::Return_stmt>) {
                 compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Model_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Union_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Enum_stmt>) {
+                compile_stmt_node(s);
             } else {
                 std::println(std::cerr, "Unimplemented stmt node");
             }
         },
         tree.get(stmt_id).node);
+}
+
+void Compiler::compile_stmt_node(const ast::Model_stmt &stmt)
+{
+    // The model fields are purely compile-time info, but we MUST compile the methods!
+    for (auto method_id : stmt.methods) {
+        compile_stmt(method_id);
+    }
+}
+
+void Compiler::compile_stmt_node(const ast::Union_stmt &stmt)
+{
+    // Purely compile-time construct. No bytecode needed.
+}
+
+void Compiler::compile_stmt_node(const ast::Enum_stmt &stmt)
+{
+    // Purely compile-time construct. No bytecode needed.
 }
 
 /*
@@ -698,13 +722,19 @@ uint8_t Compiler::compile_expr(ast::Expr_id expr_id)
                 return compile_expr_node(e);
             } else if constexpr (std::is_same_v<T, ast::Call_expr>) {
                 return compile_expr_node(e);
-                } else if constexpr (std::is_same_v<T, ast::Closure_expr>) {
+            } else if constexpr (std::is_same_v<T, ast::Closure_expr>) {
                 return compile_expr_node(e);
-            } else if constexpr (std::is_same_v<T, ast::Array_literal_expr>) { // NEW
+            } else if constexpr (std::is_same_v<T, ast::Array_literal_expr>) {
                 return compile_expr_node(e);
-            } else if constexpr (std::is_same_v<T, ast::Array_access_expr>) {  // NEW
+            } else if constexpr (std::is_same_v<T, ast::Array_access_expr>) {
                 return compile_expr_node(e);
-            } else if constexpr (std::is_same_v<T, ast::Array_assignment_expr>) { // NEW
+            } else if constexpr (std::is_same_v<T, ast::Array_assignment_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Model_literal_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Field_access_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Field_assignment_expr>) {
                 return compile_expr_node(e);
             } else {
                 auto loc = ast::get_loc(e);
@@ -1125,6 +1155,79 @@ uint8_t Compiler::compile_expr_node(const ast::Array_assignment_expr &expr)
 
     // In C-like languages, assignment evaluates to the assigned value
     return value_reg;
+}
+
+/*
+    Instantiates a model by evaluating its fields and packing them contiguously.
+*/
+uint8_t Compiler::compile_expr_node(const ast::Model_literal_expr &expr)
+{
+    // 1. Evaluate all fields into scattered registers
+    std::vector<uint8_t> field_regs;
+    for (const auto &[name, value_expr] : expr.fields) {
+        field_regs.push_back(compile_expr(value_expr));
+    }
+
+    // 2. Allocate a contiguous block of registers and move the elements in
+    uint8_t base_reg = allocate_register();
+    if (!field_regs.empty()) {
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, base_reg, field_regs[0], 0));
+        for (size_t i = 1; i < field_regs.size(); ++i) {
+            uint8_t next_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, next_reg, field_regs[i], 0));
+        }
+    }
+
+    // 3. Emit Make_model
+    uint8_t dest_reg = allocate_register();
+    uint8_t count = static_cast<uint8_t>(field_regs.size());
+    emit(vm::Instruction::make_rrr(vm::Opcode::Make_model, dest_reg, base_reg, count));
+
+    return dest_reg;
+}
+
+/*
+    %obj = compile(expr.object)
+    %dest = allocate_register()
+    load_field %dest, %obj, <field_index>
+*/
+uint8_t Compiler::compile_expr_node(const ast::Field_access_expr &expr)
+{
+    uint8_t obj_reg = compile_expr(expr.object);
+
+    types::Type_id obj_type = ast::get_type(tree.get(expr.object).node);
+    uint8_t field_idx = static_cast<uint8_t>(env.tt.get_model_field_index(obj_type, expr.field_name).value());
+
+    uint8_t dest_reg = allocate_register();
+    emit(vm::Instruction::make_rrr(vm::Opcode::Load_field, dest_reg, obj_reg, field_idx));
+
+    return dest_reg;
+}
+
+/*
+    %value = compile(expr.value)
+    %obj = compile(expr.object)
+    store_field %obj, <field_index>, %value
+*/
+uint8_t Compiler::compile_expr_node(const ast::Field_assignment_expr &expr)
+{
+    // 1. Evaluate RHS
+    uint8_t value_reg = compile_expr(expr.value);
+    types::Type_id source_type = ast::get_type(tree.get(expr.value).node);
+    if (source_type != expr.type) {
+        emit_numeric_normalize(value_reg, expr.type);
+    }
+
+    // 2. Evaluate LHS Object
+    uint8_t obj_reg = compile_expr(expr.object);
+
+    // Look up field index (Guaranteed to exist by the Semantic Checker)
+    types::Type_id obj_type = ast::get_type(tree.get(expr.object).node);
+    uint8_t field_idx = static_cast<uint8_t>(env.tt.get_model_field_index(obj_type, expr.field_name).value());
+    // 4. Emit assignment
+    emit(vm::Instruction::make_rrr(vm::Opcode::Store_field, obj_reg, field_idx, value_reg));
+
+    return value_reg; // Assignment expressions return the assigned value
 }
 
 } // namespace phos::vm

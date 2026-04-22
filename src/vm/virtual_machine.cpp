@@ -537,6 +537,65 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             break;
         }
 
+        case Opcode::Make_model: {
+            uint8_t base_reg = inst.rrr.src_a;
+            uint8_t count = inst.rrr.src_b;
+
+            // Allocate the model on the Arena heap
+            // Note: If you need to pass a specific type signature, it requires a
+            // constant pool lookup, but for now we pass an empty/default signature.
+            Value model_val = Value::make_model(arena, types::Model_type{}, count, 0);
+            Model_data *model = model_val.as_model();
+
+            // Bulk copy the evaluated fields into the Model
+            for (uint8_t i = 0; i < count; ++i) {
+                model->fields[i] = registers[base + base_reg + i];
+            }
+
+            registers[base + inst.rrr.dst] = model_val;
+            break;
+        }
+
+        case Opcode::Load_field: {
+            Value model_val = registers[base + inst.rrr.src_a];
+
+            uint8_t index = inst.rrr.src_b;
+
+            if (!model_val.is_model()) {
+                panic("Attempted to access a field on a non-model value at IP: {}", ip - 1);
+            }
+
+            Model_data *model = model_val.as_model();
+
+            if (index >= model->field_count) {
+                panic("Model field index out of bounds (index: {}, size: {}) at IP: {}", index, model->field_count, ip - 1);
+            }
+
+            registers[base + inst.rrr.dst] = model->fields[index];
+            break;
+        }
+
+        case Opcode::Store_field: {
+            Value model_val = registers[base + inst.rrr.dst];
+
+            uint8_t index = inst.rrr.src_a;
+
+            Value val = registers[base + inst.rrr.src_b];
+
+            if (!model_val.is_model()) {
+                panic("Attempted to assign a field on a non-model value at IP: {}", ip - 1);
+            }
+
+            Model_data *model = model_val.as_model();
+
+            if (index >= model->field_count) {
+                panic("Model field index out of bounds (index: {}, size: {}) at IP: {}", index, model->field_count, ip - 1);
+            }
+
+            model->fields[index] = val;
+            break;
+        }
+
         default: {
             /* ??? */
             panic("Unrecognized or unimplemented Opcode: {}", opcode_to_string(inst.rrr.op));

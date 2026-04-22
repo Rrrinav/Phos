@@ -44,8 +44,13 @@ void Semantic_checker::hoist_globals(const std::vector<ast::Stmt_id> &statements
             env.functions[fn->name] = types::Function_type_data{stmt_id};
 
         } else if (auto *model = std::get_if<ast::Model_stmt>(&node)) {
-            types::Model_type_data m_data;
+            std::vector<std::pair<std::string, types::Type_id>> tt_fields;
+            for (const auto &field : model->fields) {
+                tt_fields.push_back({field.name, field.type});
+            }
+            env.global_types[model->name] = env.tt.model(model->name, tt_fields);
 
+            types::Model_type_data m_data;
             for (const auto &field : model->fields) {
                 if (!field.default_value.is_null()) {
                     m_data.field_defaults[field.name] = field.default_value;
@@ -66,21 +71,26 @@ void Semantic_checker::hoist_globals(const std::vector<ast::Stmt_id> &statements
                     }
                 }
             }
-
             env.model_data[model->name] = std::move(m_data);
-        } else if (auto *un = std::get_if<ast::Union_stmt>(&node)) {
-            types::Union_type_data u_data;
 
+        } else if (auto *un = std::get_if<ast::Union_stmt>(&node)) {
+            std::vector<std::pair<std::string, types::Type_id>> tt_variants;
+            for (const auto &variant : un->variants) {
+                tt_variants.push_back({variant.name, variant.type});
+            }
+            env.global_types[un->name] = env.tt.union_(un->name, tt_variants);
+
+            types::Union_type_data u_data;
             for (const auto &variant : un->variants) {
                 if (!variant.default_value.is_null()) {
                     u_data.variant_defaults[variant.name] = variant.default_value;
                 }
             }
-
             env.union_data[un->name] = std::move(u_data);
+
         } else if (auto *en = std::get_if<ast::Enum_stmt>(&node)) {
-            // Register enum. (Variants are typically evaluated/populated
-            // during the second pass or a dedicated type-resolution pass)
+            env.global_types[en->name] = env.tt.enum_(en->name, en->base_type);
+
             types::Enum_type_data e_data;
             env.enum_data[en->name] = std::move(e_data);
         }

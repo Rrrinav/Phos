@@ -1,5 +1,7 @@
 #include "type.hpp"
 
+#include <print>
+
 namespace phos::types {
 
 Type_table::Type_table()
@@ -136,6 +138,9 @@ Type_id Type_table::model(const std::string &name, const std::vector<std::pair<s
     Model_type m;
     m.name = name;
     m.fields = fields;
+    for (uint32_t i = 0; i < fields.size(); ++i) {
+        m.field_indices[fields[i].first] = i;
+    }
     Type_id id{(uint32_t)types_.size()};
     types_.push_back(Type{m});
     if (!name.empty()) {
@@ -154,6 +159,21 @@ Type_id Type_table::unresolved(const std::string &name)
     Type_id id{(uint32_t)types_.size()};
     types_.push_back(Type{Unresolved_type{name}});
     return id;
+}
+
+std::optional<uint32_t> Type_table::get_model_field_index(Type_id id, const std::string &field_name) const
+{
+    const Type &t = get(id);
+
+    if (t.is<Model_type>()) {
+        const auto &model = t.as<Model_type>();
+        auto it = model.field_indices.find(field_name);
+        if (it != model.field_indices.end()) {
+            return it->second;
+        }
+    }
+
+    return std::nullopt;
 }
 
 const Type &Type_table::get(Type_id id) const

@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <variant>
 #include <vector>
+#include <optional>
 
 namespace phos::types {
 
@@ -149,6 +150,8 @@ public:
 
     // query
     const Type &get(Type_id id) const;
+
+    std::optional<uint32_t> get_model_field_index(Type_id id, const std::string &field_name) const;
 
     bool is_primitive(Type_id id) const;
     bool is_array(Type_id id) const;

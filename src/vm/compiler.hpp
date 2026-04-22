@@ -92,6 +92,9 @@ public:
     void compile_stmt_node(const ast::For_stmt &stmt);
     void compile_stmt_node(const ast::Function_stmt &stmt);
     void compile_stmt_node(const ast::Return_stmt &stmt);
+    void compile_stmt_node(const ast::Model_stmt &stmt);
+    void compile_stmt_node(const ast::Union_stmt &stmt);
+    void compile_stmt_node(const ast::Enum_stmt &stmt);
 
     // Expression compilation visitors. Returns the register holding the result.
     uint8_t compile_expr(ast::Expr_id expr_id);
@@ -105,6 +108,9 @@ public:
     uint8_t compile_expr_node(const ast::Array_literal_expr &expr);
     uint8_t compile_expr_node(const ast::Array_access_expr &expr);
     uint8_t compile_expr_node(const ast::Array_assignment_expr &expr);
+    uint8_t compile_expr_node(const ast::Field_access_expr &expr);
+    uint8_t compile_expr_node(const ast::Model_literal_expr &expr);
+    uint8_t compile_expr_node(const ast::Field_assignment_expr &expr);
 
 public:
     struct Local

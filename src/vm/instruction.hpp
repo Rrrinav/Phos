@@ -83,6 +83,11 @@ enum class Opcode : uint8_t {
     Load_index,    // R[dst] = R[src_a][ R[src_b] ]
     Store_index,   // R[dst][R[src_a]] = R[src_b]
 
+    // Model
+    Make_model,    // R[dst] = Model( R[src_a] ... R[src_a + src_b - 1] )
+    Load_field,    // R[dst] = R[src_a].field[ src_b ]
+    Store_field,   // R[dst].field[ src_a ] = R[src_b]
+
     None
 };
 

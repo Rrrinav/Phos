@@ -63,6 +63,9 @@ std::string phos::vm::opcode_to_string(Opcode code)
         case Opcode::Unwrap_or:     return "Unwrap_or";
         case Opcode::Call:          return "Call";
         case Opcode::Return:        return "Return";
+        case Opcode::Make_array:    return "Make_array";
+        case Opcode::Load_index:    return "Load_index";
+        case Opcode::Store_index:   return "Store_index";
         case Opcode::None:          return "None";
     }
     return std::format("UNKNOWN_{}", static_cast<uint8_t>(code));
@@ -128,6 +131,9 @@ phos::vm::Opcode phos::vm::string_to_opcode(std::string code)
     if (code == "Unwrap_or")     return Opcode::Unwrap_or;
     if (code == "Call")          return Opcode::Call;
     if (code == "Return")        return Opcode::Return;
+    if (code == "Make_array")    return Opcode::Make_array;
+    if (code == "Load_index")    return Opcode::Load_index;
+    if (code == "Store_index")   return Opcode::Store_index;
     if (code == "None")          return Opcode::None;
     return Opcode::Return;
 }

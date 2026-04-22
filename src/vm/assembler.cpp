@@ -201,6 +201,21 @@ std::string Assembler::disassemble_instruction(Instruction inst, const Closure_d
         comment = std::format("%r{}[%r{}] = %r{}", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
         break;
 
+    case Opcode::Make_model:
+        asm_str = std::format("{:<14} %r{}, %r{}, fields: {}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        comment = std::format("%r{} = Model(%r{} ... %r{})", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_a + inst.rrr.src_b - 1);
+        break;
+
+    case Opcode::Load_field:
+        asm_str = std::format("{:<14} %r{}, %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        comment = std::format("%r{} = %r{}.field[%r{}]", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        break;
+
+    case Opcode::Store_field:
+        asm_str = std::format("{:<14} %r{}, %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        comment = std::format("%r{}.field[%r{}] = %r{}", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        break;
+
     case Opcode::Add_i64:
     case Opcode::Add_u64:
     case Opcode::Add_f64:
