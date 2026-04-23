@@ -82,6 +82,17 @@ Value Value::make_closure_native(
     return Value(closure, depth);
 }
 
+Value Value::make_iterator(mem::Arena &arena, uint8_t depth)
+{
+    Iterator_data *iter = arena.allocate<Iterator_data>();
+    new (iter) Iterator_data();
+
+    // We don't initialize the specific union state here because
+    // the Virtual Machine's Make_iter opcode handles populating it!
+
+    return Value(iter, depth);
+}
+
 // Numeric Getters with Implicit Upcasting
 int64_t Value::as_int() const
 {

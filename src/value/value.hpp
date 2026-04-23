@@ -250,6 +250,7 @@ public:
         Native_fn func,
         uint8_t depth = 0
     );
+    static Value make_iterator(mem::Arena &arena, uint8_t depth = 0);
 
     Value() = default;
     Value(std::nullptr_t)
@@ -460,6 +461,21 @@ public:
     bool operator!=(const Value &other) const
     {
         return !(*this == other);
+    }
+    Value wrap_optional(uint8_t added_depth = 1) const
+    {
+
+        Value res = *this;
+        res.option_depth_ += added_depth;
+        return res;
+    }
+    Value unwrap_optional() const
+    {
+        Value res = *this;
+        if (res.option_depth_ > 0) {
+            res.option_depth_ -= 1;
+        }
+        return res;
     }
 };
 

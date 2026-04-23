@@ -80,6 +80,7 @@ public:
     vm::Opcode cast_opcode_for(types::Type_id type) const;
     vm::Opcode arithmetic_opcode_for(lex::TokenType op, types::Type_id type) const;
     vm::Opcode comparison_opcode_for(lex::TokenType op, types::Type_id left_type, types::Type_id right_type) const;
+    vm::Opcode bitwise_opcode_for(lex::TokenType op, types::Type_id type) const;
 
     // Statement compilation visitors
     void compile_stmt(ast::Stmt_id stmt_id);
@@ -117,6 +118,8 @@ public:
     uint8_t compile_expr_node(const ast::Field_assignment_expr &expr);
     uint8_t compile_expr_node(const ast::Enum_member_expr &expr);
     uint8_t compile_expr_node(const ast::Static_path_expr &expr);
+    uint8_t compile_expr_node(const ast::Range_expr &expr);
+    void compile_stmt_node(const ast::For_in_stmt &stmt);
 
 public:
     struct Local

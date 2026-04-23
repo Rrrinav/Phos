@@ -124,7 +124,12 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         case Opcode::Sub_i64:
         case Opcode::Mul_i64:
         case Opcode::Div_i64:
-        case Opcode::Mod_i64: {
+        case Opcode::Mod_i64:
+        case Opcode::BitAnd_i64:
+        case Opcode::BitOr_i64:
+        case Opcode::BitXor_i64:
+        case Opcode::Shl_i64:
+        case Opcode::Shr_i64: {
             /* R[dst] := R[src_a] OP R[src_b] */
             int64_t a = registers[base + inst.rrr.src_a].as_int();
             int64_t b = registers[base + inst.rrr.src_b].as_int();
@@ -142,7 +147,13 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         case Opcode::Sub_u64:
         case Opcode::Mul_u64:
         case Opcode::Div_u64:
-        case Opcode::Mod_u64: {
+        case Opcode::Mod_u64:
+        case Opcode::BitAnd_u64:
+        case Opcode::BitOr_u64:
+        case Opcode::BitXor_u64:
+        case Opcode::Shl_u64:
+        case Opcode::Shr_u64: {
+
             /* R[dst] := R[src_a] OP R[src_b] */
             uint64_t a = registers[base + inst.rrr.src_a].as_uint();
             uint64_t b = registers[base + inst.rrr.src_b].as_uint();
@@ -506,6 +517,77 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             break;
         }
 
+        case Opcode::Eq_str: {
+            Value left = registers[base + inst.rrr.src_a];
+            Value right = registers[base + inst.rrr.src_b];
+            bool match = (left.as_string() == right.as_string());
+            registers[base + inst.rrr.dst] = Value(match);
+            break;
+        }
+        case Opcode::Neq_str: {
+            Value left = registers[base + inst.rrr.src_a];
+            Value right = registers[base + inst.rrr.src_b];
+            bool match = (left.as_string() != right.as_string());
+            registers[base + inst.rrr.dst] = Value(match);
+            break;
+        }
+        case Opcode::Len: {
+            Value val = registers[base + inst.rrr.src_a];
+            if (val.is_string()) {
+                registers[base + inst.rrr.dst] = Value(static_cast<uint64_t>(val.as_string_data()->length));
+            } else if (val.is_array()) {
+                registers[base + inst.rrr.dst] = Value(static_cast<uint64_t>(val.as_array()->count));
+            } else {
+                panic("Attempted to get length of an unsupported type at IP: {}", ip - 1);
+            }
+            break;
+        }
+        case Opcode::Cast_str_to_arr: {
+            Value str_val = registers[base + inst.rrr.src_a];
+            if (!str_val.is_string()) {
+                panic("Expected a string for cast to byte array at IP: {}", ip - 1);
+            }
+
+            String_data *str = str_val.as_string_data();
+            bool is_signed = (inst.rrr.src_b == 1);
+
+            // Allocate a new array on the Arena
+            Value arr_val = Value::make_array(arena, str->length, 0);
+            Array_data *arr = arr_val.as_array();
+            arr->count = str->length;
+
+            for (size_t i = 0; i < str->length; ++i) {
+                if (is_signed) {
+                    arr->elements[i] = Value(static_cast<int64_t>(static_cast<int8_t>(str->chars[i])));
+                } else {
+                    arr->elements[i] = Value(static_cast<uint64_t>(static_cast<uint8_t>(str->chars[i])));
+                }
+            }
+
+            registers[base + inst.rrr.dst] = arr_val;
+            break;
+        }
+
+        case Opcode::Cast_arr_to_str: {
+            Value arr_val = registers[base + inst.rrr.src_a];
+            if (!arr_val.is_array()) {
+                panic("Expected an array for cast to string at IP: {}", ip - 1);
+            }
+
+            Array_data *arr = arr_val.as_array();
+            std::string s;
+            s.reserve(arr->count);
+
+            for (size_t i = 0; i < arr->count; ++i) {
+                // Grab the lower 8 bits and push them directly into the string buffer
+                s.push_back(static_cast<char>(arr->elements[i].as_int()));
+            }
+
+            // Allocate the new string on the Arena
+            registers[base + inst.rrr.dst] = Value::make_string(arena, s);
+            break;
+        }
+
         case Opcode::Make_array: {
             uint8_t base_reg = inst.rrr.src_a;
             uint8_t count = inst.rrr.src_b;
@@ -525,21 +607,28 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
 
         case Opcode::Load_index: {
-            Value arr_val = registers[base + inst.rrr.src_a];
+            Value collection_val = registers[base + inst.rrr.src_a];
             Value idx_val = registers[base + inst.rrr.src_b];
-
-            if (!arr_val.is_array()) {
-                panic("Attempted to index a non-array value at IP: {}", ip - 1);
-            }
-
-            Array_data *arr = arr_val.as_array();
             int64_t index = idx_val.as_int();
 
-            if (index < 0 || index >= static_cast<int64_t>(arr->count)) {
-                panic("Array index out of bounds (index: {}, size: {}) at IP: {}", index, arr->count, ip - 1);
-            }
+            if (collection_val.is_array()) {
+                Array_data *arr = collection_val.as_array();
+                if (index < 0 || index >= static_cast<int64_t>(arr->count)) {
+                    panic("Array index out of bounds (index: {}, size: {}) at IP: {}", index, arr->count, ip - 1);
+                }
+                registers[base + inst.rrr.dst] = arr->elements[index];
 
-            registers[base + inst.rrr.dst] = arr->elements[index];
+            } else if (collection_val.is_string()) {
+                String_data *str = collection_val.as_string_data();
+                if (index < 0 || index >= static_cast<int64_t>(str->length)) {
+                    panic("String index out of bounds (index: {}, size: {}) at IP: {}", index, str->length, ip - 1);
+                }
+                // Extract 1 character and allocate a new string for it
+                registers[base + inst.rrr.dst] = Value::make_string(arena, std::string_view(&str->chars[index], 1));
+
+            } else {
+                panic("Attempted to index a non-collection at IP: {}", ip - 1);
+            }
             break;
         }
 
@@ -649,7 +738,180 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             registers[base + inst.rrr.dst] = *(union_val.as_union()->payload);
             break;
         }
+
+        case Opcode::Wrap_option: {
+            Value val = registers[base + inst.rrr.src_a];
+            registers[base + inst.rrr.dst] = val.wrap_optional(inst.rrr.src_b);
+            break;
+        }
+        case Opcode::Unwrap_option: {
+            Value val = registers[base + inst.rrr.src_a];
+            if (val.is_nil()) {
+                panic("Attempted to unwrap a nil value at IP: {}", ip - 1);
+            }
+            registers[base + inst.rrr.dst] = val.unwrap_optional();
+            break;
+        }
+        case Opcode::Test_nil: {
+            Value val = registers[base + inst.rrr.src_a];
+            registers[base + inst.rrr.dst] = Value(val.is_nil());
+            break;
+        }
+        case Opcode::Iter_is_valid: {
+            Value iter_val = registers[base + inst.rrr.src_a];
+            Iterator_data *iter = iter_val.as_iterator();
+
+            bool valid = false;
+            switch (iter->state_type) {
+            case Iterator_data::State_type::Empty:
+                valid = false;
+                break;
+            case Iterator_data::State_type::Singleton:
+                valid = (iter->cursor == 0);
+                break;
+            case Iterator_data::State_type::Interval:
+                if (iter->state.interval.inclusive) {
+                    valid = (iter->cursor <= iter->state.interval.end && iter->cursor >= iter->state.interval.start);
+                } else {
+                    valid = (iter->cursor < iter->state.interval.end && iter->cursor >= iter->state.interval.start);
+                }
+                break;
+            case Iterator_data::State_type::Array:
+                valid = (iter->cursor >= 0 && iter->cursor < static_cast<int64_t>(iter->state.array->count));
+                break;
+            case Iterator_data::State_type::String:
+                valid = (iter->cursor >= 0 && iter->cursor < static_cast<int64_t>(iter->state.string->length));
+                break;
+            }
+            registers[base + inst.rrr.dst] = Value(valid);
+            break;
+        }
+
+        case Opcode::Iter_step: {
+            Value iter_val = registers[base + inst.rrr.src_a];
+            Iterator_data *iter = iter_val.as_iterator();
+
+            // 1. Advance the cursor first (moving from -1 to 0 on the first loop)
+            iter->cursor++;
+
+            // 2. Check if we are still within bounds
+            bool valid = false;
+            switch (iter->state_type) {
+            case Iterator_data::State_type::Empty:
+                valid = false;
+                break;
+            case Iterator_data::State_type::Singleton:
+                valid = (iter->cursor == 0);
+                break;
+            case Iterator_data::State_type::Interval:
+                if (iter->state.interval.inclusive) {
+                    valid = (iter->cursor <= iter->state.interval.end);
+                } else {
+                    valid = (iter->cursor < iter->state.interval.end);
+                }
+                break;
+            case Iterator_data::State_type::Array:
+                valid = (iter->cursor < static_cast<int64_t>(iter->state.array->count));
+                break;
+            case Iterator_data::State_type::String:
+                valid = (iter->cursor < static_cast<int64_t>(iter->state.string->length));
+                break;
+            }
+
+            // 3. Return true/false to control the loop
+            registers[base + inst.rrr.dst] = Value(valid);
+            break;
+        }
+
+        case Opcode::Iter_get: {
+            Value iter_val = registers[base + inst.rrr.src_a];
+            Iterator_data *iter = iter_val.as_iterator();
+
+            // Cursor is guaranteed to be valid here because Iter_next checked it!
+            switch (iter->state_type) {
+            case Iterator_data::State_type::Empty:
+                panic("Attempted to get value from empty iterator.");
+            case Iterator_data::State_type::Singleton:
+                registers[base + inst.rrr.dst] = *(iter->state.singleton_val);
+                break;
+            case Iterator_data::State_type::Interval:
+                registers[base + inst.rrr.dst] = Value(iter->cursor);
+                break;
+            case Iterator_data::State_type::Array:
+                registers[base + inst.rrr.dst] = iter->state.array->elements[iter->cursor];
+                break;
+            case Iterator_data::State_type::String:
+                registers[base + inst.rrr.dst] = Value::make_string(arena, std::string_view(&iter->state.string->chars[iter->cursor], 1));
+                break;
+            }
+            break;
+        }
+
+        case Opcode::Make_range_ex:
+        case Opcode::Make_range_in: {
+            int64_t start = registers[base + inst.rrr.src_a].as_int();
+            int64_t end = registers[base + inst.rrr.src_b].as_int();
+
+            Value iter_val = Value::make_iterator(arena);
+            Iterator_data *iter = iter_val.as_iterator();
+
+            iter->state_type = Iterator_data::State_type::Interval;
+            iter->state.interval.start = start;
+            iter->state.interval.end = end;
+            iter->state.interval.inclusive = (inst.rrr.op == Opcode::Make_range_in);
+            iter->cursor = start;
+
+            registers[base + inst.rrr.dst] = iter_val;
+            break;
+        }
+
+        case Opcode::Make_iter: {
+            Value collection = registers[base + inst.rrr.src_a];
+
+            if (collection.is_iterator()) {
+                registers[base + inst.rrr.dst] = collection;
+                break;
+            }
+
+            Value iter_val = Value::make_iterator(arena);
+            Iterator_data *iter = iter_val.as_iterator();
+
+            iter->cursor = -1;
+
+            if (collection.is_array()) {
+                iter->state_type = Iterator_data::State_type::Array;
+                iter->state.array = collection.as_array();
+            } else if (collection.is_string()) {
+                iter->state_type = Iterator_data::State_type::String;
+                iter->state.string = collection.as_string_data();
+            } else if (collection.depth() > 0) {
+                Value unwrapped = collection.unwrap_optional();
+                if (unwrapped.is_nil()) {
+                    iter->state_type = Iterator_data::State_type::Empty;
+                } else {
+                    iter->state_type = Iterator_data::State_type::Singleton;
+                    iter->state.singleton_val = arena.allocate<Value>();
+                    *(iter->state.singleton_val) = unwrapped;
+                }
+            } else if (collection.is_nil()) {
+                panic("Cannot iterate over a nil value at IP: {}", ip - 1);
+            } else {
+                iter->state_type = Iterator_data::State_type::Singleton;
+                iter->state.singleton_val = arena.allocate<Value>();
+                *(iter->state.singleton_val) = collection;
+            }
+
+            registers[base + inst.rrr.dst] = iter_val;
+            break;
+        }
+
+        case Opcode::Panic: {
+            Value msg_val = registers[base + inst.rrr.src_a];
+            panic("Panic at IP {}: {}", ip - 1, msg_val.as_string());
+            break;
+        }
         default: {
+
             /* ??? */
             panic("Unrecognized or unimplemented Opcode: {}", opcode_to_string(inst.rrr.op));
             break;
@@ -671,6 +933,16 @@ auto Virtual_machine::bini64_op(int64_t a, int64_t b, Opcode op) -> int64_t
         return a / b;
     case Opcode::Mod_i64:
         return a % b;
+    case Opcode::BitAnd_i64:
+        return a & b;
+    case Opcode::BitOr_i64:
+        return a | b;
+    case Opcode::BitXor_i64:
+        return a ^ b;
+    case Opcode::Shl_i64:
+        return a << b;
+    case Opcode::Shr_i64:
+        return a >> b;
     default:
         std::unreachable();
     }
@@ -689,6 +961,16 @@ auto Virtual_machine::binu64_op(uint64_t a, uint64_t b, Opcode op) -> uint64_t
         return a / b;
     case Opcode::Mod_u64:
         return a % b;
+    case Opcode::BitAnd_u64:
+        return a & b;
+    case Opcode::BitOr_u64:
+        return a | b;
+    case Opcode::BitXor_u64:
+        return a ^ b;
+    case Opcode::Shl_u64:
+        return a << b;
+    case Opcode::Shr_u64:
+        return a >> b;
     default:
         std::unreachable();
     }

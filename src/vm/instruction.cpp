@@ -45,6 +45,26 @@ std::string phos::vm::opcode_to_string(Opcode code)
         return "Mod_u64";
     case Opcode::Mod_f64:
         return "Mod_f64";
+    case Opcode::BitAnd_i64:
+        return "BitAnd_i64";
+    case Opcode::BitOr_i64:
+        return "BitOr_i64";
+    case Opcode::BitXor_i64:
+        return "BitXor_i64";
+    case Opcode::Shl_i64:
+        return "Shl_i64";
+    case Opcode::Shr_i64:
+        return "Shr_i6";
+    case Opcode::BitAnd_u64:
+        return "BitAnd_u64";
+    case Opcode::BitOr_u64:
+        return "BitOr_u64";
+    case Opcode::BitXor_u64:
+        return "BitXor_u64";
+    case Opcode::Shl_u64:
+        return "Shl_u64";
+    case Opcode::Shr_u64:
+        return "Shr_u6";
     case Opcode::Cast_i8:
         return "Cast_i8";
     case Opcode::Cast_i16:

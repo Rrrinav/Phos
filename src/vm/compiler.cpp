@@ -133,12 +133,23 @@ Closure_data Compiler::compile(const std::vector<ast::Stmt_id> &statements)
         if (stmt_id.is_null()) {
             continue;
         }
-
         const auto &node = tree.get(stmt_id).node;
+
         if (std::holds_alternative<ast::Function_stmt>(node)) {
             const auto &fn_stmt = std::get<ast::Function_stmt>(node);
-            uint16_t reserved_idx = add_constant(Value(nullptr));
-            function_locations_[fn_stmt.name] = reserved_idx;
+            function_locations_[fn_stmt.name] = add_constant(Value(nullptr));
+
+        } else if (std::holds_alternative<ast::Model_stmt>(node)) {
+            const auto &model_stmt = std::get<ast::Model_stmt>(node);
+            for (auto method_id : model_stmt.methods) {
+                if (method_id.is_null()) {
+                    continue;
+                }
+                if (auto *m_fn = std::get_if<ast::Function_stmt>(&tree.get(method_id).node)) {
+                    // This is now User::p!
+                    function_locations_[m_fn->name] = add_constant(Value(nullptr));
+                }
+            }
         }
     }
 
@@ -284,6 +295,14 @@ vm::Opcode Compiler::arithmetic_opcode_for(lex::TokenType op, types::Type_id typ
 
 vm::Opcode Compiler::comparison_opcode_for(lex::TokenType op, types::Type_id left_type, types::Type_id right_type) const
 {
+    if (env.tt.is_string(left_type) && env.tt.is_string(right_type)) {
+        if (op == lex::TokenType::Equal) {
+            return vm::Opcode::Eq_str;
+        }
+        if (op == lex::TokenType::NotEqual) {
+            return vm::Opcode::Neq_str;
+        }
+    }
     bool is_float = env.tt.is_float_primitive(left_type) || env.tt.is_float_primitive(right_type);
     bool is_unsigned = env.tt.is_unsigned_integer_primitive(left_type) && env.tt.is_unsigned_integer_primitive(right_type);
 
@@ -320,6 +339,26 @@ vm::Opcode Compiler::comparison_opcode_for(lex::TokenType op, types::Type_id lef
         return is_unsigned ? vm::Opcode::Gte_u64 : vm::Opcode::Gte_i64;
     default:
         std::println(std::cerr, "Compiler Bug: Unsupported comparison operator.");
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+vm::Opcode Compiler::bitwise_opcode_for(lex::TokenType op, types::Type_id type) const
+{
+    bool is_unsigned = env.tt.is_unsigned_integer_primitive(type);
+    switch (op) {
+    case lex::TokenType::BitAnd:
+        return is_unsigned ? vm::Opcode::BitAnd_u64 : vm::Opcode::BitAnd_i64;
+    case lex::TokenType::Pipe:
+        return is_unsigned ? vm::Opcode::BitOr_u64 : vm::Opcode::BitOr_i64;
+    case lex::TokenType::BitXor:
+        return is_unsigned ? vm::Opcode::BitXor_u64 : vm::Opcode::BitXor_i64;
+    case lex::TokenType::BitLShift:
+        return is_unsigned ? vm::Opcode::Shl_u64 : vm::Opcode::Shl_i64;
+    case lex::TokenType::BitRshift:
+        return is_unsigned ? vm::Opcode::Shr_u64 : vm::Opcode::Shr_i64;
+    default:
+        std::println(std::cerr, "Compiler Bug: Unsupported bitwise operator.");
         std::exit(EXIT_FAILURE);
     }
 }
@@ -363,8 +402,11 @@ void Compiler::compile_stmt(ast::Stmt_id stmt_id)
                 compile_stmt_node(s);
             } else if constexpr (std::is_same_v<T, ast::Match_stmt>) {
                 compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::For_in_stmt>) {
+                compile_stmt_node(s);
             } else {
-                std::println(std::cerr, "Unimplemented stmt node");
+                auto l = ast::get_loc(s);
+                std::println(std::cerr, "{}:{} Unimplemented stmt node", l.l, l.c);
             }
         },
         tree.get(stmt_id).node);
@@ -771,7 +813,7 @@ uint8_t Compiler::compile_expr(ast::Expr_id expr_id)
         return 0;
     }
 
-    return std::visit(
+    std::uint8_t result_reg = std::visit(
         [this](const auto &e) -> uint8_t {
             using T = std::decay_t<decltype(e)>;
 
@@ -793,6 +835,12 @@ uint8_t Compiler::compile_expr(ast::Expr_id expr_id)
                 return compile_expr_node(e);
             } else if constexpr (std::is_same_v<T, ast::Static_path_expr>) {
                 return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Array_literal_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Array_access_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Array_assignment_expr>) {
+                return compile_expr_node(e);
             } else if constexpr (std::is_same_v<T, ast::Model_literal_expr>) {
                 return compile_expr_node(e);
             } else if constexpr (std::is_same_v<T, ast::Anon_model_literal_expr>) {
@@ -805,12 +853,23 @@ uint8_t Compiler::compile_expr(ast::Expr_id expr_id)
                 return compile_expr_node(e);
             } else if constexpr (std::is_same_v<T, ast::Unary_expr>) {
                 return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Range_expr>) {
+                return compile_expr_node(e);
             } else {
-                std::println("Unimplemented expression node");
+                auto l = ast::get_loc(e);
+                std::println("{}:{} Unimplemented expression node", l.l, l.c);
             }
             return 0;
         },
         tree.get(expr_id).node);
+
+    uint8_t wraps = tree.get(expr_id).auto_wrap_depth;
+    if (wraps > 0) {
+        uint8_t wrapped_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Wrap_option, wrapped_reg, result_reg, wraps));
+        return wrapped_reg;
+    }
+    return result_reg;
 }
 
 /*
@@ -950,6 +1009,18 @@ uint8_t Compiler::compile_expr_node(const ast::Static_path_expr &expr)
         return target_reg;
     }
 
+    if (env.tt.is_model(base_type)) {
+        auto &model_name = std::get<types::Model_type>(env.tt.get(base_type).data).name;
+        std::string global_func_name = model_name + "::" + expr.member.lexeme;
+
+        if (function_locations_.contains(global_func_name)) {
+            uint8_t target_reg = allocate_register();
+            uint16_t const_idx = function_locations_[global_func_name];
+            emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
+            return target_reg;
+        }
+    }
+
     std::println(std::cerr, "Compiler Bug: Static path expressions are currently only implemented for Enums.");
     std::exit(EXIT_FAILURE);
     return 0;
@@ -958,6 +1029,21 @@ uint8_t Compiler::compile_expr_node(const ast::Static_path_expr &expr)
 uint8_t Compiler::compile_expr_node(const ast::Cast_expr &expr)
 {
     uint8_t value_reg = compile_expr(expr.expression);
+    types::Type_id source_type = ast::get_type(tree.get(expr.expression).node);
+
+    if (env.tt.is_string(source_type) && env.tt.is_array(expr.target_type)) {
+        uint8_t dest_reg = allocate_register();
+        // src_b flag: 1 if it's an i8 array, 0 if it's a u8 array
+        uint8_t is_signed = (env.tt.get_array_elem(expr.target_type) == env.tt.get_i8()) ? 1 : 0;
+        emit(vm::Instruction::make_rrr(vm::Opcode::Cast_str_to_arr, dest_reg, value_reg, is_signed));
+        return dest_reg;
+    }
+
+    if (env.tt.is_array(source_type) && env.tt.is_string(expr.target_type)) {
+        uint8_t dest_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Cast_arr_to_str, dest_reg, value_reg, 0));
+        return dest_reg;
+    }
 
     if (!env.tt.is_numeric_primitive(expr.target_type)) {
         std::println(
@@ -1106,6 +1192,14 @@ uint8_t Compiler::compile_expr_node(const ast::Binary_expr &expr)
         opcode = comparison_opcode_for(expr.op, left_type, right_type);
         break;
     }
+    case lex::TokenType::BitAnd:
+    case lex::TokenType::Pipe:
+    case lex::TokenType::BitXor:
+    case lex::TokenType::BitLShift:
+    case lex::TokenType::BitRshift: {
+        opcode = bitwise_opcode_for(expr.op, expr.type);
+        break;
+    }
     default:
         std::println(std::cerr, "Unsupported binary operator in compiler");
         std::exit(EXIT_FAILURE);
@@ -1151,6 +1245,14 @@ uint8_t Compiler::compile_expr_node(const ast::Unary_expr &expr)
 
 uint8_t Compiler::compile_expr_node(const ast::Call_expr &expr)
 {
+    if (auto *var_callee = std::get_if<ast::Variable_expr>(&tree.get(expr.callee).node)) {
+        if (var_callee->name == "len") {
+            uint8_t arg_reg = compile_expr(expr.arguments[0].value);
+            uint8_t dst_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Len, dst_reg, arg_reg, 0));
+            return dst_reg;
+        }
+    }
     // 1. Evaluate callee
     uint8_t callee_eval_reg = compile_expr(expr.callee);
 
@@ -1286,9 +1388,140 @@ uint8_t Compiler::compile_expr_node(const ast::Anon_model_literal_expr &expr)
 uint8_t Compiler::compile_expr_node(const ast::Method_call_expr &expr)
 {
     types::Type_id obj_type = ast::get_type(tree.get(expr.object).node);
+    if (env.tt.is_optional(obj_type)) {
+        uint8_t obj_reg = compile_expr(expr.object);
+
+        if (expr.method_name == "is_nil") {
+            uint8_t dst_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, dst_reg, obj_reg, 0));
+            return dst_reg;
+        }
+        if (expr.method_name == "is_val" || expr.method_name == "has_val") {
+            uint8_t temp_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, temp_reg, obj_reg, 0));
+            uint8_t dst_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Not, dst_reg, temp_reg, 0));
+            return dst_reg;
+        }
+        if (expr.method_name == "get") {
+            if (expr.arguments.empty()) {
+                uint8_t dst_reg = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, dst_reg, obj_reg, 0));
+                return dst_reg;
+            } else {
+                types::Type_id arg_type = ast::get_type(tree.get(expr.arguments[0].value).node);
+
+                if (env.tt.is_string(arg_type)) {
+                    uint8_t is_nil_reg = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, is_nil_reg, obj_reg, 0));
+
+                    // Jump to OK block if NOT nil
+                    size_t jump_ok_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, is_nil_reg, 0));
+
+                    // .panic_block:
+                    uint8_t msg_reg = compile_expr(expr.arguments[0].value);
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Panic, 0, msg_reg, 0));
+
+                    // .ok_block:
+                    uint16_t ok_target = static_cast<uint16_t>(current_block().instructions.size());
+                    current_block().instructions[jump_ok_idx].ri.imm = ok_target;
+
+                    uint8_t dst_reg = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, dst_reg, obj_reg, 0));
+                    return dst_reg;
+
+                } else if (env.tt.is_function(arg_type)) {
+                    uint8_t dst_reg = allocate_register();
+                    uint8_t is_nil_reg = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, is_nil_reg, obj_reg, 0));
+
+                    // Jump to unwrap block if NOT nil
+                    size_t jump_unwrap_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, is_nil_reg, 0));
+
+                    // .closure_block:
+                    uint8_t closure_reg = compile_expr(expr.arguments[0].value);
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Call, dst_reg, closure_reg, 0));
+                    size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+
+                    // .unwrap_block:
+                    uint16_t unwrap_target = static_cast<uint16_t>(current_block().instructions.size());
+                    current_block().instructions[jump_unwrap_idx].ri.imm = unwrap_target;
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, dst_reg, obj_reg, 0));
+
+                    // .end:
+                    uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
+                    current_block().instructions[jump_end_idx].i.imm = end_target;
+
+                    return dst_reg;
+                }
+            }
+        }
+        if (expr.method_name == "or_else") {
+            uint8_t dst_reg = allocate_register();
+            uint8_t is_nil_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, is_nil_reg, obj_reg, 0));
+
+            // Jump over the closure call if NOT nil
+            size_t jump_unwrap_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, is_nil_reg, 0));
+
+            // .closure_block:
+            uint8_t closure_reg = compile_expr(expr.arguments[0].value);
+            emit(vm::Instruction::make_rrr(vm::Opcode::Call, dst_reg, closure_reg, 0));
+            size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+
+            // .unwrap_block:
+            uint16_t unwrap_target = static_cast<uint16_t>(current_block().instructions.size());
+            current_block().instructions[jump_unwrap_idx].ri.imm = unwrap_target;
+            emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, dst_reg, obj_reg, 0));
+
+            // .end:
+            uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
+            current_block().instructions[jump_end_idx].i.imm = end_target;
+
+            return dst_reg;
+        }
+
+        if (expr.method_name == "map") {
+            uint8_t dst_reg = allocate_register();
+            uint8_t is_nil_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, is_nil_reg, obj_reg, 0));
+
+            size_t jump_call_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, is_nil_reg, 0));
+
+            // .is_nil_block:
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, dst_reg, obj_reg, 0));
+            size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+
+            // .call_block:
+            uint16_t call_target = static_cast<uint16_t>(current_block().instructions.size());
+            current_block().instructions[jump_call_idx].ri.imm = call_target;
+
+            uint8_t unwrapped_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, unwrapped_reg, obj_reg, 0));
+
+            uint8_t closure_reg = compile_expr(expr.arguments[0].value);
+
+            // Setup ABI for call: base_reg = closure, base_reg+1 = unwrapped arg
+            uint8_t call_base_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base_reg, closure_reg, 0));
+            uint8_t arg_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_reg, unwrapped_reg, 0));
+
+            uint8_t res_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Call, res_reg, call_base_reg, 1));
+
+            emit(vm::Instruction::make_rrr(vm::Opcode::Wrap_option, dst_reg, res_reg, 1));
+
+            // .end:
+            uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
+            current_block().instructions[jump_end_idx].i.imm = end_target;
+
+            return dst_reg;
+        }
+    }
 
     // --- UNION .has() INTERCEPT ---
-    if (env.tt.is_union(obj_type) && expr.method_name == "has") {
+    if (env.tt.is_union(obj_type) && (expr.method_name == "has" || expr.method_name == "get")) {
         uint8_t obj_reg = compile_expr(expr.object);
 
         std::string variant_str;
@@ -1303,9 +1536,103 @@ uint8_t Compiler::compile_expr_node(const ast::Method_call_expr &expr)
         uint16_t str_idx = add_constant(Value::make_string(arena, variant_str));
         emit(vm::Instruction::make_ri(vm::Opcode::Load_const, str_reg, str_idx));
 
-        uint8_t dst_reg = allocate_register();
-        emit(vm::Instruction::make_rrr(vm::Opcode::Test_union, dst_reg, obj_reg, str_reg));
-        return dst_reg;
+        if (expr.method_name == "has") {
+            uint8_t dst_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Test_union, dst_reg, obj_reg, str_reg));
+            return dst_reg;
+        } else { // get
+            uint8_t test_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Test_union, test_reg, obj_reg, str_reg));
+
+            // Jump to the panic block if the variant didn't match (FALSE)
+            size_t jump_panic_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, test_reg, 0));
+
+            // .ok_block:
+            uint8_t dst_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Load_union_payload, dst_reg, obj_reg, 0));
+            size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+
+            // .panic_block:
+            uint16_t panic_target = static_cast<uint16_t>(current_block().instructions.size());
+            current_block().instructions[jump_panic_idx].ri.imm = panic_target;
+
+            uint8_t msg_reg = allocate_register();
+            std::string err_msg = "Union variant mismatch. Expected " + variant_str;
+            uint16_t msg_idx = add_constant(Value::make_string(arena, err_msg));
+            emit(vm::Instruction::make_ri(vm::Opcode::Load_const, msg_reg, msg_idx));
+            emit(vm::Instruction::make_rrr(vm::Opcode::Panic, 0, msg_reg, 0));
+
+            // .end:
+            uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
+            current_block().instructions[jump_end_idx].i.imm = end_target;
+
+            return dst_reg;
+        }
+    }
+
+    if (env.tt.is_model(obj_type)) {
+        auto &model_name = std::get<types::Model_type>(env.tt.get(obj_type).data).name;
+        auto model_data_ptr = env.get_model(model_name);
+
+        if (model_data_ptr && model_data_ptr->methods.contains(expr.method_name)) {
+            std::string global_func_name = model_name + "::" + expr.method_name;
+
+            // 1. Load the function closure (It was globally renamed by the Checker!)
+            uint8_t func_reg = allocate_register();
+            uint16_t const_idx = function_locations_[global_func_name];
+            emit(vm::Instruction::make_ri(vm::Opcode::Load_const, func_reg, const_idx));
+
+            // 2. Evaluate arguments (The checker already placed `this` at arguments[0]!)
+            std::vector<uint8_t> arg_eval_regs;
+            for (const auto &arg : expr.arguments) {
+                arg_eval_regs.push_back(compile_expr(arg.value));
+            }
+
+            // 3. Set up contiguous ABI block
+            uint8_t call_base_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base_reg, func_reg, 0));
+
+            for (size_t i = 0; i < expr.arguments.size(); ++i) {
+                uint8_t arg_reg = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_reg, arg_eval_regs[i], 0));
+            }
+
+            uint8_t dest_reg = allocate_register();
+            uint8_t argc = static_cast<uint8_t>(expr.arguments.size());
+            emit(vm::Instruction::make_rrr(vm::Opcode::Call, dest_reg, call_base_reg, argc));
+
+            return dest_reg;
+        } else {
+            // ... fallback for closure fields ...
+            auto &model_t = std::get<types::Model_type>(env.tt.get(obj_type).data);
+            for (size_t i = 0; i < model_t.fields.size(); ++i) {
+                if (model_t.fields[i].first == expr.method_name) {
+                    uint8_t obj_reg = compile_expr(expr.object);
+                    uint8_t field_idx = static_cast<uint8_t>(i);
+                    uint8_t func_reg = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Load_field, func_reg, obj_reg, field_idx));
+
+                    std::vector<uint8_t> arg_eval_regs;
+                    for (const auto &arg : expr.arguments) {
+                        arg_eval_regs.push_back(compile_expr(arg.value));
+                    }
+
+                    uint8_t call_base_reg = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base_reg, func_reg, 0));
+
+                    for (size_t j = 0; j < expr.arguments.size(); ++j) {
+                        uint8_t arg_reg = allocate_register();
+                        emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_reg, arg_eval_regs[j], 0));
+                    }
+
+                    uint8_t dest_reg = allocate_register();
+                    uint8_t argc = static_cast<uint8_t>(expr.arguments.size());
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Call, dest_reg, call_base_reg, argc));
+
+                    return dest_reg;
+                }
+            }
+        }
     }
 
     std::println(std::cerr, "Compiler Bug: Regular Method Calls not fully implemented in Bytecode yet!");
@@ -1353,4 +1680,116 @@ uint8_t Compiler::compile_expr_node(const ast::Field_assignment_expr &expr)
 
     return value_reg;
 }
+
+uint8_t Compiler::compile_expr_node(const ast::Array_literal_expr &expr)
+{
+    // 1. Evaluate all elements into scattered temporary registers
+    std::vector<uint8_t> element_regs;
+    for (const auto &el_expr : expr.elements) {
+        element_regs.push_back(compile_expr(el_expr));
+    }
+
+    // 2. Allocate a strictly contiguous block of registers
+    uint8_t base_reg = allocate_register();
+    if (!element_regs.empty()) {
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, base_reg, element_regs[0], 0));
+        for (size_t i = 1; i < element_regs.size(); ++i) {
+            uint8_t next_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, next_reg, element_regs[i], 0));
+        }
+    }
+
+    // 3. Emit Make_array
+    uint8_t dest_reg = allocate_register();
+    uint8_t count = static_cast<uint8_t>(element_regs.size());
+    emit(vm::Instruction::make_rrr(vm::Opcode::Make_array, dest_reg, base_reg, count));
+
+    return dest_reg;
+}
+
+uint8_t Compiler::compile_expr_node(const ast::Array_access_expr &expr)
+{
+    // Evaluate array and index
+    uint8_t arr_reg = compile_expr(expr.array);
+    uint8_t idx_reg = compile_expr(expr.index);
+
+    // Emit Load_index
+    uint8_t dest_reg = allocate_register();
+    emit(vm::Instruction::make_rrr(vm::Opcode::Load_index, dest_reg, arr_reg, idx_reg));
+
+    return dest_reg;
+}
+
+uint8_t Compiler::compile_expr_node(const ast::Array_assignment_expr &expr)
+{
+    // 1. Evaluate the value being assigned
+    uint8_t value_reg = compile_expr(expr.value);
+    types::Type_id source_type = ast::get_type(tree.get(expr.value).node);
+    if (source_type != expr.type) {
+        emit_numeric_normalize(value_reg, expr.type);
+    }
+
+    // 2. Evaluate array and index
+    uint8_t arr_reg = compile_expr(expr.array);
+    uint8_t idx_reg = compile_expr(expr.index);
+
+    // 3. Emit Store_index (dst = array, src_a = index, src_b = value)
+    emit(vm::Instruction::make_rrr(vm::Opcode::Store_index, arr_reg, idx_reg, value_reg));
+
+    return value_reg;
+}
+
+uint8_t Compiler::compile_expr_node(const ast::Range_expr &expr)
+{
+    uint8_t start_reg = compile_expr(expr.start);
+    uint8_t end_reg = compile_expr(expr.end);
+
+    uint8_t dst_reg = allocate_register();
+
+    vm::Opcode opcode = expr.inclusive ? vm::Opcode::Make_range_in : vm::Opcode::Make_range_ex;
+    emit(vm::Instruction::make_rrr(opcode, dst_reg, start_reg, end_reg));
+
+    return dst_reg;
+}
+
+void Compiler::compile_stmt_node(const ast::For_in_stmt &stmt)
+{
+    auto prev_locals_size = current_ctx_->locals.size();
+
+    // 1. Evaluate and Make Iterator (starts at -1)
+    uint8_t iterable_reg = compile_expr(stmt.iterable);
+    uint8_t iter_reg = allocate_register();
+    emit(vm::Instruction::make_rrr(vm::Opcode::Make_iter, iter_reg, iterable_reg, 0));
+
+    // 2. Register loop variable
+    uint8_t loop_var_reg = allocate_register();
+    current_ctx_->locals.push_back({stmt.var_name, loop_var_reg});
+
+    uint8_t has_next_reg = allocate_register();
+
+    // --- LOOP START ---
+    uint32_t loop_start = static_cast<uint32_t>(current_block().instructions.size());
+
+    // 3. Iter_next: Advances the cursor by 1 AND returns true if it's still in bounds
+    emit(vm::Instruction::make_rrr(vm::Opcode::Iter_step, has_next_reg, iter_reg, 0));
+
+    // If it returned false, we are done!
+    size_t exit_jump_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, has_next_reg, 0));
+
+    // 4. Iter_get: Grab the value at the current cursor
+    emit(vm::Instruction::make_rrr(vm::Opcode::Iter_get, loop_var_reg, iter_reg, 0));
+
+    // 5. Execute Body
+    compile_stmt(stmt.body);
+
+    // 6. Jump back to Iter_next
+    emit(vm::Instruction::make_i(vm::Opcode::Jump, loop_start));
+
+    // --- LOOP END ---
+    uint16_t exit_target = static_cast<uint16_t>(current_block().instructions.size());
+    current_block().instructions[exit_jump_idx].ri.imm = exit_target;
+
+    current_ctx_->locals.resize(prev_locals_size);
+}
+
 } // namespace phos::vm

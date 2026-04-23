@@ -56,6 +56,7 @@ void Semantic_checker::hoist_globals(const std::vector<ast::Stmt_id> &statements
                     m_data.field_defaults[field.name] = field.default_value;
                 }
             }
+            env.model_data[model->name] = std::move(m_data);
 
             for (auto method_id : model->methods) {
                 if (method_id.is_null()) {
@@ -64,15 +65,31 @@ void Semantic_checker::hoist_globals(const std::vector<ast::Stmt_id> &statements
                 auto &m_node = tree.get(method_id).node;
 
                 if (auto *m_fn = std::get_if<ast::Function_stmt>(&m_node)) {
-                    if (m_fn->is_static) {
-                        m_data.static_methods[m_fn->name] = types::Function_type_data{method_id};
-                    } else {
-                        m_data.methods[m_fn->name] = types::Function_type_data{method_id};
+                    // 1. Inject 'this' parameter for non-static methods
+                    if (!m_fn->is_static) {
+                        ast::Function_param this_param;
+                        this_param.name = "this";
+                        this_param.type = env.global_types[model->name];
+                        this_param.is_mut = false;
+                        this_param.loc = m_fn->loc;
+                        m_fn->parameters.insert(m_fn->parameters.begin(), this_param);
                     }
+
+                    // 2. Rename globally to ModelName::MethodName
+                    auto original_name = m_fn->name;
+                    m_fn->name = model->name + "::" + m_fn->name;
+
+                    // 3. Register in Model Data
+                    if (m_fn->is_static) {
+                        env.model_data[model->name].static_methods[original_name] = types::Function_type_data{method_id};
+                    } else {
+                        env.model_data[model->name].methods[original_name] = types::Function_type_data{method_id};
+                    }
+
+                    // 4. Register as a Global Function
+                    env.functions[m_fn->name] = types::Function_type_data{method_id};
                 }
             }
-            env.model_data[model->name] = std::move(m_data);
-
         } else if (auto *un = std::get_if<ast::Union_stmt>(&node)) {
             std::vector<std::pair<std::string, types::Type_id>> tt_variants;
             for (const auto &variant : un->variants) {
@@ -166,11 +183,6 @@ std::optional<Scope_symbol> Semantic_checker::lookup(const std::string &name, co
         }
         types::Type_id func_id = env.tt.function(params, decl->return_type);
         return Scope_symbol{func_id, false, 0};
-    }
-
-    // 4. Check Types (Enum, Union, Model)
-    if (auto type_id = env.get_type(name)) {
-        return Scope_symbol{*type_id, false, 0};
     }
 
     type_error(loc, std::format("Undefined variable, function, or type '{}'", name));
@@ -1004,10 +1016,6 @@ void Semantic_checker::check_stmt_node(ast::Function_stmt &stmt)
 
     variables.begin_scope();
 
-    if (current_model_type && !stmt.is_static) {
-        declare("this", *current_model_type, false, stmt.loc);
-    }
-
     // Declare parameters in the local scope
     for (const auto &p : stmt.parameters) {
         declare(p.name, p.type, p.is_mut, stmt.loc);
@@ -1827,13 +1835,29 @@ types::Type_id Semantic_checker::check_expr_node(ast::Binary_expr &expr, std::op
 
 types::Type_id Semantic_checker::check_expr_node(ast::Call_expr &expr, std::optional<types::Type_id> context_type)
 {
+
     (void)context_type;
     auto has_named_arguments = [&]() {
         return std::any_of(expr.arguments.begin(), expr.arguments.end(), [](const auto &arg) { return !arg.name.empty(); });
     };
 
-    // --- STEP 1: COMPILER INTRINSICS ---
     if (auto *var_callee = std::get_if<ast::Variable_expr>(&tree.get(expr.callee).node)) {
+        if (var_callee->name == "len") {
+            if (expr.arguments.size() != 1) {
+                type_error(expr.loc, "len() expects exactly one argument.");
+                return expr.type = env.tt.get_unknown();
+            }
+            if (!expr.arguments[0].name.empty()) {
+                type_error(expr.arguments[0].loc, "len() does not support named arguments.");
+                return expr.type = env.tt.get_unknown();
+            }
+            auto arg_type = check_expr(expr.arguments[0].value);
+            if (!env.tt.is_string(arg_type) && !env.tt.is_array(arg_type)) {
+                type_error(expr.loc, "len() expects a string or an array.");
+            }
+            return expr.type = env.tt.get_u64();
+        }
+
         if (var_callee->name == "iter") {
             if (has_named_arguments()) {
                 type_error(expr.loc, "iter() does not support named arguments.");
@@ -1889,66 +1913,81 @@ types::Type_id Semantic_checker::check_expr_node(ast::Call_expr &expr, std::opti
         return expr.type = env.tt.get_unknown();
     }
 
-    // --- STEP 3: USER STATIC METHOD / UNION VARIANT / UFCS CALLS ---
     if (auto *static_path = std::get_if<ast::Static_path_expr>(&tree.get(expr.callee).node)) {
-        auto base_type_res = check_expr(static_path->base);
+
+        // 1. Intercept Type-level base cleanly
+        types::Type_id base_type_res = env.tt.get_unknown();
+        if (auto *var_base = std::get_if<ast::Variable_expr>(&tree.get(static_path->base).node)) {
+            if (env.is_type_defined(var_base->name) && !variables.lookup(var_base->name)) {
+                base_type_res = *env.get_type(var_base->name);
+                ast::get_type(tree.get(static_path->base).node) = base_type_res;
+            } else {
+                base_type_res = check_expr(static_path->base);
+            }
+        } else {
+            base_type_res = check_expr(static_path->base);
+        }
+
         if (env.tt.is_union(base_type_res)) {
             type_error(expr.loc, "Union construction via '::' is not supported.");
             return expr.type = env.tt.get_unknown();
         } else if (env.tt.is_model(base_type_res)) {
-            auto &model_t = std::get<types::Model_type>(env.tt.get(base_type_res).data);
-            if (contains_key(model_t.static_methods, static_path->member.lexeme)) {
-                auto sig = find_by_key(model_t.static_methods, static_path->member.lexeme)->second;
-                auto method_decl_id = env.model_data.at(model_t.name).static_methods.at(static_path->member.lexeme).declaration;
-                auto decl = std::get_if<ast::Function_stmt>(&tree.get(method_decl_id).node);
+            auto &model_name = std::get<types::Model_type>(env.tt.get(base_type_res).data).name;
+            auto model_data_ptr = env.get_model(model_name);
 
-                auto bound = bind_call_arguments(decl->parameters, expr.arguments, expr.loc, "static method", static_path->member.lexeme);
-                expr.arguments = std::move(bound.ordered_arguments);
-                if (!bound.ok) {
-                    return expr.type = sig.ret;
+            if (model_data_ptr) {
+                if (model_data_ptr->static_methods.contains(static_path->member.lexeme)) {
+                    // STATIC METHOD CALL
+                    auto method_decl_id = model_data_ptr->static_methods.at(static_path->member.lexeme).declaration;
+                    auto decl = std::get_if<ast::Function_stmt>(&tree.get(method_decl_id).node);
+
+                    auto bound =
+                        bind_call_arguments(decl->parameters, expr.arguments, expr.loc, "static method", static_path->member.lexeme);
+                    expr.arguments = std::move(bound.ordered_arguments);
+
+                    std::vector<types::Type_id> fparams;
+                    for (auto &p : decl->parameters) {
+                        fparams.push_back(p.type);
+                    }
+                    static_path->type = env.tt.function(fparams, decl->return_type);
+
+                    return expr.type = decl->return_type;
+
+                } else if (model_data_ptr->methods.contains(static_path->member.lexeme)) {
+                    // UFCS METHOD CALL
+                    if (expr.arguments.empty()) {
+                        type_error(expr.loc, "UFCS call requires an instance as the first argument.");
+                        return expr.type = env.tt.get_unknown();
+                    }
+                    if (!expr.arguments[0].name.empty()) {
+                        type_error(expr.arguments[0].loc, "First argument of UFCS cannot be named.");
+                        return expr.type = env.tt.get_unknown();
+                    }
+
+                    auto receiver_type = check_expr(expr.arguments[0].value, base_type_res);
+                    if (!is_compatible(base_type_res, receiver_type)) {
+                        type_error(ast::get_loc(tree.get(expr.arguments[0].value).node), "UFCS receiver type mismatch.");
+                        return expr.type = env.tt.get_unknown();
+                    }
+
+                    auto method_decl_id = model_data_ptr->methods.at(static_path->member.lexeme).declaration;
+                    auto decl = std::get_if<ast::Function_stmt>(&tree.get(method_decl_id).node);
+
+                    auto bound = bind_call_arguments(decl->parameters, expr.arguments, expr.loc, "method", static_path->member.lexeme);
+                    expr.arguments = std::move(bound.ordered_arguments);
+
+                    std::vector<types::Type_id> fparams;
+                    for (auto &p : decl->parameters) {
+                        fparams.push_back(p.type);
+                    }
+                    static_path->type = env.tt.function(fparams, decl->return_type);
+
+                    return expr.type = decl->return_type;
                 }
-                return expr.type = sig.ret;
-            } else if (contains_key(model_t.methods, static_path->member.lexeme)) {
-                if (expr.arguments.empty()) {
-                    type_error(expr.loc, "UFCS call requires an instance.");
-                    return expr.type = env.tt.get_unknown();
-                }
-                if (!expr.arguments[0].name.empty()) {
-                    type_error(expr.arguments[0].loc, "First argument of UFCS cannot be named.");
-                    return expr.type = env.tt.get_unknown();
-                }
-
-                auto receiver_type = check_expr(expr.arguments[0].value, base_type_res);
-                if (!is_compatible(base_type_res, receiver_type)) {
-                    type_error(ast::get_loc(tree.get(expr.arguments[0].value).node), "Receiver type mismatch.");
-                    return expr.type = env.tt.get_unknown();
-                }
-
-                auto sig = find_by_key(model_t.methods, static_path->member.lexeme)->second;
-                auto method_decl_id = env.model_data.at(model_t.name).methods.at(static_path->member.lexeme).declaration;
-                auto decl = std::get_if<ast::Function_stmt>(&tree.get(method_decl_id).node);
-
-                std::vector<ast::Call_argument> passed_args(expr.arguments.begin() + 1, expr.arguments.end());
-                auto bound = bind_call_arguments(decl->parameters, passed_args, expr.loc, "method", static_path->member.lexeme);
-                if (!bound.ok) {
-                    return expr.type = sig.ret;
-                }
-
-                std::vector<ast::Call_argument> final_args;
-                final_args.push_back(expr.arguments[0]);
-                final_args.insert(final_args.end(), bound.ordered_arguments.begin(), bound.ordered_arguments.end());
-                expr.arguments = std::move(final_args);
-
-                std::vector<types::Type_id> fparams;
-                fparams.push_back(base_type_res);
-                fparams.insert(fparams.end(), sig.params.begin(), sig.params.end());
-                static_path->type = env.tt.function(fparams, sig.ret);
-
-                return expr.type = sig.ret;
-            } else {
-                type_error(static_path->loc, std::format("Model '{}' has no static method '{}'.", model_t.name, static_path->member.lexeme));
-                return expr.type = env.tt.get_unknown();
             }
+
+            type_error(static_path->loc, std::format("Model '{}' has no method '{}'.", model_name, static_path->member.lexeme));
+            return expr.type = env.tt.get_unknown();
         }
     }
 
@@ -2001,6 +2040,16 @@ types::Type_id Semantic_checker::check_expr_node(ast::Cast_expr &expr, std::opti
     (void)context_type;
     auto original_type = check_expr(expr.expression);
     auto target_type = expr.target_type;
+
+    bool is_str_to_byte_arr = env.tt.is_string(original_type) && env.tt.is_array(expr.target_type)
+        && (env.tt.get_array_elem(expr.target_type) == env.tt.get_u8() || env.tt.get_array_elem(expr.target_type) == env.tt.get_i8());
+
+    bool is_byte_arr_to_str = env.tt.is_array(original_type) && env.tt.is_string(expr.target_type)
+        && (env.tt.get_array_elem(original_type) == env.tt.get_u8() || env.tt.get_array_elem(original_type) == env.tt.get_i8());
+
+    if (is_str_to_byte_arr || is_byte_arr_to_str) {
+        return expr.target_type;
+    }
 
     if (env.tt.is_unknown(original_type)) {
         return target_type;
@@ -2164,6 +2213,17 @@ types::Type_id Semantic_checker::check_expr_node(ast::Static_path_expr &expr, st
     (void)context_type;
     auto base_type = check_expr(expr.base);
 
+    if (auto *var_expr = std::get_if<ast::Variable_expr>(&tree.get(expr.base).node)) {
+        if (env.is_type_defined(var_expr->name) && !variables.lookup(var_expr->name)) {
+            base_type = *env.get_type(var_expr->name);
+            ast::get_type(tree.get(expr.base).node) = base_type;
+        } else {
+            base_type = check_expr(expr.base);
+        }
+    } else {
+        base_type = check_expr(expr.base);
+    }
+
     if (env.tt.is_union(base_type)) {
         auto &union_t = std::get<types::Union_type>(env.tt.get(base_type).data);
         if (!contains_key(union_t.variants, expr.member.lexeme)) {
@@ -2285,29 +2345,46 @@ types::Type_id Semantic_checker::check_expr_node(ast::Method_call_expr &expr, st
 
     if (env.tt.is_union(obj_type)) {
         auto &union_t = std::get<types::Union_type>(env.tt.get(obj_type).data);
-        if (expr.method_name == "has") {
+
+        if (expr.method_name == "has" || expr.method_name == "get") {
             if (expr.arguments.size() != 1) {
-                type_error(expr.loc, ".has() expects exactly one argument.");
-                return expr.type = env.tt.get_bool();
+                type_error(expr.loc, std::format(".{}() expects exactly one argument.", expr.method_name));
+                return expr.type = env.tt.get_unknown();
             }
+
+            std::string variant_name;
             auto arg_expr_node = &tree.get(expr.arguments[0].value).node;
+
             if (auto *static_path = std::get_if<ast::Static_path_expr>(arg_expr_node)) {
                 if (auto *var_expr = std::get_if<ast::Variable_expr>(&tree.get(static_path->base).node)) {
                     if (var_expr->name != union_t.name) {
-                        type_error(ast::get_loc(*arg_expr_node), "Argument to .has() must be a variant of the same union type.");
+                        type_error(
+                            ast::get_loc(*arg_expr_node),
+                            std::format("Argument to .{}() must be a variant of the same union type.", expr.method_name));
                     }
-                    if (!contains_key(union_t.variants, static_path->member.lexeme)) {
-                        type_error(ast::get_loc(*arg_expr_node), std::format("Union has no variant named '{}'", static_path->member.lexeme));
-                    }
-                } else {
-                    type_error(ast::get_loc(*arg_expr_node), "Argument to .has() must be a static-like variant access.");
+                    variant_name = static_path->member.lexeme;
                 }
+            } else if (auto *em = std::get_if<ast::Enum_member_expr>(arg_expr_node)) {
+                variant_name = em->member_name;
             } else {
-                type_error(ast::get_loc(*arg_expr_node), "Argument to .has() must be a static-like variant access.");
+                type_error(ast::get_loc(*arg_expr_node), "Argument must be a static-like variant access.");
             }
-            return expr.type = env.tt.get_bool();
+
+            if (!variant_name.empty() && !contains_key(union_t.variants, variant_name)) {
+                type_error(ast::get_loc(*arg_expr_node), std::format("Union has no variant named '{}'", variant_name));
+            }
+
+            if (expr.method_name == "has") {
+                return expr.type = env.tt.get_bool();
+            } else { // get
+                auto it = find_by_key(union_t.variants, variant_name);
+                if (it != union_t.variants.end()) {
+                    return expr.type = it->second;
+                }
+                return expr.type = env.tt.get_unknown();
+            }
         } else {
-            type_error(expr.loc, "Union types only support the '.has()' method.");
+            type_error(expr.loc, "Union types only support the '.has()' and '.get()' methods.");
             return expr.type = env.tt.get_unknown();
         }
     }
@@ -2325,6 +2402,35 @@ types::Type_id Semantic_checker::check_expr_node(ast::Method_call_expr &expr, st
     }
     if (env.tt.is_iterator(obj_type)) {
         ffi_name = "Iter::" + expr.method_name;
+    }
+
+    if (env.tt.is_optional(obj_type) && expr.method_name == "get") {
+        auto base_type = env.tt.get_optional_base(obj_type);
+
+        if (expr.arguments.empty()) {
+            return expr.type = base_type;
+        } else if (expr.arguments.size() == 1) {
+            auto arg_type = check_expr(expr.arguments[0].value);
+
+            if (env.tt.is_string(arg_type)) {
+                return expr.type = base_type;
+            } else if (env.tt.is_function(arg_type)) {
+                auto c_type = env.tt.get(arg_type).as<types::Function_type>();
+                if (!c_type.params.empty()) {
+                    type_error(ast::get_loc(tree.get(expr.arguments[0].value).node), "Closure passed to 'get' must take no arguments.");
+                }
+                if (!is_compatible(base_type, c_type.ret)) {
+                    type_error(ast::get_loc(tree.get(expr.arguments[0].value).node), "Closure return type mismatch.");
+                }
+                return expr.type = base_type;
+            } else {
+                type_error(expr.loc, "Argument to 'get' must be a string or a closure.");
+                return expr.type = env.tt.get_unknown();
+            }
+        } else {
+            type_error(expr.loc, ".get() expects 0 or 1 argument.");
+            return expr.type = env.tt.get_unknown();
+        }
     }
 
     if (env.tt.is_optional(obj_type) && expr.method_name == "or_else") {
@@ -2398,31 +2504,31 @@ types::Type_id Semantic_checker::check_expr_node(ast::Method_call_expr &expr, st
     }
 
     if (env.tt.is_model(obj_type)) {
-        auto &model_t = std::get<types::Model_type>(env.tt.get(obj_type).data);
-        if (contains_key(model_t.methods, expr.method_name)) {
-            const auto &method_signature = find_by_key(model_t.methods, expr.method_name)->second;
-            const auto &method_decl_id = env.model_data.at(model_t.name).methods.at(expr.method_name).declaration;
+        auto &model_name = std::get<types::Model_type>(env.tt.get(obj_type).data).name;
+        auto model_data_ptr = env.get_model(model_name);
+
+        if (model_data_ptr && model_data_ptr->methods.contains(expr.method_name)) {
+            const auto &method_decl_id = model_data_ptr->methods.at(expr.method_name).declaration;
             auto decl = std::get_if<ast::Function_stmt>(&tree.get(method_decl_id).node);
 
-            auto bound = bind_call_arguments(decl->parameters, expr.arguments, expr.loc, "method", expr.method_name);
+            // UFCS argument builder: We push the object in as argument 0!
+            std::vector<ast::Call_argument> ufcs_args;
+            ufcs_args.push_back({"", expr.object, expr.loc});
+            for (auto &arg : expr.arguments) {
+                ufcs_args.push_back(arg);
+            }
+
+            auto bound = bind_call_arguments(decl->parameters, ufcs_args, expr.loc, "method", expr.method_name);
             expr.arguments = std::move(bound.ordered_arguments);
 
             if (!bound.ok) {
-                return expr.type = method_signature.ret;
+                return expr.type = decl->return_type;
             }
 
-            if (expr.arguments.size() != method_signature.params.size()) {
-                type_error(expr.loc, "Incorrect number of arguments.");
-            } else {
-                for (size_t i = 0; i < expr.arguments.size(); ++i) {
-                    auto arg_res = check_expr(expr.arguments[i].value, method_signature.params[i]);
-                    if (!is_compatible(method_signature.params[i], arg_res)) {
-                        type_error(ast::get_loc(tree.get(expr.arguments[i].value).node), "Argument type mismatch.");
-                    }
-                }
-            }
-            return expr.type = method_signature.ret;
+            return expr.type = decl->return_type;
         } else {
+            // Fallback for closure fields
+            auto &model_t = std::get<types::Model_type>(env.tt.get(obj_type).data);
             for (size_t i = 0; i < model_t.fields.size(); ++i) {
                 if (model_t.fields[i].first == expr.method_name) {
                     auto field_type = model_t.fields[i].second;
@@ -2548,18 +2654,21 @@ types::Type_id Semantic_checker::check_expr_node(ast::Array_literal_expr &expr, 
 types::Type_id Semantic_checker::check_expr_node(ast::Array_access_expr &expr, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
-    auto array_type = check_expr(expr.array);
-    if (!env.tt.is_array(array_type)) {
-        type_error(expr.loc, "Subscript operator '[]' can only be used on arrays.");
-        return expr.type = env.tt.get_unknown();
-    }
+    auto collection_type = check_expr(expr.array);
 
     auto index_type = check_expr(expr.index);
     if (!env.tt.is_integer_primitive(index_type)) {
-        type_error(ast::get_loc(tree.get(expr.index).node), "Array index must be an integer.");
+        type_error(ast::get_loc(tree.get(expr.index).node), "Index must be an integer.");
     }
 
-    return expr.type = env.tt.get_array_elem(array_type);
+    if (env.tt.is_array(collection_type)) {
+        return expr.type = env.tt.get_array_elem(collection_type);
+    } else if (env.tt.is_string(collection_type)) {
+        return expr.type = env.tt.get_string();
+    } else {
+        type_error(expr.loc, "Subscript operator '[]' can only be used on arrays and strings.");
+        return expr.type = env.tt.get_unknown();
+    }
 }
 
 types::Type_id Semantic_checker::check_expr_node(ast::Array_assignment_expr &expr, std::optional<types::Type_id> context_type)
@@ -2567,6 +2676,10 @@ types::Type_id Semantic_checker::check_expr_node(ast::Array_assignment_expr &exp
     (void)context_type;
     auto array_type = check_expr(expr.array);
     if (!env.tt.is_array(array_type)) {
+        if (env.tt.is_string(array_type)) {
+            type_error(expr.loc, "Strings are immutable and you can't use '[]' on them.");
+            return expr.type = env.tt.get_unknown();
+        }
         type_error(expr.loc, "Subscript operator '[]' can only be used on arrays.");
         return expr.type = env.tt.get_unknown();
     }

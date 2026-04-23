@@ -22,12 +22,11 @@ greet(name = "team", punctuation = "!!");
 print("add_pair(20, 22) = ", add_pair(20, 22), sep = "");
 
 // Closure expressions use typed parameters and a block body.
-let doubler: |i64| -> i64 = |value: i64| -> i64 {
+let doubler: fn(i64) -> i64 = fn(value: i64) -> i64 {
     return value * 2;
 };
 
-// Zero-argument closures use "||".
-let banner: || -> string = || -> string {
+let banner: fn() -> string = fn() -> string {
     return "closures are values";
 };
 
@@ -35,11 +34,11 @@ print("doubler(21) = ", doubler(21), sep = "");
 print(banner());
 
 // Closures can be passed to functions just like any other value.
-fn apply_once(value: i64, operation: |i64| -> i64) -> i64 {
+fn apply_once(value: i64, operation: fn(i64) -> i64) -> i64 {
     return operation(value);
 }
 
-let tripled := apply_once(7, |input: i64| -> i64 {
+let tripled := apply_once(7, fn(input: i64) -> i64 {
     return input * 3;
 });
 

@@ -18,11 +18,7 @@ counter = counter + 1;
 counter = counter + 1;
 
 // "const" marks a binding as immutable after initialization.
-let const project_name: string = "Phos";
-
-// "any" is the broad escape-hatch type.
-// It is useful around dynamic/native boundaries, but most user code should stay concrete.
-let dynamic_value: any = "stored as any";
+const project_name: string = "Phos";
 
 // The built-in primitive values you will use most often are:
 // string, bool, signed integers, unsigned integers, floating-point numbers, and nil.
@@ -37,13 +33,12 @@ print("year = ", year, sep = "");
 print("counter = ", counter, sep = "");
 
 // print_err() writes to stderr.
-print_err("stderr example from ", project_name, sep = "");
+eprint("stderr example from ", project_name, sep = "");
 
 // print() supports named "sep" and "end" string literals.
 print("A", "B", "C", sep = " | ", end = " <done>\n");
 
 // Top-level statements run in order, so files can be used as tiny scripts.
 print("dynamic value:");
-print(dynamic_value);
 print("empty value:");
 print(empty_value);
