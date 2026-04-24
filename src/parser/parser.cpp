@@ -1612,12 +1612,18 @@ Result<ast::Expr_id> Parser::primary()
 
     // primitives
     if (match({lex::TokenType::Nil})) {
-        return tree_.add_expr(
-            ast::Expr{ast::Literal_expr{
-                .value = Value(nullptr),
-                .type = type_table_.get_nil(),
-                .loc = {previous().line, previous().column},
-            }});
+        ast::Expr_id expr = tree_.add_expr(ast::Expr{ast::Literal_expr{
+            .value = Value(nullptr),
+            .type = type_table_.get_nil(),
+            .loc = {previous().line, previous().column},
+        }});
+
+        // Support nil?, nil??, nil???
+        while (match({lex::TokenType::Question})) {
+            tree_.get(expr).auto_wrap_depth++;
+        }
+
+        return expr;
     }
 
     if (match({lex::TokenType::Bool})) {

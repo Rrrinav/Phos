@@ -61,4 +61,24 @@ struct core
         std::exit(args[0].as_int());
     }
 };
+
+struct numerical
+{
+    static Value to_string()
+    {
+        return {};
+    }
+
+    static Value parse_i64()
+    {
+        return {};
+    }
+
+    static Value parse_f64()
+    {
+        return {};
+    }
+
+};
+
 }

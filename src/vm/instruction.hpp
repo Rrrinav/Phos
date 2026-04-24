@@ -93,9 +93,8 @@ enum class Opcode : uint8_t {
     Make_range_ex,
     Make_range_in,
     Make_iter,     // dst, src_a (collection)
-    Iter_is_valid, // dst (bool), src_a (iterator)
-    Iter_get,      // dst (value), src_a (iterator)
-    Iter_step,     // dst (iterator), src_a (iterator), src_b (step amount)
+    Iter_next,     // dst (optional_val), src_a (iterator)
+    Iter_prev,     // dst (optional_val), src_a (iterator)
 
     // Model
     Make_model,  // R[dst] = Model( R[src_a] ... R[src_a + src_b - 1] )
@@ -110,6 +109,7 @@ enum class Opcode : uint8_t {
     Wrap_option,   // dest, src_a, src_b (wrap count)
     Unwrap_option, // dest, src_a
     Test_nil,      // dest, src_a
+    Test_val,      // dest (bool), src_a
 
     Panic, // dst (unused), src_a (string register), src_b (unused)
 

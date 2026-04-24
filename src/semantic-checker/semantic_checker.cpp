@@ -32,6 +32,113 @@ void Semantic_checker::type_warning(const ast::Source_location &loc, const std::
     errors.push_back(err::msg::warning(this->phase, loc.l, loc.c, loc.file, "{}", message));
 }
 
+types::Type_id Semantic_checker::resolve_type_recursively(types::Type_id type_id, const ast::Source_location &loc)
+{
+    if (env.tt.is_unresolved(type_id)) {
+        auto type_name = env.tt.get(type_id).as<types::Unresolved_type>().name;
+        if (env.is_type_defined(type_name)) {
+            return *env.get_type(type_name);
+        } else {
+            type_error(loc, "Unknown type '" + type_name + "'.");
+            return env.tt.get_unknown();
+        }
+    }
+
+    if (env.tt.is_optional(type_id)) {
+        types::Type_id base = env.tt.get_optional_base(type_id);
+        types::Type_id resolved_base = resolve_type_recursively(base, loc);
+        return env.tt.optional(resolved_base);
+    }
+
+    if (env.tt.is_array(type_id)) {
+        types::Type_id base = env.tt.get_array_elem(type_id);
+        types::Type_id resolved_base = resolve_type_recursively(base, loc);
+        return env.tt.array(resolved_base);
+    }
+
+    if (env.tt.is_iterator(type_id)) {
+        types::Type_id base = env.tt.get_iter_elem(type_id);
+        types::Type_id resolved_base = resolve_type_recursively(base, loc);
+        return env.tt.iterator(resolved_base);
+    }
+
+    return type_id; // It's already resolved (primitive, model, etc.)
+}
+
+bool Semantic_checker::is_iterator_protocol_type(types::Type_id type) const
+{
+    if (env.tt.is_iterator(type)) {
+        return true;
+    }
+    if (env.tt.is_model(type)) {
+        const auto &model_name = env.tt.get(type).as<types::Model_type>().name;
+        if (!model_name.empty()) {
+            if (auto method = env.get_model_method(model_name, "next")) {
+                if (method->declaration.is_null()) {
+                    return false;
+                }
+                auto decl = std::get_if<ast::Function_stmt>(&tree.get(method->declaration).node);
+                // Valid if it takes just 'this' (size 1) or 'this' and 'step' (size 2)
+                bool valid_params = decl && (decl->parameters.size() == 1 || decl->parameters.size() == 2);
+                return valid_params && env.tt.is_optional(decl->return_type);
+            }
+        }
+    }
+    return false;
+}
+
+types::Type_id Semantic_checker::iterator_element_type(types::Type_id type) const
+{
+    if (env.tt.is_iterator(type)) {
+        return env.tt.get_iter_elem(type);
+    }
+    if (env.tt.is_model(type)) {
+        const auto &model_name = env.tt.get(type).as<types::Model_type>().name;
+        if (!model_name.empty()) {
+            if (auto method = env.get_model_method(model_name, "next")) {
+                auto decl = std::get_if<ast::Function_stmt>(&tree.get(method->declaration).node);
+                if (decl && env.tt.is_optional(decl->return_type)) {
+                    return env.tt.get_optional_base(decl->return_type);
+                }
+            }
+        }
+    }
+    return env.tt.get_void();
+}
+
+types::Type_id Semantic_checker::to_iterator_type(types::Type_id type) const
+{
+    if (is_iterator_protocol_type(type)) {
+        return type;
+    }
+    if (env.tt.is_array(type)) {
+        return env.tt.iterator(env.tt.get_array_elem(type));
+    }
+    if (env.tt.is_string(type)) {
+        return env.tt.iterator(env.tt.get_string());
+    }
+    if (env.tt.is_optional(type)) {
+        return env.tt.iterator(env.tt.get_optional_base(type));
+    }
+    if (env.tt.is_nil(type)) {
+        return env.tt.iterator(env.tt.get_any());
+    }
+
+    if (env.tt.is_model(type)) {
+        const auto &model_name = env.tt.get(type).as<types::Model_type>().name;
+        if (!model_name.empty()) {
+            if (auto method = env.get_model_method(model_name, "iter")) {
+                auto decl = std::get_if<ast::Function_stmt>(&tree.get(method->declaration).node);
+                // Valid if it takes just 'this' (size 1)
+                if (decl && decl->parameters.size() == 1 && is_iterator_protocol_type(decl->return_type)) {
+                    return decl->return_type;
+                }
+            }
+        }
+    }
+    return env.tt.iterator(type);
+}
+
 void Semantic_checker::hoist_globals(const std::vector<ast::Stmt_id> &statements)
 {
     for (auto stmt_id : statements) {
@@ -263,78 +370,6 @@ types::Type_id Semantic_checker::promote_numeric_type(types::Type_id left, types
     }
 
     return env.tt.primitive(types::primitive_bit_width(left_kind) >= types::primitive_bit_width(right_kind) ? left_kind : right_kind);
-}
-
-// Iterators
-bool Semantic_checker::is_iterator_protocol_type(types::Type_id type) const
-{
-    if (env.tt.is_iterator(type)) {
-        return true;
-    }
-    if (env.tt.is_model(type)) {
-        const auto &model_name = env.tt.get(type).as<types::Model_type>().name;
-        if (!model_name.empty()) {
-            if (auto method = env.get_model_method(model_name, "next")) {
-                if (method->declaration.is_null()) {
-                    return false;
-                }
-                auto decl = std::get_if<ast::Function_stmt>(&tree.get(method->declaration).node);
-                return decl && decl->parameters.empty() && env.tt.is_optional(decl->return_type);
-            }
-        }
-    }
-    return false;
-}
-
-types::Type_id Semantic_checker::iterator_element_type(types::Type_id type) const
-{
-    if (env.tt.is_iterator(type)) {
-        return env.tt.get_iter_elem(type);
-    }
-    if (env.tt.is_model(type)) {
-        const auto &model_name = env.tt.get(type).as<types::Model_type>().name;
-        if (!model_name.empty()) {
-            if (auto method = env.get_model_method(model_name, "next")) {
-                auto decl = std::get_if<ast::Function_stmt>(&tree.get(method->declaration).node);
-                if (decl && env.tt.is_optional(decl->return_type)) {
-                    return env.tt.get_optional_base(decl->return_type);
-                }
-            }
-        }
-    }
-    return env.tt.get_void();
-}
-
-types::Type_id Semantic_checker::to_iterator_type(types::Type_id type) const
-{
-    if (is_iterator_protocol_type(type)) {
-        return type;
-    }
-    if (env.tt.is_array(type)) {
-        return env.tt.iterator(env.tt.get_array_elem(type));
-    }
-    if (env.tt.is_string(type)) {
-        return env.tt.iterator(env.tt.get_string());
-    }
-    if (env.tt.is_optional(type)) {
-        return env.tt.iterator(env.tt.get_optional_base(type));
-    }
-    if (env.tt.is_nil(type)) {
-        return env.tt.iterator(env.tt.get_any());
-    }
-
-    if (env.tt.is_model(type)) {
-        const auto &model_name = env.tt.get(type).as<types::Model_type>().name;
-        if (!model_name.empty()) {
-            if (auto method = env.get_model_method(model_name, "iter")) {
-                auto decl = std::get_if<ast::Function_stmt>(&tree.get(method->declaration).node);
-                if (decl && decl->parameters.empty() && is_iterator_protocol_type(decl->return_type)) {
-                    return decl->return_type;
-                }
-            }
-        }
-    }
-    return env.tt.iterator(type);
 }
 
 // DEFAULTS VALIDATION
@@ -945,37 +980,26 @@ types::Type_id Semantic_checker::check_expr(ast::Expr_id expr_id, std::optional<
     }
     auto &expr = tree.get(expr_id);
 
-    // 1. Explicit Optional Fallback Interception: .{ .val = ... }
-    if (context_type && env.tt.is_optional(*context_type)) {
-        if (auto *anon = std::get_if<ast::Anon_model_literal_expr>(&expr.node)) {
-            if (anon->fields.size() == 1 && anon->fields[0].first == "val") {
-                types::Type_id inner_context = env.tt.get_optional_base(*context_type);
-                ast::Expr_id inner_expr = anon->fields[0].second;
+    // --- 1. PEEL THE CONTEXT FOR HINTING ---
+    std::optional<types::Type_id> peeled_hint = context_type;
+    uint8_t expected_depth = 0;
 
-                if (!inner_expr.is_null()) {
-                    auto inner_res = check_expr(inner_expr, inner_context);
-                    if (!is_compatible(inner_context, inner_res)) {
-                        type_error(ast::get_loc(expr.node), "Type mismatch for explicit optional payload.");
-                        return ast::get_type(expr.node) = env.tt.get_unknown();
-                    }
-
-                    uint8_t existing_wraps = tree.get(inner_expr).auto_wrap_depth;
-                    expr.node = std::move(tree.get(inner_expr).node);
-                    expr.auto_wrap_depth = existing_wraps + 1;
-                    return ast::get_type(expr.node) = *context_type;
-                }
-            }
+    if (peeled_hint) {
+        while (env.tt.is_optional(*peeled_hint)) {
+            peeled_hint = env.tt.get_optional_base(*peeled_hint);
+            expected_depth++;
         }
     }
 
-    // 2. Standard Expression Evaluation
-    types::Type_id actual_type = std::visit([this, context_type](auto &e) -> types::Type_id { return check_expr_node(e, context_type); }, expr.node);
+    // The AST node now safely evaluates WITHOUT worrying about optionals
+    types::Type_id actual_type =
+        std::visit([this, peeled_hint](auto &e) -> types::Type_id { return check_expr_node(e, peeled_hint); }, expr.node);
 
-    // 3. Path-Based Nil Narrowing (Checks structurally!)
+    // --- 4. PATH-BASED NIL NARROWING ---
     if (env.tt.is_optional(actual_type)) {
         if (auto path = extract_access_path(expr_id)) {
-            for (const auto &scope : m_nil_checked_vars_stack) {
-                if (scope.count(*path)) {
+            for (auto it = m_nil_checked_vars_stack.rbegin(); it != m_nil_checked_vars_stack.rend(); ++it) {
+                if (it->count(*path)) {
                     actual_type = env.tt.get_optional_base(actual_type);
                     break;
                 }
@@ -983,14 +1007,17 @@ types::Type_id Semantic_checker::check_expr(ast::Expr_id expr_id, std::optional<
         }
     }
 
-    // 4. Auto-Lifting Logic
+    // --- 5. GLOBAL AUTO-LIFTING LOGIC ---
     if (context_type) {
-        int expected_depth = env.tt.optional_depth(*context_type);
-        int actual_depth = env.tt.optional_depth(actual_type);
+        uint8_t actual_depth = 0;
+        types::Type_id actual_base = actual_type;
+        while (env.tt.is_optional(actual_base)) {
+            actual_base = env.tt.get_optional_base(actual_base);
+            actual_depth++;
+        }
 
         if (expected_depth > actual_depth) {
-            types::Type_id expected_base = env.tt.optional_base(*context_type);
-            types::Type_id actual_base   = env.tt.optional_base(actual_type);
+            types::Type_id expected_base = *peeled_hint;
 
             if (env.tt.is_nil(actual_base) || env.tt.is_unknown(actual_base)) {
                 expr.auto_wrap_depth = 0;
@@ -1032,15 +1059,11 @@ void Semantic_checker::check_stmt_node(ast::Function_stmt &stmt)
 
 void Semantic_checker::check_stmt_node(ast::Var_stmt &stmt)
 {
-    if (!stmt.type_inferred && env.tt.is_unresolved(stmt.type)) {
-        auto type_name = env.tt.get(stmt.type).as<types::Unresolved_type>().name;
-        if (env.is_type_defined(type_name)) {
-            stmt.type = *env.get_type(type_name);
-        } else {
-            type_error(stmt.loc, "Unknown type '" + type_name + "'.");
-            stmt.type = env.tt.get_unknown();
-        }
+    if (!stmt.type_inferred) {
+        stmt.type = resolve_type_recursively(stmt.type, stmt.loc);
     }
+
+    // --- 2. EVALUATE INITIALIZER ---
     types::Type_id init_type = env.tt.get_void();
     bool initializer_failed = false;
 
@@ -1545,13 +1568,8 @@ types::Type_id Semantic_checker::check_expr_node(ast::Anon_model_literal_expr &e
         return expr.type = env.tt.get_unknown();
     }
 
+    // Context is guaranteed to be fully peeled by the main check_expr dispatcher!
     types::Type_id expected_type = *context_type;
-    bool is_ctx_optional = false;
-
-    if (env.tt.is_optional(expected_type)) {
-        expected_type = env.tt.get_optional_base(*context_type);
-        is_ctx_optional = true;
-    }
 
     if (env.tt.is_union(expected_type)) {
         auto &expected_union = std::get<types::Union_type>(env.tt.get(expected_type).data);
@@ -1587,7 +1605,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Anon_model_literal_expr &e
         auto expected_payload_type = it->second;
         if (payload_expr.is_null()) {
             if (expected_payload_type == env.tt.get_void()) {
-                return expr.type = is_ctx_optional ? *context_type : expected_type;
+                return expr.type = expected_type;
             }
 
             if (union_data_ptr && union_data_ptr->variant_defaults.contains(variant_name)) {
@@ -1606,7 +1624,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Anon_model_literal_expr &e
             type_error(ast::get_loc(tree.get(payload_expr).node), "Type mismatch for payload.");
         }
 
-        return expr.type = is_ctx_optional ? *context_type : expected_type;
+        return expr.type = expected_type;
     }
 
     if (env.tt.is_model(expected_type)) {
@@ -1662,7 +1680,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Anon_model_literal_expr &e
             type_error(expr.loc, std::format("Missing required field '{}'.", expected_field.first));
         }
         expr.fields = std::move(ordered);
-        return expr.type = is_ctx_optional ? *context_type : expected_type;
+        return expr.type = expected_type;
     }
 
     type_error(expr.loc, "Context for anonymous literal is neither a model nor a union.");
@@ -1835,20 +1853,58 @@ types::Type_id Semantic_checker::check_expr_node(ast::Binary_expr &expr, std::op
 
 types::Type_id Semantic_checker::check_expr_node(ast::Call_expr &expr, std::optional<types::Type_id> context_type)
 {
-
     (void)context_type;
-    auto has_named_arguments = [&]() {
-        return std::any_of(expr.arguments.begin(), expr.arguments.end(), [](const auto &arg) { return !arg.name.empty(); });
+
+    // --- INTRINSIC BINDER ---
+    auto bind_intrinsic = [&](const std::vector<std::string> &param_names, const std::string &name) -> bool {
+        std::vector<ast::Call_argument> ordered(param_names.size());
+        std::vector<bool> filled(param_names.size(), false);
+        bool seen_named = false;
+        size_t next_pos = 0;
+
+        for (const auto &arg : expr.arguments) {
+            size_t target_idx = param_names.size();
+            if (!arg.name.empty()) {
+                seen_named = true;
+                auto it = std::find(param_names.begin(), param_names.end(), arg.name);
+                if (it == param_names.end()) {
+                    type_error(arg.loc, std::format("Intrinsic '{}' has no parameter named '{}'.", name, arg.name));
+                    return false;
+                }
+                target_idx = static_cast<size_t>(std::distance(param_names.begin(), it));
+                if (filled[target_idx]) {
+                    type_error(arg.loc, std::format("Parameter '{}' was provided more than once.", arg.name));
+                    return false;
+                }
+            } else {
+                if (seen_named) {
+                    type_error(arg.loc, "Positional arguments cannot appear after named arguments.");
+                    return false;
+                }
+                target_idx = next_pos++;
+                if (target_idx >= param_names.size()) {
+                    type_error(expr.loc, std::format("Too many arguments for '{}'. Expected {}.", name, param_names.size()));
+                    return false;
+                }
+            }
+            ordered[target_idx] = arg;
+            filled[target_idx] = true;
+        }
+
+        for (size_t i = 0; i < param_names.size(); ++i) {
+            if (!filled[i]) {
+                type_error(expr.loc, std::format("Missing required argument '{}' for '{}'.", param_names[i], name));
+                return false;
+            }
+        }
+        expr.arguments = std::move(ordered);
+        return true;
     };
 
+    // --- STEP 1: GLOBAL INTRINSICS ---
     if (auto *var_callee = std::get_if<ast::Variable_expr>(&tree.get(expr.callee).node)) {
         if (var_callee->name == "len") {
-            if (expr.arguments.size() != 1) {
-                type_error(expr.loc, "len() expects exactly one argument.");
-                return expr.type = env.tt.get_unknown();
-            }
-            if (!expr.arguments[0].name.empty()) {
-                type_error(expr.arguments[0].loc, "len() does not support named arguments.");
+            if (!bind_intrinsic({"collection"}, "len")) {
                 return expr.type = env.tt.get_unknown();
             }
             auto arg_type = check_expr(expr.arguments[0].value);
@@ -1859,12 +1915,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Call_expr &expr, std::opti
         }
 
         if (var_callee->name == "iter") {
-            if (has_named_arguments()) {
-                type_error(expr.loc, "iter() does not support named arguments.");
-                return expr.type = env.tt.get_unknown();
-            }
-            if (expr.arguments.size() != 1) {
-                type_error(expr.loc, "iter() expects exactly one argument.");
+            if (!bind_intrinsic({"iterable"}, "iter")) {
                 return expr.type = env.tt.get_unknown();
             }
             auto arg_type_res = check_expr(expr.arguments[0].value);
@@ -1875,13 +1926,9 @@ types::Type_id Semantic_checker::check_expr_node(ast::Call_expr &expr, std::opti
             }
             return expr.type = iter_type;
         }
+
         if (var_callee->name == "clone") {
-            if (has_named_arguments()) {
-                type_error(expr.loc, "clone() does not support named arguments.");
-                return expr.type = env.tt.get_unknown();
-            }
-            if (expr.arguments.size() != 1) {
-                type_error(expr.loc, "clone() expects exactly one argument.");
+            if (!bind_intrinsic({"value"}, "clone")) {
                 return expr.type = env.tt.get_unknown();
             }
             return expr.type = check_expr(expr.arguments[0].value);
@@ -1909,7 +1956,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Call_expr &expr, std::opti
                 return expr.type = parse_type_string(signatures[sig_index].ret_type_str, bound.generics);
             }
         }
-        type_error(expr.loc, std::format("Arguments do not match any native signature for function '{}'.",ffi_callee_name));
+        type_error(expr.loc, std::format("Arguments do not match any native signature for function '{}'.", ffi_callee_name));
         return expr.type = env.tt.get_unknown();
     }
 
@@ -2014,6 +2061,10 @@ types::Type_id Semantic_checker::check_expr_node(ast::Call_expr &expr, std::opti
         auto bound = bind_call_arguments(declaration->parameters, expr.arguments, expr.loc, "function", declaration->name);
         expr.arguments = std::move(bound.ordered_arguments);
     } else {
+        // Fallback for raw anonymous closures
+        auto has_named_arguments = [&]() {
+            return std::any_of(expr.arguments.begin(), expr.arguments.end(), [](const auto &arg) { return !arg.name.empty(); });
+        };
         if (has_named_arguments()) {
             type_error(expr.loc, "Named arguments only supported for direct static calls.");
             return expr.type = sig.ret;
@@ -2329,9 +2380,53 @@ types::Type_id Semantic_checker::check_expr_node(ast::Literal_expr &expr, std::o
 types::Type_id Semantic_checker::check_expr_node(ast::Method_call_expr &expr, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
-    auto has_named_arguments = [&]() {
-        return std::any_of(expr.arguments.begin(), expr.arguments.end(), [](const auto &arg) { return !arg.name.empty(); });
+
+    // --- INTRINSIC BINDER ---
+    auto bind_intrinsic = [&](const std::vector<std::string> &param_names, const std::string &name) -> bool {
+        std::vector<ast::Call_argument> ordered(param_names.size());
+        std::vector<bool> filled(param_names.size(), false);
+        bool seen_named = false;
+        size_t next_pos = 0;
+
+        for (const auto &arg : expr.arguments) {
+            size_t target_idx = param_names.size();
+            if (!arg.name.empty()) {
+                seen_named = true;
+                auto it = std::find(param_names.begin(), param_names.end(), arg.name);
+                if (it == param_names.end()) {
+                    type_error(arg.loc, std::format("Intrinsic '{}' has no parameter named '{}'.", name, arg.name));
+                    return false;
+                }
+                target_idx = static_cast<size_t>(std::distance(param_names.begin(), it));
+                if (filled[target_idx]) {
+                    type_error(arg.loc, std::format("Parameter '{}' was provided more than once.", arg.name));
+                    return false;
+                }
+            } else {
+                if (seen_named) {
+                    type_error(arg.loc, "Positional arguments cannot appear after named arguments.");
+                    return false;
+                }
+                target_idx = next_pos++;
+                if (target_idx >= param_names.size()) {
+                    type_error(expr.loc, std::format("Too many arguments for '{}'. Expected {}.", name, param_names.size()));
+                    return false;
+                }
+            }
+            ordered[target_idx] = arg;
+            filled[target_idx] = true;
+        }
+
+        for (size_t i = 0; i < param_names.size(); ++i) {
+            if (!filled[i]) {
+                type_error(expr.loc, std::format("Missing required argument '{}' for '{}'.", param_names[i], name));
+                return false;
+            }
+        }
+        expr.arguments = std::move(ordered);
+        return true;
     };
+
     auto obj_type = check_expr(expr.object);
 
     if (env.tt.is_any(obj_type)) {
@@ -2347,8 +2442,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Method_call_expr &expr, st
         auto &union_t = std::get<types::Union_type>(env.tt.get(obj_type).data);
 
         if (expr.method_name == "has" || expr.method_name == "get") {
-            if (expr.arguments.size() != 1) {
-                type_error(expr.loc, std::format(".{}() expects exactly one argument.", expr.method_name));
+            if (!bind_intrinsic({"variant"}, expr.method_name)) {
                 return expr.type = env.tt.get_unknown();
             }
 
@@ -2389,6 +2483,47 @@ types::Type_id Semantic_checker::check_expr_node(ast::Method_call_expr &expr, st
         }
     }
 
+    if (expr.method_name == "iter") {
+        if (!bind_intrinsic({}, "iter")) {
+            return expr.type = env.tt.get_unknown();
+        }
+
+        auto iter_type = to_iterator_type(obj_type);
+        if (!is_iterator_protocol_type(iter_type)) {
+            type_error(ast::get_loc(tree.get(expr.object).node), "This type is not iterable.");
+            return expr.type = env.tt.get_unknown();
+        }
+        return expr.type = iter_type;
+    }
+
+    if (env.tt.is_iterator(obj_type)) {
+        if (expr.method_name == "next" || expr.method_name == "prev") {
+
+            // Auto-inject default step = 1 if user left it blank!
+            if (expr.arguments.empty()) {
+                ast::Literal_expr default_step{Value(static_cast<int64_t>(1)), 0};
+                ast::Expr_id step_id = tree.add_expr(ast::Expr(default_step));
+                ast::get_type(tree.get(step_id).node) = env.tt.get_i32();
+                expr.arguments.push_back({"", step_id, expr.loc});
+            }
+
+            if (!bind_intrinsic({"step"}, expr.method_name)) {
+                return expr.type = env.tt.get_unknown();
+            }
+
+            auto step_type = check_expr(expr.arguments[0].value);
+            if (!env.tt.is_integer_primitive(step_type)) {
+                type_error(ast::get_loc(tree.get(expr.arguments[0].value).node), "Step amount must be an integer.");
+            }
+
+            // Return Optional<ElementType>
+            return expr.type = env.tt.optional(env.tt.get_iter_elem(obj_type));
+        }
+
+        type_error(expr.loc, std::format("Native Iterators have no method '{}'.", expr.method_name));
+        return expr.type = env.tt.get_unknown();
+    }
+
     // FFI METHOD MATCHER
     std::string ffi_name;
     if (env.tt.is_array(obj_type)) {
@@ -2409,7 +2544,10 @@ types::Type_id Semantic_checker::check_expr_node(ast::Method_call_expr &expr, st
 
         if (expr.arguments.empty()) {
             return expr.type = base_type;
-        } else if (expr.arguments.size() == 1) {
+        } else {
+            if (!bind_intrinsic({"fallback"}, "get")) {
+                return expr.type = env.tt.get_unknown();
+            }
             auto arg_type = check_expr(expr.arguments[0].value);
 
             if (env.tt.is_string(arg_type)) {
@@ -2427,15 +2565,11 @@ types::Type_id Semantic_checker::check_expr_node(ast::Method_call_expr &expr, st
                 type_error(expr.loc, "Argument to 'get' must be a string or a closure.");
                 return expr.type = env.tt.get_unknown();
             }
-        } else {
-            type_error(expr.loc, ".get() expects 0 or 1 argument.");
-            return expr.type = env.tt.get_unknown();
         }
     }
 
     if (env.tt.is_optional(obj_type) && expr.method_name == "or_else") {
-        if (expr.arguments.size() != 1) {
-            type_error(expr.loc, "or_else() expects exactly one closure argument.");
+        if (!bind_intrinsic({"fallback"}, "or_else")) {
             return expr.type = env.tt.get_unknown();
         }
         auto closure_type = check_expr(expr.arguments[0].value);
@@ -2469,8 +2603,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Method_call_expr &expr, st
     }
 
     if (expr.method_name == "map") {
-        if (expr.arguments.size() != 1) {
-            type_error(expr.loc, "Map must have one closure argument.");
+        if (!bind_intrinsic({"func"}, "map")) {
             return expr.type = env.tt.get_unknown();
         }
         auto closure_type = check_expr(expr.arguments[0].value);
@@ -2600,6 +2733,7 @@ types::Type_id Semantic_checker::check_expr_node(ast::Array_literal_expr &expr, 
     types::Type_id common_type = env.tt.get_nil();
     bool has_nil = false;
 
+    // Context is guaranteed to be fully peeled by check_expr (e.g. u8[], never u8[]?)
     std::optional<types::Type_id> element_context = std::nullopt;
     if (context_type && env.tt.is_array(*context_type)) {
         element_context = env.tt.get_array_elem(*context_type);

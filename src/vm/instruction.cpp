@@ -171,6 +171,12 @@ std::string phos::vm::opcode_to_string(Opcode code)
         return "Ld_union_payload";
     case Opcode::None:
         return "None";
+    case Opcode::Make_iter: return "Make_iter";
+    case Opcode::Iter_next: return "Iter_next";
+    case Opcode::Iter_prev: return "Iter_prev";
+    case Opcode::Test_val: return "Test_val";
+    case Opcode::Test_nil: return "Test_nil";
+    case Opcode::Unwrap_option: return "Unwrap_option";
     }
     return std::format("UNKNOWN_{}", static_cast<uint8_t>(code));
 };

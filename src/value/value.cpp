@@ -352,7 +352,7 @@ std::string Value::to_string() const
     return "<unknown>";
 }
 
-std::string Value::to_debug_string() const
+std::string Value::to_debug_string(bool is_nested) const
 {
     std::string res;
 
@@ -365,21 +365,24 @@ std::string Value::to_debug_string() const
     } else if (is_float()) {
         res = std::format("{}", as_float());
     } else if (tag_ == Value_tag::String) {
-        res = std::format("\"{}\"", as_string());
+        res = is_nested ? std::format("\"{}\"", as_string()) : std::string(as_string());
     } else if (tag_ == Value_tag::Array) {
         res = "[";
         auto elements = as_array_elements();
         for (size_t i = 0; i < elements.size(); ++i) {
-            res += elements[i].to_debug_string();
+            // Pass true to indicate children are nested
+            res += elements[i].to_debug_string(true);
             if (i != elements.size() - 1) {
                 res += ", ";
             }
         }
         res += "]";
     } else {
+        // Fallback for models/iterators/closures
         res = to_string();
     }
 
+    // Append optional depth tags
     for (uint8_t i = 0; i < option_depth_; ++i) {
         res += "?";
     }

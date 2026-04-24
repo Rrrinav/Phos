@@ -464,12 +464,10 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             Value result = registers[base + inst.rrr.dst];
             uint8_t stream_flag = inst.rrr.src_a;
 
-            std::string text_to_print = result.to_string();
-
             if (stream_flag == 1) {
-                this->cfg.err << text_to_print;
+                this->cfg.err << result.to_debug_string();
             } else {
-                this->cfg.out << text_to_print;
+                this->cfg.out << result.to_debug_string();
             }
             break;
         }
@@ -746,55 +744,31 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
         case Opcode::Unwrap_option: {
             Value val = registers[base + inst.rrr.src_a];
-            if (val.is_nil()) {
+
+            // Only pure nil means None
+            if (val.is_nil() && val.depth() == 0) {
                 panic("Attempted to unwrap a nil value at IP: {}", ip - 1);
             }
+
             registers[base + inst.rrr.dst] = val.unwrap_optional();
             break;
         }
         case Opcode::Test_nil: {
             Value val = registers[base + inst.rrr.src_a];
-            registers[base + inst.rrr.dst] = Value(val.is_nil());
+            registers[base + inst.rrr.dst] = Value(val.is_nil() && val.depth() == 0);
             break;
         }
-        case Opcode::Iter_is_valid: {
+        case Opcode::Test_val: {
+            Value src = registers[base + inst.rrr.src_a];
+            registers[base + inst.rrr.dst] = Value(src.depth() > 0);
+            break;
+        }
+        case Opcode::Iter_next: {
             Value iter_val = registers[base + inst.rrr.src_a];
             Iterator_data *iter = iter_val.as_iterator();
 
-            bool valid = false;
-            switch (iter->state_type) {
-            case Iterator_data::State_type::Empty:
-                valid = false;
-                break;
-            case Iterator_data::State_type::Singleton:
-                valid = (iter->cursor == 0);
-                break;
-            case Iterator_data::State_type::Interval:
-                if (iter->state.interval.inclusive) {
-                    valid = (iter->cursor <= iter->state.interval.end && iter->cursor >= iter->state.interval.start);
-                } else {
-                    valid = (iter->cursor < iter->state.interval.end && iter->cursor >= iter->state.interval.start);
-                }
-                break;
-            case Iterator_data::State_type::Array:
-                valid = (iter->cursor >= 0 && iter->cursor < static_cast<int64_t>(iter->state.array->count));
-                break;
-            case Iterator_data::State_type::String:
-                valid = (iter->cursor >= 0 && iter->cursor < static_cast<int64_t>(iter->state.string->length));
-                break;
-            }
-            registers[base + inst.rrr.dst] = Value(valid);
-            break;
-        }
-
-        case Opcode::Iter_step: {
-            Value iter_val = registers[base + inst.rrr.src_a];
-            Iterator_data *iter = iter_val.as_iterator();
-
-            // 1. Advance the cursor first (moving from -1 to 0 on the first loop)
             iter->cursor++;
 
-            // 2. Check if we are still within bounds
             bool valid = false;
             switch (iter->state_type) {
             case Iterator_data::State_type::Empty:
@@ -804,11 +778,8 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
                 valid = (iter->cursor == 0);
                 break;
             case Iterator_data::State_type::Interval:
-                if (iter->state.interval.inclusive) {
-                    valid = (iter->cursor <= iter->state.interval.end);
-                } else {
-                    valid = (iter->cursor < iter->state.interval.end);
-                }
+                valid = iter->state.interval.inclusive ? (iter->cursor <= iter->state.interval.end)
+                                                       : (iter->cursor < iter->state.interval.end);
                 break;
             case Iterator_data::State_type::Array:
                 valid = (iter->cursor < static_cast<int64_t>(iter->state.array->count));
@@ -818,31 +789,79 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
                 break;
             }
 
-            // 3. Return true/false to control the loop
-            registers[base + inst.rrr.dst] = Value(valid);
+            if (!valid) {
+                registers[base + inst.rrr.dst] = Value(); // Return pure nil (depth=0) to signal end
+            } else {
+                Value val;
+                switch (iter->state_type) {
+                case Iterator_data::State_type::Singleton:
+                    val = *(iter->state.singleton_val);
+                    break;
+                case Iterator_data::State_type::Interval:
+                    val = Value(iter->cursor);
+                    break;
+                case Iterator_data::State_type::Array:
+                    val = iter->state.array->elements[iter->cursor];
+                    break;
+                case Iterator_data::State_type::String:
+                    val = Value::make_string(arena, std::string_view(&iter->state.string->chars[iter->cursor], 1));
+                    break;
+                default:
+                    std::unreachable();
+                }
+                // FIXED: Wrap the value to indicate "has value", but preserve what's inside
+                // This means Some(nil) if array element is nil, Some(5) if array element is 5
+                registers[base + inst.rrr.dst] = val.wrap_optional(1);
+            }
             break;
         }
 
-        case Opcode::Iter_get: {
+        case Opcode::Iter_prev: {
             Value iter_val = registers[base + inst.rrr.src_a];
             Iterator_data *iter = iter_val.as_iterator();
 
-            // Cursor is guaranteed to be valid here because Iter_next checked it!
+            iter->cursor--;
+
+            bool valid = false;
             switch (iter->state_type) {
             case Iterator_data::State_type::Empty:
-                panic("Attempted to get value from empty iterator.");
+                valid = false;
+                break;
             case Iterator_data::State_type::Singleton:
-                registers[base + inst.rrr.dst] = *(iter->state.singleton_val);
+                valid = (iter->cursor == 0);
                 break;
             case Iterator_data::State_type::Interval:
-                registers[base + inst.rrr.dst] = Value(iter->cursor);
+                valid = (iter->cursor >= iter->state.interval.start);
                 break;
             case Iterator_data::State_type::Array:
-                registers[base + inst.rrr.dst] = iter->state.array->elements[iter->cursor];
+                valid = (iter->cursor >= 0);
                 break;
             case Iterator_data::State_type::String:
-                registers[base + inst.rrr.dst] = Value::make_string(arena, std::string_view(&iter->state.string->chars[iter->cursor], 1));
+                valid = (iter->cursor >= 0);
                 break;
+            }
+
+            if (!valid) {
+                registers[base + inst.rrr.dst] = Value(); // Return pure nil
+            } else {
+                Value val;
+                switch (iter->state_type) {
+                case Iterator_data::State_type::Singleton:
+                    val = *(iter->state.singleton_val);
+                    break;
+                case Iterator_data::State_type::Interval:
+                    val = Value(iter->cursor);
+                    break;
+                case Iterator_data::State_type::Array:
+                    val = iter->state.array->elements[iter->cursor];
+                    break;
+                case Iterator_data::State_type::String:
+                    val = Value::make_string(arena, std::string_view(&iter->state.string->chars[iter->cursor], 1));
+                    break;
+                default:
+                    std::unreachable();
+                }
+                registers[base + inst.rrr.dst] = val.wrap_optional(1);
             }
             break;
         }
@@ -889,13 +908,26 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
                 if (unwrapped.is_nil()) {
                     iter->state_type = Iterator_data::State_type::Empty;
                 } else {
-                    iter->state_type = Iterator_data::State_type::Singleton;
-                    iter->state.singleton_val = arena.allocate<Value>();
-                    *(iter->state.singleton_val) = unwrapped;
+                    // The unwrapped value might itself be an array, string, or singleton
+                    // Recursively handle it
+                    if (unwrapped.is_array()) {
+                        iter->state_type = Iterator_data::State_type::Array;
+                        iter->state.array = unwrapped.as_array();
+                    } else if (unwrapped.is_string()) {
+                        iter->state_type = Iterator_data::State_type::String;
+                        iter->state.string = unwrapped.as_string_data();
+                    } else {
+                        // Singleton (including numbers, models, etc.)
+                        iter->state_type = Iterator_data::State_type::Singleton;
+                        iter->state.singleton_val = arena.allocate<Value>();
+                        *(iter->state.singleton_val) = unwrapped;
+                    }
                 }
             } else if (collection.is_nil()) {
-                panic("Cannot iterate over a nil value at IP: {}", ip - 1);
+                // Pure nil (depth=0) creates an empty iterator (0 iterations)
+                iter->state_type = Iterator_data::State_type::Empty;
             } else {
+                // Singleton: iterate once over this value
                 iter->state_type = Iterator_data::State_type::Singleton;
                 iter->state.singleton_val = arena.allocate<Value>();
                 *(iter->state.singleton_val) = collection;

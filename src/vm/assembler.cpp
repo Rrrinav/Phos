@@ -215,6 +215,37 @@ std::string Assembler::disassemble_instruction(Instruction inst, const Closure_d
         asm_str = std::format("{:<14} %r{}, %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
         comment = std::format("%r{}.field[%r{}] = %r{}", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
         break;
+    case Opcode::Wrap_option:
+        asm_str = std::format("{:<14} %r{}, %r{}, wraps: {}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        break;
+
+    case Opcode::Unwrap_option:
+        asm_str = std::format("{:<14} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
+        break;
+
+    case Opcode::Test_nil:
+        asm_str = std::format("{:<14} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
+        break;
+
+    case Opcode::Test_val:
+        asm_str = std::format("{:<14} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
+        break;
+
+    case Opcode::Make_iter:
+        asm_str = std::format("{:<14} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
+        break;
+
+    case Opcode::Iter_next:
+        asm_str = std::format("{:<14} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
+        break;
+
+    case Opcode::Iter_prev:
+        asm_str = std::format("{:<14} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
+        break;
+
+    case Opcode::Panic:
+        asm_str = std::format("{:<14} %r{}", name, inst.rrr.src_a);
+        break;
 
     case Opcode::Add_i64:
     case Opcode::Add_u64:

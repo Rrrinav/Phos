@@ -151,6 +151,7 @@ public:
     // --- AST Walkers ---
     void check_stmt(ast::Stmt_id stmt);
     types::Type_id check_expr(ast::Expr_id expr, std::optional<types::Type_id> context_type = std::nullopt);
+    types::Type_id resolve_type_recursively(types::Type_id type_id, const ast::Source_location& loc);
 
     void check_stmt_node(ast::Function_stmt &stmt);
     void check_stmt_node(ast::Model_stmt &stmt);

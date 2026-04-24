@@ -455,7 +455,7 @@ public:
     std::optional<Value> coerce_literal(types::Primitive_kind target_type) const;
 
     std::string to_string() const;
-    std::string to_debug_string() const;
+    std::string to_debug_string(bool is_nested = false) const;
 
     bool operator==(const Value &other) const;
     bool operator!=(const Value &other) const
