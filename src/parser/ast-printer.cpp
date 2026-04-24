@@ -109,7 +109,7 @@ void Tree_printer::visit(Stmt_id stmt)
 void Tree_printer::print_node(const Literal_expr &node)
 {
     indent();
-    print_str("Literal: " + node.value.to_string());
+    print_str("Literal: " + node.value.to_debug_string());
     with_child(false, [&] {
         indent();
         print_str("Type: " + tt.to_string(node.type));

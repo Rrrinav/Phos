@@ -1422,18 +1422,21 @@ uint8_t Compiler::compile_expr_node(const ast::Method_call_expr &expr)
 
     if (env.tt.is_optional(obj_type)) {
         uint8_t obj_reg = compile_expr(expr.object);
+
         if (expr.method_name == "is_nil") {
             uint8_t dst_reg = allocate_register();
+            // Test_nil perfectly identifies a Depth 0 (End of chain) Nil
             emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, dst_reg, obj_reg, 0));
             return dst_reg;
         }
+
         if (expr.method_name == "is_val" || expr.method_name == "has_val") {
-            uint8_t temp_reg = allocate_register();
-            emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, temp_reg, obj_reg, 0));
             uint8_t dst_reg = allocate_register();
-            emit(vm::Instruction::make_rrr(vm::Opcode::Not, dst_reg, temp_reg, 0));
+            // Test_val cleanly handles nested optionals without a NOT operation
+            emit(vm::Instruction::make_rrr(vm::Opcode::Test_val, dst_reg, obj_reg, 0));
             return dst_reg;
         }
+
         if (expr.method_name == "get") {
             if (expr.arguments.empty()) {
                 uint8_t dst_reg = allocate_register();
@@ -1443,41 +1446,48 @@ uint8_t Compiler::compile_expr_node(const ast::Method_call_expr &expr)
                 types::Type_id arg_type = ast::get_type(tree.get(expr.arguments[0].value).node);
 
                 if (env.tt.is_string(arg_type)) {
-                    uint8_t is_nil_reg = allocate_register();
-                    emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, is_nil_reg, obj_reg, 0));
+                    uint8_t has_val_reg = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Test_val, has_val_reg, obj_reg, 0));
 
-                    // Jump to OK block if NOT nil
-                    size_t jump_ok_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, is_nil_reg, 0));
+                    // Jump to panic block if FALSE (Depth == 0)
+                    size_t jump_panic_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, has_val_reg, 0));
+
+                    // .ok_block:
+                    uint8_t dst_reg = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, dst_reg, obj_reg, 0));
+                    size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
 
                     // .panic_block:
+                    uint16_t panic_target = static_cast<uint16_t>(current_block().instructions.size());
+                    current_block().instructions[jump_panic_idx].ri.imm = panic_target;
+
                     uint8_t msg_reg = compile_expr(expr.arguments[0].value);
                     emit(vm::Instruction::make_rrr(vm::Opcode::Panic, 0, msg_reg, 0));
 
-                    // .ok_block:
-                    uint16_t ok_target = static_cast<uint16_t>(current_block().instructions.size());
-                    current_block().instructions[jump_ok_idx].ri.imm = ok_target;
+                    // .end:
+                    uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
+                    current_block().instructions[jump_end_idx].i.imm = end_target;
 
-                    uint8_t dst_reg = allocate_register();
-                    emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, dst_reg, obj_reg, 0));
                     return dst_reg;
 
                 } else if (env.tt.is_function(arg_type)) {
                     uint8_t dst_reg = allocate_register();
-                    uint8_t is_nil_reg = allocate_register();
-                    emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, is_nil_reg, obj_reg, 0));
+                    uint8_t has_val_reg = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Test_val, has_val_reg, obj_reg, 0));
 
-                    // Jump to unwrap block if NOT nil
-                    size_t jump_unwrap_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, is_nil_reg, 0));
+                    // Jump to closure block if FALSE (Depth == 0)
+                    size_t jump_closure_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, has_val_reg, 0));
 
-                    // .closure_block:
-                    uint8_t closure_reg = compile_expr(expr.arguments[0].value);
-                    emit(vm::Instruction::make_rrr(vm::Opcode::Call, dst_reg, closure_reg, 0));
+                    // .unwrap_block (Has Value):
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, dst_reg, obj_reg, 0));
                     size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
 
-                    // .unwrap_block:
-                    uint16_t unwrap_target = static_cast<uint16_t>(current_block().instructions.size());
-                    current_block().instructions[jump_unwrap_idx].ri.imm = unwrap_target;
-                    emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, dst_reg, obj_reg, 0));
+                    // .closure_block:
+                    uint16_t closure_target = static_cast<uint16_t>(current_block().instructions.size());
+                    current_block().instructions[jump_closure_idx].ri.imm = closure_target;
+
+                    uint8_t closure_reg = compile_expr(expr.arguments[0].value);
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Call, dst_reg, closure_reg, 0));
 
                     // .end:
                     uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
@@ -1487,23 +1497,25 @@ uint8_t Compiler::compile_expr_node(const ast::Method_call_expr &expr)
                 }
             }
         }
+
         if (expr.method_name == "or_else") {
             uint8_t dst_reg = allocate_register();
-            uint8_t is_nil_reg = allocate_register();
-            emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, is_nil_reg, obj_reg, 0));
+            uint8_t has_val_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Test_val, has_val_reg, obj_reg, 0));
 
-            // Jump over the closure call if NOT nil
-            size_t jump_unwrap_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, is_nil_reg, 0));
+            // Jump to closure block if FALSE (Depth == 0)
+            size_t jump_closure_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, has_val_reg, 0));
 
-            // .closure_block:
-            uint8_t closure_reg = compile_expr(expr.arguments[0].value);
-            emit(vm::Instruction::make_rrr(vm::Opcode::Call, dst_reg, closure_reg, 0));
+            // .unwrap_block (Has Value):
+            emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, dst_reg, obj_reg, 0));
             size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
 
-            // .unwrap_block:
-            uint16_t unwrap_target = static_cast<uint16_t>(current_block().instructions.size());
-            current_block().instructions[jump_unwrap_idx].ri.imm = unwrap_target;
-            emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, dst_reg, obj_reg, 0));
+            // .closure_block:
+            uint16_t closure_target = static_cast<uint16_t>(current_block().instructions.size());
+            current_block().instructions[jump_closure_idx].ri.imm = closure_target;
+
+            uint8_t closure_reg = compile_expr(expr.arguments[0].value);
+            emit(vm::Instruction::make_rrr(vm::Opcode::Call, dst_reg, closure_reg, 0));
 
             // .end:
             uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
@@ -1514,25 +1526,19 @@ uint8_t Compiler::compile_expr_node(const ast::Method_call_expr &expr)
 
         if (expr.method_name == "map") {
             uint8_t dst_reg = allocate_register();
-            uint8_t is_nil_reg = allocate_register();
-            emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, is_nil_reg, obj_reg, 0));
+            uint8_t has_val_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Test_val, has_val_reg, obj_reg, 0));
 
-            size_t jump_call_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, is_nil_reg, 0));
+            // Jump to nil block if FALSE (Depth == 0)
+            size_t jump_nil_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, has_val_reg, 0));
 
-            // .is_nil_block:
-            emit(vm::Instruction::make_rrr(vm::Opcode::Move, dst_reg, obj_reg, 0));
-            size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
-
-            // .call_block:
-            uint16_t call_target = static_cast<uint16_t>(current_block().instructions.size());
-            current_block().instructions[jump_call_idx].ri.imm = call_target;
-
+            // .call_block (Has Value):
             uint8_t unwrapped_reg = allocate_register();
             emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, unwrapped_reg, obj_reg, 0));
 
             uint8_t closure_reg = compile_expr(expr.arguments[0].value);
 
-            // Setup ABI for call: base_reg = closure, base_reg+1 = unwrapped arg
+            // Setup ABI
             uint8_t call_base_reg = allocate_register();
             emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base_reg, closure_reg, 0));
             uint8_t arg_reg = allocate_register();
@@ -1542,6 +1548,12 @@ uint8_t Compiler::compile_expr_node(const ast::Method_call_expr &expr)
             emit(vm::Instruction::make_rrr(vm::Opcode::Call, res_reg, call_base_reg, 1));
 
             emit(vm::Instruction::make_rrr(vm::Opcode::Wrap_option, dst_reg, res_reg, 1));
+            size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+
+            // .is_nil_block:
+            uint16_t nil_target = static_cast<uint16_t>(current_block().instructions.size());
+            current_block().instructions[jump_nil_idx].ri.imm = nil_target;
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, dst_reg, obj_reg, 0));
 
             // .end:
             uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
@@ -1607,12 +1619,12 @@ uint8_t Compiler::compile_expr_node(const ast::Method_call_expr &expr)
         if (model_data_ptr && model_data_ptr->methods.contains(expr.method_name)) {
             std::string global_func_name = model_name + "::" + expr.method_name;
 
-            // 1. Load the function closure (It was globally renamed by the Checker!)
+            // 1. Load the function closure
             uint8_t func_reg = allocate_register();
             uint16_t const_idx = function_locations_[global_func_name];
             emit(vm::Instruction::make_ri(vm::Opcode::Load_const, func_reg, const_idx));
 
-            // 2. Evaluate arguments (The checker already placed `this` at arguments[0]!)
+            // 2. Evaluate arguments
             std::vector<uint8_t> arg_eval_regs;
             for (const auto &arg : expr.arguments) {
                 arg_eval_regs.push_back(compile_expr(arg.value));

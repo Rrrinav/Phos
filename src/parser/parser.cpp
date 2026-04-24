@@ -1618,6 +1618,9 @@ Result<ast::Expr_id> Parser::primary()
             .loc = {previous().line, previous().column},
         }});
 
+        // 'nil' is an empty container, inherently Depth 1
+        tree_.get(expr).auto_wrap_depth = 1;
+
         // Support nil?, nil??, nil???
         while (match({lex::TokenType::Question})) {
             tree_.get(expr).auto_wrap_depth++;

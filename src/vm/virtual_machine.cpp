@@ -755,12 +755,14 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
         case Opcode::Test_nil: {
             Value val = registers[base + inst.rrr.src_a];
-            registers[base + inst.rrr.dst] = Value(val.is_nil() && val.depth() == 0);
+            // It is only "empty" if it is Depth 1 or 0, AND the core payload is nil.
+            registers[base + inst.rrr.dst] = Value(val.depth() <= 1 && val.is_nil());
             break;
         }
         case Opcode::Test_val: {
             Value src = registers[base + inst.rrr.src_a];
-            registers[base + inst.rrr.dst] = Value(src.depth() > 0);
+            // It HAS a value if it's a nested container (Depth > 1) OR the core payload is not nil.
+            registers[base + inst.rrr.dst] = Value(src.depth() > 1 || !src.is_nil());
             break;
         }
         case Opcode::Iter_next: {

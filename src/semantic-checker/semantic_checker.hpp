@@ -1,9 +1,9 @@
 #pragma once
 
 #include "../error/err.hpp"
+#include "../memory/arena.hpp"
 #include "../parser/ast.hpp"
 #include "../value/type.hpp"
-#include "../memory/arena.hpp"
 #include "scope_tracker.hpp"
 #include "type_environment.hpp"
 
@@ -14,8 +14,11 @@
 
 namespace phos {
 
-// Enforces type rules and logic utilizing the fully populated Type_environment.
-// Strictly decoupled from declaration tracking.
+/*
+ * [Semantic_checker]
+ * Enforces type rules and logic utilizing the fully populated Type_environment.
+ * Strictly decoupled from declaration tracking. Uses ID-based AST traversal.
+ */
 class Semantic_checker
 {
     enum class Projection_kind { Field, Var_Index, Int_Index, Uint_Index };
@@ -23,7 +26,7 @@ class Semantic_checker
     struct Projection
     {
         Projection_kind kind;
-        std::string name_val; // Used for Field names and Variable indices (e.g. "i")
+        std::string name_val;
         std::int64_t int_val = 0;
         std::uint64_t uint_val = 0;
 
@@ -74,10 +77,15 @@ class Semantic_checker
 
     ast::Ast_tree &tree;
     Type_environment &env;
-    phos::mem::Arena& arena_;
-public:
-    Semantic_checker(ast::Ast_tree &tree, Type_environment &env, mem::Arena& arena);
+    phos::mem::Arena &arena_;
 
+public:
+    Semantic_checker(ast::Ast_tree &tree, Type_environment &env, mem::Arena &arena);
+
+    /*
+     * [check] -> diagnostics
+     * entry point for semantic analysis
+     */
     std::vector<err::msg> check(const std::vector<ast::Stmt_id> &statements);
 
     Scope_tracker variables;
@@ -89,10 +97,17 @@ public:
     std::vector<err::msg> errors;
     std::string phase = "semantic-checking";
 
+    /*
+     * [diagnostics]
+     * emit compilation messages
+     */
     void type_error(const ast::Source_location &loc, const std::string &message);
     void type_warning(const ast::Source_location &loc, const std::string &message);
 
-    // --- Core Logic ---
+    /*
+     * [core logic]
+     * structural matching and type coercion
+     */
     bool is_compatible(types::Type_id expected, types::Type_id actual) const;
     types::Type_id promote_numeric_type(types::Type_id left, types::Type_id right) const;
 
@@ -100,7 +115,11 @@ public:
     std::optional<Scope_symbol> lookup(const std::string &name, const ast::Source_location &loc);
 
     void hoist_globals(const std::vector<ast::Stmt_id> &statements);
-    // --- Defaults & Nil Tracking ---
+
+    /*
+     * [defaults and nil tracking]
+     * flow control safety algorithms
+     */
     bool default_expr_uses_forbidden_names(ast::Expr_id expr, const std::unordered_set<std::string> &forbidden_names) const;
     void validate_function_defaults(const ast::Function_stmt &stmt);
     void validate_model_defaults(const ast::Model_stmt &stmt);
@@ -108,12 +127,17 @@ public:
 
     std::optional<Access_path> extract_access_path(ast::Expr_id expr_id) const;
 
-    void collect_nil_check_from_comparison(const ast::Binary_expr &expr, lex::TokenType target_op, std::unordered_set<Access_path, Access_path_hash> &out);
-    void collect_nil_check_from_optional_method(const ast::Method_call_expr &expr, bool target_truthy_branch, std::unordered_set<Access_path, Access_path_hash> &out);
+    void collect_nil_check_from_comparison(
+        const ast::Binary_expr &expr, lex::TokenType target_op, std::unordered_set<Access_path, Access_path_hash> &out);
+    void collect_nil_check_from_optional_method(
+        const ast::Method_call_expr &expr, bool target_truthy_branch, std::unordered_set<Access_path, Access_path_hash> &out);
     void collect_nil_checked_vars_for_then(ast::Expr_id expr, std::unordered_set<Access_path, Access_path_hash> &out);
     void collect_nil_checked_vars_for_else(ast::Expr_id expr, std::unordered_set<Access_path, Access_path_hash> &out);
 
-    // --- Binders & FFI ---
+    /*
+     * [binders and ffi]
+     * function boundary resolution
+     */
     struct Bound_call_arguments
     {
         std::vector<ast::Call_argument> ordered_arguments;
@@ -132,8 +156,7 @@ public:
         const std::vector<ast::Call_argument> &arguments,
         const ast::Source_location &call_loc,
         const std::string &call_kind,
-        const std::string &call_name
-    );
+        const std::string &call_name);
 
     Bound_native_arguments try_bind_native_arguments(
         const std::vector<types::Native_param> &parameters,
@@ -141,56 +164,71 @@ public:
         std::optional<types::Type_id> receiver_type = std::nullopt);
 
     types::Type_id parse_type_string(std::string str, const std::unordered_map<std::string, types::Type_id> &generics) const;
-    bool match_ffi_type(std::string expected_str, types::Type_id actual_type, std::unordered_map<std::string, types::Type_id> &generics) const;
+    bool
+    match_ffi_type(std::string expected_str, types::Type_id actual_type, std::unordered_map<std::string, types::Type_id> &generics) const;
 
-    // --- Iterator Protocol ---
+    /*
+     * [iterator protocol]
+     * sequence boundary extraction
+     */
     bool is_iterator_protocol_type(types::Type_id type) const;
     types::Type_id iterator_element_type(types::Type_id type) const;
     types::Type_id to_iterator_type(types::Type_id type) const;
 
-    // --- AST Walkers ---
+    /*
+     * [ast walkers]
+     * primary recursive descent dispatchers
+     */
     void check_stmt(ast::Stmt_id stmt);
     types::Type_id check_expr(ast::Expr_id expr, std::optional<types::Type_id> context_type = std::nullopt);
-    types::Type_id resolve_type_recursively(types::Type_id type_id, const ast::Source_location& loc);
+    types::Type_id resolve_type_recursively(types::Type_id type_id, const ast::Source_location &loc);
 
-    void check_stmt_node(ast::Function_stmt &stmt);
-    void check_stmt_node(ast::Model_stmt &stmt);
-    void check_stmt_node(ast::Union_stmt &stmt);
-    void check_stmt_node(ast::Enum_stmt &stmt);
-    void check_stmt_node(ast::Block_stmt &stmt);
-    void check_stmt_node(ast::Expr_stmt &stmt);
-    void check_stmt_node(ast::If_stmt &stmt);
-    void check_stmt_node(ast::Print_stmt &stmt);
-    void check_stmt_node(ast::Return_stmt &stmt);
-    void check_stmt_node(ast::Var_stmt &stmt);
-    void check_stmt_node(ast::While_stmt &stmt);
-    void check_stmt_node(ast::For_stmt &stmt);
-    void check_stmt_node(ast::For_in_stmt &stmt);
-    void check_stmt_node(ast::Match_stmt &stmt);
+    /*
+     * [statement evaluation rules]
+     * specific behavior constraints for statements
+     */
+    void check_function_stmt(ast::Stmt_id stmt_id);
+    void check_model_stmt(ast::Stmt_id stmt_id);
+    void check_union_stmt(ast::Stmt_id stmt_id);
+    void check_enum_stmt(ast::Stmt_id stmt_id);
+    void check_block_stmt(ast::Stmt_id stmt_id);
+    void check_expr_stmt(ast::Stmt_id stmt_id);
+    void check_if_stmt(ast::Stmt_id stmt_id);
+    void check_print_stmt(ast::Stmt_id stmt_id);
+    void check_return_stmt(ast::Stmt_id stmt_id);
+    void check_var_stmt(ast::Stmt_id stmt_id);
+    void check_while_stmt(ast::Stmt_id stmt_id);
+    void check_for_stmt(ast::Stmt_id stmt_id);
+    void check_for_in_stmt(ast::Stmt_id stmt_id);
+    void check_match_stmt(ast::Stmt_id stmt_id);
 
-    types::Type_id check_expr_node(ast::Assignment_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Binary_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Call_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Cast_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Closure_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Field_access_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Static_path_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Enum_member_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Field_assignment_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Literal_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Method_call_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Model_literal_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Unary_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Variable_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Array_literal_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Array_access_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Array_assignment_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Range_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Spawn_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Await_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Yield_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Fstring_expr &expr, std::optional<types::Type_id> context_type);
-    types::Type_id check_expr_node(ast::Anon_model_literal_expr &expr, std::optional<types::Type_id> context_type);
+    /*
+     * [expression evaluation rules]
+     * specific behavior constraints and type mapping for expressions
+     */
+    types::Type_id check_assignment_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_binary_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_call_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_cast_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_closure_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_field_access_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_static_path_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_enum_member_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_field_assignment_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_literal_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_method_call_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_model_literal_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_unary_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_variable_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_array_literal_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_array_access_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_array_assignment_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_range_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_spawn_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_await_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_yield_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_fstring_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+    types::Type_id check_anon_model_literal_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
 };
 
 } // namespace phos
