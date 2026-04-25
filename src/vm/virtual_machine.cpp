@@ -412,7 +412,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             }
             if (target_closure->native_func.has_value()) {
                 std::span<Value> args(&registers[base + inst.rrr.src_a + 1], arg_count);
-                Value result = (*target_closure->native_func)(args);
+                Value result = (*target_closure->native_func)(this->arena, args);
                 registers[base + inst.rrr.dst] = result;
                 break;
             }

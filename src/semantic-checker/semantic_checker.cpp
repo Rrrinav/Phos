@@ -2402,6 +2402,7 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
     }
 
     std::string ffi_callee_name;
+
     if (std::holds_alternative<ast::Variable_expr>(tree.get(callee_id).node)) {
         ffi_callee_name = get_node<ast::Variable_expr>(tree, callee_id).name;
     } else if (std::holds_alternative<ast::Static_path_expr>(tree.get(callee_id).node)) {
@@ -2424,7 +2425,61 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
                 return get_node<ast::Call_expr>(tree, expr_id).type = ret;
             }
         }
-        type_error(loc, std::format("Arguments do not match any native signature for function '{}'.", ffi_callee_name));
+
+        auto diagnostic = err::msg::error(
+            this->phase,
+            loc.l,
+            loc.c,
+            loc.file,
+            "Arguments do not match any native signature for function '{}'.",
+            ffi_callee_name
+        );
+
+        // 1. Build string of ACTUAL argument types provided
+        std::string actual_str = "";
+        for (size_t i = 0; i < arguments_copy.size(); ++i) {
+            actual_str += env.tt.to_string(check_expr(arguments_copy[i].value));
+            if (i != arguments_copy.size() - 1) {
+                actual_str += ", ";
+            }
+        }
+        if (actual_str.empty()) {
+            actual_str = "void";
+        }
+
+        // 2. Build string of EXPECTED argument types
+        std::string expected_str = "";
+        if (signatures.size() == 1) {
+            for (size_t i = 0; i < signatures[0].params.size(); ++i) {
+                expected_str += signatures[0].params[i].type_str;
+                if (i != signatures[0].params.size() - 1) {
+                    expected_str += ", ";
+                }
+            }
+            if (expected_str.empty()) {
+                expected_str = "void";
+            }
+        } else {
+            // Format overloaded signatures like: (i32, i32) OR (f64, f64)
+            for (size_t s = 0; s < signatures.size(); ++s) {
+                expected_str += "(";
+                for (size_t i = 0; i < signatures[s].params.size(); ++i) {
+                    expected_str += signatures[s].params[i].type_str;
+                    if (i != signatures[s].params.size() - 1) {
+                        expected_str += ", ";
+                    }
+                }
+                expected_str += ")";
+                if (s != signatures.size() - 1) {
+                    expected_str += " OR ";
+                }
+            }
+        }
+
+        // Output the beautiful error block
+        diagnostic.expected_got(expected_str, actual_str);
+        errors.push_back(std::move(diagnostic));
+
         return get_node<ast::Call_expr>(tree, expr_id).type = env.tt.get_unknown();
     }
 

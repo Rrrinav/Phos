@@ -7,13 +7,13 @@ namespace phos::vm {
 
 struct core
 {
-    static phos::Value native_clock(std::span<phos::Value> args)
+    static phos::Value native_clock(mem::Arena&, std::span<phos::Value> args)
     {
         auto now = std::chrono::steady_clock::now().time_since_epoch();
         return phos::Value(std::chrono::duration<double>(now).count());
     }
 
-    static phos::Value native_is_same(std::span<phos::Value> args)
+    static phos::Value native_is_same(mem::Arena&, std::span<phos::Value> args)
     {
         if (args.size() < 2) {
             return phos::Value(false);
@@ -57,28 +57,60 @@ struct core
         }
     }
 
-    [[noreturn]] static phos::Value exit(std::span<phos::Value> args) {
+    [[noreturn]] static phos::Value exit(mem::Arena&, std::span<phos::Value> args) {
         std::exit(args[0].as_int());
     }
 };
 
 struct numerical
 {
-    static Value to_string()
+    static Value to_string(mem::Arena& arena, std::span<phos::Value> args)
     {
-        return {};
+        std::string str_val = args[0].to_string();
+        return phos::Value::make_string(arena, str_val);
     }
 
-    static Value parse_i64()
+    static phos::Value parse_i64(mem::Arena &arena, std::span<phos::Value> args)
     {
-        return {};
+        std::string_view str = args[0].as_string();
+
+        size_t start = str.find_first_not_of(" \t\r\n");
+        if (start == std::string_view::npos) {
+            return phos::Value();
+        }
+        str = str.substr(start);
+
+        int64_t result = 0;
+
+        auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), result);
+
+        if (ec == std::errc()) {
+            return phos::Value(result);
+        }
+
+        return phos::Value();
     }
 
-    static Value parse_f64()
+    static phos::Value parse_f64(mem::Arena &arena, std::span<phos::Value> args)
     {
-        return {};
-    }
+        std::string_view str = args[0].as_string();
 
+        size_t start = str.find_first_not_of(" \t\r\n");
+        if (start == std::string_view::npos) {
+            return phos::Value();
+        }
+        str = str.substr(start);
+
+        double result = 0.0;
+
+        auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), result);
+
+        if (ec == std::errc()) {
+            return phos::Value(result);
+        }
+
+        return phos::Value();
+    }
 };
 
 }

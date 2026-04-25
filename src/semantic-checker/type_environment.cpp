@@ -204,9 +204,13 @@ const std::vector<types::Native_sig> *Type_environment::get_native_signatures(co
 // Core Registration
 void Type_environment::register_core_methods()
 {
+    static auto numericals = [] () { return std::string{"i8 | i16 | i32 | i64 | f16 | f32 | f64"}; };
     this->define_native("clock", std::vector<std::string>{}, "f64", vm::core::native_clock);
     this->define_native("is_same", std::vector<std::string>{"T", "T"}, "bool", vm::core::native_clock);
     this->define_native("exit", std::vector<std::string>{"T"}, "void", vm::core::exit);
+    this->define_native("to_string", std::vector<std::string>{numericals()}, "string", vm::numerical::to_string);
+    this->define_native("parse_i64", std::vector<std::string>{"string"}, "i64?", vm::numerical::parse_i64);
+    this->define_native("parse_f64", std::vector<std::string>{"string"}, "f64?", vm::numerical::parse_f64);
 }
 
 } // namespace phos

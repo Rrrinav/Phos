@@ -53,7 +53,7 @@ namespace phos {
 struct Value;
 
 // Raw C-style function pointer for native FFI (VM context passed as void* for now)
-using Native_fn = Value (*)(std::span<Value> args);
+using Native_fn = Value (*)(mem::Arena&, std::span<Value> args);
 
 // 1. THE RAW DATA STRUCTS (Zero OOP, Zero Std Lib, Arena Allocated)
 

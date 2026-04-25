@@ -2,6 +2,7 @@
 
 #include "../memory/arena.hpp"
 
+#include <charconv>
 #include <cstring>
 #include <limits>
 #include <format>
@@ -309,7 +310,6 @@ std::optional<Value> Value::coerce_literal(types::Primitive_kind target_type) co
     return std::nullopt;
 }
 
-// Stringification & Operators
 std::string Value::to_string() const
 {
     if (is_nil()) {
@@ -320,8 +320,15 @@ std::string Value::to_string() const
     }
 
     if (is_integer()) {
-        return std::to_string(as_int());
+        char buffer[64];
+        auto res = std::to_chars(buffer, buffer + sizeof(buffer), as_int());
+
+        if (res.ec == std::errc()) {
+            return std::string(buffer, res.ptr);
+        }
+        return "<conversion_error>";
     }
+
     if (is_float()) {
         return std::format("{}", as_float());
     }
@@ -337,8 +344,7 @@ std::string Value::to_string() const
         return std::format(
             "<{}::{}>",
             std::string_view(as.un->union_name->chars, as.un->union_name->length),
-            std::string_view(as.un->variant_name->chars, as.un->variant_name->length)
-        );
+            std::string_view(as.un->variant_name->chars, as.un->variant_name->length));
     case Value_tag::Closure:
         return "<closure>";
     case Value_tag::Iterator:
