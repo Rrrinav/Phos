@@ -227,7 +227,6 @@ public:
     types::Type_id check_spawn_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
     types::Type_id check_await_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
     types::Type_id check_yield_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
-    types::Type_id check_fstring_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
     types::Type_id check_anon_model_literal_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
 };
 

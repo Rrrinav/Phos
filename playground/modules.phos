@@ -1,5 +1,8 @@
-import math;
-import { sin, cos, pow } from math;
-import math::sin;
+import math; // loads math file / folder
+import { sin, cos, pow } from math; // loads these functions from math folder
+import math::sin;  // loads math::sin function as math::sin
 const my_math := import math;
 const mth_sin := import math::sin;
+
+import math.trig; // Loads math::trig (from math/trig.phos file); may have math::trig::hypot() function
+import containers.{ deque, hive }; // Loads containers/deque and containers/hive as

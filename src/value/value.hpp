@@ -3,6 +3,7 @@
 #include "type.hpp"
 #include "../vm/instruction.hpp"
 #include "../vm/frame.hpp"
+#include "../memory/arena.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -11,11 +12,6 @@
 #include <string_view>
 #include <stdfloat>
 #include <cstring>
-
-// Forward declare your Arena
-namespace phos::mem {
-class Arena;
-}
 
 namespace phos::numeric {
 

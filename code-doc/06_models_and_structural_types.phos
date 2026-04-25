@@ -22,7 +22,7 @@ bind Point {
         return (this.x * this.x) + (this.y * this.y);
     }
 
-    fn translated(dx: i64, dy: i64) -> Point {
+    fn translated(dx: i32, dy: i32) -> Point {
         return Point{
             x: this.x + dx,
             y: this.y + dy,

@@ -52,7 +52,6 @@ private:
     void print_node(const Spawn_expr &node);
     void print_node(const Await_expr &node);
     void print_node(const Yield_expr &node);
-    void print_node(const Fstring_expr &node);
     void print_node(const Enum_member_expr &node);
     void print_node(const Anon_model_literal_expr &node);
 
@@ -124,7 +123,6 @@ private:
     std::string print_node(const Spawn_expr &node);
     std::string print_node(const Await_expr &node);
     std::string print_node(const Yield_expr &node);
-    std::string print_node(const Fstring_expr &node);
     std::string print_node(const Enum_member_expr &node);
     std::string print_node(const Anon_model_literal_expr &node);
 

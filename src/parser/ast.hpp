@@ -250,14 +250,6 @@ struct Yield_expr
     Source_location loc;
 };
 
-struct Fstring_expr
-{
-    std::string raw_template;
-    std::vector<Expr_id> interpolations;
-    types::Type_id type;
-    Source_location loc;
-};
-
 struct Enum_member_expr
 {
     std::string member_name;
@@ -295,7 +287,6 @@ struct Expr
         Spawn_expr,
         Await_expr,
         Yield_expr,
-        Fstring_expr, //
         Enum_member_expr,
         Anon_model_literal_expr>;
 

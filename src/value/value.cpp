@@ -383,8 +383,45 @@ std::string Value::to_debug_string(bool is_nested) const
             }
         }
         res += "]";
+    } else if (tag_ == Value_tag::Model) {
+        std::string m_name = as.model->signature.name;
+
+        if (m_name.empty()) {
+            res = "{";
+        } else {
+            res = std::format("{} {{", m_name);
+        }
+
+        for (uint32_t i = 0; i < as.model->field_count; ++i) {
+            // Grab the field name from the type signature if it exists
+            if (i < as.model->signature.fields.size()) {
+                std::string f_name = as.model->signature.fields[i].first;
+                // If it's a positional anonymous field, f_name will be empty, so we skip the label
+                if (!f_name.empty()) {
+                    res += f_name + ": ";
+                }
+            }
+
+            // Recursively print the nested value
+            res += as.model->fields[i].to_debug_string(true);
+
+            if (i != as.model->field_count - 1) {
+                res += ", ";
+            }
+        }
+        res += "}";
+    } else if (tag_ == Value_tag::Union) {
+        std::string_view u_name(as.un->union_name->chars, as.un->union_name->length);
+        std::string_view v_name(as.un->variant_name->chars, as.un->variant_name->length);
+
+        res = std::format("{}::{}", u_name, v_name);
+
+        // If the union has a valid payload (not a void/nil variant), print it
+        if (as.un->payload && !as.un->payload->is_nil()) {
+            res += std::format("({})", as.un->payload->to_debug_string(true));
+        }
     } else {
-        // Fallback for models/iterators/closures
+        // Fallback for iterators/closures/green threads
         res = to_string();
     }
 
@@ -392,6 +429,7 @@ std::string Value::to_debug_string(bool is_nested) const
     for (uint8_t i = 0; i < option_depth_; ++i) {
         res += "?";
     }
+
     return res;
 }
 

@@ -74,6 +74,7 @@ enum class TokenType : uint8_t {
     PrintErr,
     As,
     This,
+    Import,
 
     //  Arithmetic
     Plus,
@@ -197,6 +198,7 @@ static const std::unordered_map<std::string_view, TokenType> token_keywords = {
     {"as", TokenType::As},
     {"this", TokenType::This},
     {"nil", TokenType::Nil},
+    {"import", TokenType::Import},
 
     // boolean literals
     {"true", TokenType::Bool},

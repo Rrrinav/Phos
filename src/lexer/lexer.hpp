@@ -236,12 +236,6 @@ private:
             return make(TokenType::Slash, "/", start_col);
 
         default:
-            // f-string:  f"..."
-            if (c == 'f' && peek() == '"') {
-                advance(); // consume opening "
-                return scan_fstring(start_col);
-            }
-
             if (std::isdigit(c)) {
                 return scan_number(start_col);
             }
@@ -255,7 +249,6 @@ private:
     }
 
     //  string scanner
-
     Token scan_string(size_t start_col)
     {
         std::string value;
@@ -304,85 +297,6 @@ private:
         Value str_val = Value::make_string(arena_, value);
         return Token(TokenType::String, std::format("\"{}\"", value), str_val, line, start_col);
     }
-
-    //  f-string scanner
-    // Called after the opening " has been consumed (start_col points at the 'f').
-    // Stores the raw template (with braces intact) as the literal value.
-    // The parser will split on {} and build a concat tree from it.
-    Token scan_fstring(size_t start_col)
-    {
-        std::string raw;
-        int depth = 0; // track nested braces inside interpolations
-
-        while (!is_at_end()) {
-            char c = advance();
-
-            if (c == '"' && depth == 0) {
-                // closing " outside an interpolation — done
-                Value fstr_val = Value::make_string(arena_, raw);
-                return Token(TokenType::Fstring, std::format("f\"{}\"", raw), fstr_val, line, start_col);
-            }
-
-            if (c == '\n') {
-                line++;
-                column = 1;
-            }
-
-            // escape sequences inside f-string literal portions
-            if (c == '\\' && depth == 0) {
-                char esc = advance();
-                switch (esc) {
-                case 'n':
-                    raw += '\n';
-                    break;
-                case 't':
-                    raw += '\t';
-                    break;
-                case 'r':
-                    raw += '\r';
-                    break;
-                case '\\':
-                    raw += '\\';
-                    break;
-                case '"':
-                    raw += '"';
-                    break;
-                case '{':
-                    raw += '{';
-                    break; // Backwards compatibility for \{
-                case '}':
-                    raw += '}';
-                    break; // Backwards compatibility for \}
-                default:
-                    raw += '\\';
-                    raw += esc;
-                    break;
-                }
-                continue;
-            }
-
-            // --- NEW: TRACK INTERPOLATION DEPTH WITH ESCAPES ---
-            if (c == '{') {
-                if (depth == 0 && peek() == '{') {
-                    raw += advance(); // It's an escaped '{{', consume the second one!
-                } else {
-                    depth++; // It's a real interpolation, or nested code
-                }
-            } else if (c == '}') {
-                if (depth == 0 && peek() == '}') {
-                    raw += advance(); // It's an escaped '}}', consume the second one!
-                } else if (depth > 0) {
-                    depth--; // Close an interpolation, or nested code
-                }
-            }
-
-            raw += c;
-        }
-
-        return Token(TokenType::Invalid, std::string("Unterminated f-string"), Value(), line, start_col);
-    }
-
-    //  number scanner
 
     Token scan_number(size_t start_col)
     {

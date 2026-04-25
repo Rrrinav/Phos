@@ -2,7 +2,6 @@
 
 #include "../error/err.hpp"
 #include "../error/result.hpp"
-#include "../lexer/lexer.hpp"
 #include "../lexer/token.hpp"
 #include "../utility/try_res.hpp"
 #include "../value/type.hpp"
@@ -248,10 +247,6 @@ void Parser::stamp_expr(ast::Expr_id expr_id)
                 stamp_expr(e.thread);
             } else if constexpr (std::is_same_v<T, ast::Yield_expr>) {
                 stamp_expr(e.value);
-            } else if constexpr (std::is_same_v<T, ast::Fstring_expr>) {
-                for (auto interpolation : e.interpolations) {
-                    stamp_expr(interpolation);
-                }
             } else if constexpr (std::is_same_v<T, ast::Anon_model_literal_expr>) {
                 for (auto &[_, field_expr] : e.fields) {
                     stamp_expr(field_expr);
@@ -1605,11 +1600,6 @@ Result<ast::Expr_id> Parser::primary()
         return parse_array_literal();
     }
 
-    // f-string
-    if (match({lex::TokenType::Fstring})) {
-        return parse_fstring(previous());
-    }
-
     // primitives
     if (match({lex::TokenType::Nil})) {
         ast::Expr_id expr = tree_.add_expr(ast::Expr{ast::Literal_expr{
@@ -1702,28 +1692,7 @@ Result<ast::Expr_id> Parser::primary()
                 }});
         }
 
-        // --- LL(2) SYNTACTIC LOOKAHEAD FOR MODEL LITERALS ---
-        // If we see an Identifier followed by '{', we peek ahead to see if it structurally looks like a model literal
-        // (i.e. '}' or 'field_name:' or 'field_name,'). If it does, we parse it as a literal!
-        bool is_model_literal = false;
-
-        if (check(lex::TokenType::LeftBrace) && current_ + 1 < tokens_.size()) {
-            lex::TokenType next_tok = tokens_[current_ + 1].type;
-
-            if (next_tok == lex::TokenType::RightBrace) {
-                // e.g. MyModel {}
-                is_model_literal = true;
-            } else if (next_tok == lex::TokenType::Identifier && current_ + 2 < tokens_.size()) {
-                // e.g. MyModel { field: ... } or MyModel { field, ... } or MyModel { field }
-                lex::TokenType after_next_tok = tokens_[current_ + 2].type;
-                if (after_next_tok == lex::TokenType::Colon || after_next_tok == lex::TokenType::Comma
-                    || after_next_tok == lex::TokenType::RightBrace) {
-                    is_model_literal = true;
-                }
-            }
-        }
-
-        if (is_model_literal) {
+        if (check(lex::TokenType::LeftBrace)) {
             return parse_model_literal(id.lexeme);
         }
 
@@ -1855,83 +1824,6 @@ Result<ast::Expr_id> Parser::parse_model_literal(const std::string &model_name)
             .fields = fields,
             .type = type_table_.get_unknown(),
             .loc = {brace.line, brace.column},
-        }});
-}
-
-// fstring -> split raw template on "{" "}" pairs, re-lex each interpolation,
-// and preserve the full construct as a dedicated AST node.
-Result<ast::Expr_id> Parser::parse_fstring(const lex::Token &tok)
-{
-    ast::Source_location loc{tok.line, tok.column};
-    const std::string raw = std::string(tok.literal.as_string());
-
-    std::vector<ast::Expr_id> interpolations;
-
-    size_t i = 0;
-    while (i < raw.size()) {
-        if (raw[i] == '{') {
-            // ESCAPE CHECK FOR OPENING BRACE
-            if (i + 1 < raw.size() && raw[i + 1] == '{') {
-                i += 2; // Leapfrog over the '{{'
-                continue;
-            }
-
-            size_t start = ++i;
-            int depth = 1;
-            while (i < raw.size() && depth > 0) {
-                if (raw[i] == '{') {
-                    depth++;
-                } else if (raw[i] == '}') {
-                    depth--;
-                }
-                if (depth > 0) {
-                    i++;
-                }
-            }
-            std::string inner = raw.substr(start, i - start);
-            i++; // Skip the closing '}'
-
-            lex::Lexer inner_lexer(inner, arena_);
-            auto inner_tokens = inner_lexer.tokenize();
-
-            // Passing type_table_ and tree_ properly to the new instance
-            Parser inner_parser(std::move(inner_tokens).value(), type_table_, tree_, arena_);
-
-            inner_parser.current_model_ = current_model_;
-            inner_parser.function_types_ = function_types_;
-            inner_parser.parsed_models = parsed_models;
-
-            auto inner_expr = inner_parser.expression();
-            if (!inner_expr) {
-                return std::unexpected(create_error(tok, "Invalid expression in f-string: " + inner));
-            }
-
-            inner_parser.skip_newlines();
-            if (!inner_parser.is_at_end()) {
-                return std::unexpected(create_error(tok, "Unexpected trailing tokens in f-string expression: " + inner));
-            }
-
-            interpolations.push_back(*inner_expr);
-        } else if (raw[i] == '}') {
-            // ESCAPE CHECK FOR CLOSING BRACE
-            if (i + 1 < raw.size() && raw[i + 1] == '}') {
-                i += 2; // Leapfrog over the '}}'
-                continue;
-            } else {
-                // If it's just a single '}', it's a syntax error!
-                return std::unexpected(create_error(tok, "Unmatched closing brace '}' in f-string. Use '}}' to escape"));
-            }
-        } else {
-            i++;
-        }
-    }
-
-    return tree_.add_expr(
-        ast::Expr{ast::Fstring_expr{
-            .raw_template = raw,
-            .interpolations = std::move(interpolations),
-            .type = type_table_.get_string(),
-            .loc = loc,
         }});
 }
 

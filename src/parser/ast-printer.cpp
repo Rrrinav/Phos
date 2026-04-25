@@ -482,19 +482,6 @@ void Tree_printer::print_node(const Yield_expr &node)
     }
 }
 
-void Tree_printer::print_node(const Fstring_expr &node)
-{
-    indent();
-    print_str("F-String: " + node.raw_template);
-    with_child(false, [&] {
-        indent();
-        print_str("Interpolations");
-        for (size_t i = 0; i < node.interpolations.size(); ++i) {
-            with_child(i + 1 < node.interpolations.size(), [&] { visit(node.interpolations[i]); });
-        }
-    });
-}
-
 void Tree_printer::print_node(const Enum_member_expr &node)
 {
     indent();
@@ -994,15 +981,6 @@ std::string Sexpr_printer::print_node(const Await_expr &node)
 std::string Sexpr_printer::print_node(const Yield_expr &node)
 {
     return "(yield" + std::string(node.value.is_null() ? "" : " " + print_expr(node.value)) + ")";
-}
-
-std::string Sexpr_printer::print_node(const Fstring_expr &node)
-{
-    std::string res = "(fstring \"" + node.raw_template + "\"";
-    for (auto interp : node.interpolations) {
-        res += " " + print_expr(interp);
-    }
-    return res + ")";
 }
 
 std::string Sexpr_printer::print_node(const Enum_member_expr &node)

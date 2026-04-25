@@ -211,6 +211,28 @@ void Type_environment::register_core_methods()
     this->define_native("to_string", std::vector<std::string>{numericals()}, "string", vm::numerical::to_string);
     this->define_native("parse_i64", std::vector<std::string>{"string"}, "i64?", vm::numerical::parse_i64);
     this->define_native("parse_f64", std::vector<std::string>{"string"}, "f64?", vm::numerical::parse_f64);
+
+    // String
+    this->define_native("String::starts_with", std::vector<std::string>{"string", "string"}, "bool", vm::string_methods::starts_with);
+    this->define_native("String::ends_with", std::vector<std::string>{"string", "string"}, "bool", vm::string_methods::ends_with);
+    this->define_native("String::to_upper", std::vector<std::string>{"string"}, "string", vm::string_methods::to_upper);
+    this->define_native("String::to_lower", std::vector<std::string>{"string"}, "string", vm::string_methods::to_lower);
+    this->define_native("String::trim", std::vector<std::string>{"string"}, "string", vm::string_methods::trim);
+    this->define_native("String::split", std::vector<std::string>{"string", "string"}, "string[]", vm::string_methods::split);
+    this->define_native("String::substr", std::vector<std::string>{"string", numericals(), numericals()}, "string", vm::string_methods::substr);
+    this->define_native("String::repeat", std::vector<std::string>{"string", "i64"}, "string", vm::string_methods::repeat);
+    this->define_native("String::index_of", std::vector<std::string>{"string", "string"}, "i64?", vm::string_methods::index_of);
+
+    // Array
+    this->define_native("Array::is_empty", std::vector<std::string>{"T[]"}, "bool", vm::array_methods::is_empty);
+    this->define_native("Array::clear", std::vector<std::string>{"T[]"}, "void", vm::array_methods::clear);
+    this->define_native("Array::push", std::vector<std::string>{"T[]", "T"}, "void", vm::array_methods::push);
+    this->define_native("Array::pop", std::vector<std::string>{"T[]"}, "T", vm::array_methods::pop);
+    this->define_native("Array::insert", std::vector<std::string>{"T[]", "i32", "T"}, "void", vm::array_methods::insert);
+    this->define_native("Array::remove_at", std::vector<std::string>{"T[]", "T"}, "", vm::array_methods::remove_at);
+    this->define_native("Array::remove_at", std::vector<std::string>{"T[]", "T"}, "", vm::array_methods::remove_at);
+    this->define_native("Array::uo_remove_at", std::vector<std::string>{"T[]", "T"}, "", vm::array_methods::u_remove_at);
+    this->define_native("Array::reverse", std::vector<std::string>{"T[]"}, "void", vm::array_methods::reverse);
 }
 
 } // namespace phos

@@ -1523,6 +1523,34 @@ uint8_t Compiler::compile_expr_node(const ast::Method_call_expr &expr)
 
             return dst_reg;
         }
+        if (expr.method_name == "value_or") {
+            // 1. Evaluate the fallback expression FIRST
+            uint8_t fallback_reg = compile_expr(expr.arguments[0].value);
+
+            uint8_t dst_reg = allocate_register();
+            uint8_t has_val_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Test_val, has_val_reg, obj_reg, 0));
+
+            // 2. Jump to fallback block if FALSE (Depth == 0)
+            size_t jump_fallback_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, has_val_reg, 0));
+
+            // .unwrap_block (Has Value):
+            emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, dst_reg, obj_reg, 0));
+            size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+
+            // .fallback_block:
+            uint16_t fallback_target = static_cast<uint16_t>(current_block().instructions.size());
+            current_block().instructions[jump_fallback_idx].ri.imm = fallback_target;
+
+            // Just move the already evaluated fallback into the destination!
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, dst_reg, fallback_reg, 0));
+
+            // .end:
+            uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
+            current_block().instructions[jump_end_idx].i.imm = end_target;
+
+            return dst_reg;
+        }
 
         if (expr.method_name == "map") {
             uint8_t dst_reg = allocate_register();
@@ -1697,8 +1725,54 @@ uint8_t Compiler::compile_expr_node(const ast::Method_call_expr &expr)
             return dst_reg;
         }
     }
+    std::string ffi_name{""};
 
-    std::println(std::cerr, "Compiler Bug: Regular Method Calls not fully implemented in Bytecode yet!");
+    if (env.tt.is_array(obj_type)) {
+        ffi_name = "Array::" + expr.method_name;
+    } else if (env.tt.is_iterator(obj_type)) {
+        ffi_name = "Iter::" + expr.method_name;
+    } else if (env.tt.is_string(obj_type)) {
+        ffi_name = "String::" + expr.method_name;
+    }
+
+    if (!ffi_name.empty() && function_locations_.contains(ffi_name)) {
+        // 1. Evaluate the receiver (the string or array)
+        uint8_t obj_reg = compile_expr(expr.object);
+
+        // 2. Evaluate all arguments into scattered temporary registers
+        std::vector<uint8_t> arg_eval_regs;
+        for (const auto &arg : expr.arguments) {
+            arg_eval_regs.push_back(compile_expr(arg.value));
+        }
+
+        // 3. Load the native C++ function closure from the constant pool
+        uint8_t func_reg = allocate_register();
+        uint16_t const_idx = function_locations_[ffi_name];
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, func_reg, const_idx));
+
+        // 4. Set up the ABI contiguous register block: [Closure, Receiver, Arg1, Arg2...]
+        uint8_t call_base_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base_reg, func_reg, 0));
+
+        // Push the receiver as the implicit first argument
+        uint8_t arg_this = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_this, obj_reg, 0));
+
+        // Push the rest of the arguments
+        for (size_t i = 0; i < expr.arguments.size(); ++i) {
+            uint8_t arg_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_reg, arg_eval_regs[i], 0));
+        }
+
+        // 5. Emit the Call opcode (argc + 1 because the receiver counts as an argument)
+        uint8_t dest_reg = allocate_register();
+        uint8_t argc = static_cast<uint8_t>(expr.arguments.size() + 1);
+        emit(vm::Instruction::make_rrr(vm::Opcode::Call, dest_reg, call_base_reg, argc));
+
+        return dest_reg;
+    }
+
+    std::println(std::cerr, "Compiler Bug: These type ({}) of method calls not fully implemented in Bytecode yet!", expr.method_name);
     std::exit(EXIT_FAILURE);
     return 0;
 }

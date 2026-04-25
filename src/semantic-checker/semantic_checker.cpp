@@ -381,6 +381,31 @@ bool Semantic_checker::is_compatible(types::Type_id expected, types::Type_id act
     if (env.tt.is_unknown(expected) || env.tt.is_unknown(actual)) {
         return true;
     }
+
+    if (env.tt.is_model(expected) && env.tt.is_model(actual)) {
+        auto &exp_model = std::get<types::Model_type>(env.tt.get(expected).data);
+        auto &act_model = std::get<types::Model_type>(env.tt.get(actual).data);
+
+        // If both models are anonymous (empty names), we verify them structurally
+        if (exp_model.name.empty() && act_model.name.empty()) {
+            if (exp_model.fields.size() != act_model.fields.size()) {
+                return false;
+            }
+
+            for (size_t i = 0; i < exp_model.fields.size(); ++i) {
+                // Field names must match
+                if (exp_model.fields[i].first != act_model.fields[i].first) {
+                    return false;
+                }
+                // Field types must be recursively compatible
+                if (!is_compatible(exp_model.fields[i].second, act_model.fields[i].second)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
     if (env.tt.is_any(expected)) {
         return true;
     }
@@ -532,13 +557,6 @@ bool Semantic_checker::default_expr_uses_forbidden_names(ast::Expr_id expr_id, c
                 return default_expr_uses_forbidden_names(node.thread, forbidden_names);
             } else if constexpr (std::is_same_v<T, ast::Yield_expr>) {
                 return default_expr_uses_forbidden_names(node.value, forbidden_names);
-            } else if constexpr (std::is_same_v<T, ast::Fstring_expr>) {
-                for (auto part : node.interpolations) {
-                    if (default_expr_uses_forbidden_names(part, forbidden_names)) {
-                        return true;
-                    }
-                }
-                return false;
             }
             return false;
         },
@@ -1240,8 +1258,6 @@ types::Type_id Semantic_checker::check_expr(ast::Expr_id expr_id, std::optional<
                 return check_await_expr(expr_id, peeled_hint);
             } else if constexpr (std::is_same_v<T, ast::Yield_expr>) {
                 return check_yield_expr(expr_id, peeled_hint);
-            } else if constexpr (std::is_same_v<T, ast::Fstring_expr>) {
-                return check_fstring_expr(expr_id, peeled_hint);
             }
             return env.tt.get_unknown();
         },
@@ -2050,18 +2066,7 @@ types::Type_id Semantic_checker::check_anon_model_literal_expr(ast::Expr_id expr
             }
         } else {
             for (size_t i = 0; i < fields.size(); ++i) {
-                if (fields[i].first.empty()) {
-                    auto expr_id = fields[i].second;
-                    auto &node = tree.get(expr_id).node;
-
-                    if (auto *v = std::get_if<ast::Variable_expr>(&node)) {
-                        fields[i].first = v->name;
-                    } else if (auto *f = std::get_if<ast::Field_access_expr>(&node)) {
-                        fields[i].first = f->field_name; // Extracts "c" from "this.c"
-                    } else {
-                        fields[i].first = expected_model.fields[i].first; // Positional fallback
-                    }
-                }
+                fields[i].first = expected_model.fields[i].first;
             }
         }
 
@@ -3157,7 +3162,7 @@ types::Type_id Semantic_checker::check_method_call_expr(ast::Expr_id expr_id, st
         ffi_name = "Array::" + method_name;
     }
     if (env.tt.is_string(obj_type)) {
-        ffi_name = "string::" + method_name;
+        ffi_name = "String::" + method_name;
     }
     if (env.tt.is_optional(obj_type)) {
         ffi_name = "Optional::" + method_name;
@@ -3195,6 +3200,29 @@ types::Type_id Semantic_checker::check_method_call_expr(ast::Expr_id expr_id, st
             }
         }
     }
+    if (env.tt.is_optional(obj_type) && method_name == "value_or") {
+        auto base_type = env.tt.get_optional_base(obj_type);
+
+        if (!bind_intrinsic({"fallback"}, "value_or")) {
+            get_node<ast::Method_call_expr>(tree, expr_id).arguments = std::move(arguments_copy);
+            return get_node<ast::Method_call_expr>(tree, expr_id).type = env.tt.get_unknown();
+        }
+
+        auto fallback_type = check_expr(arguments_copy[0].value, base_type);
+
+        if (!is_compatible(base_type, fallback_type)) {
+            type_error(
+                ast::get_loc(tree.get(arguments_copy[0].value).node),
+                std::format(
+                    "Fallback type must match the optional's base type. Expected '{}', got '{}'.",
+                    env.tt.to_string(base_type),
+                    env.tt.to_string(fallback_type)));
+        }
+
+        get_node<ast::Method_call_expr>(tree, expr_id).arguments = std::move(arguments_copy);
+        // It safely strips the optional wrapper and returns the guaranteed base type!
+        return get_node<ast::Method_call_expr>(tree, expr_id).type = base_type;
+    }
 
     if (env.tt.is_optional(obj_type) && method_name == "or_else") {
         if (!bind_intrinsic({"fallback"}, "or_else")) {
@@ -3217,6 +3245,15 @@ types::Type_id Semantic_checker::check_method_call_expr(ast::Expr_id expr_id, st
         }
         get_node<ast::Method_call_expr>(tree, expr_id).arguments = std::move(arguments_copy);
         return get_node<ast::Method_call_expr>(tree, expr_id).type = base_type;
+    }
+
+    if (env.tt.is_optional(obj_type) && (method_name == "is_val" || method_name == "has_val" || method_name == "is_nil")) {
+        if (!bind_intrinsic({}, method_name)) {
+            get_node<ast::Method_call_expr>(tree, expr_id).arguments = std::move(arguments_copy);
+            return get_node<ast::Method_call_expr>(tree, expr_id).type = env.tt.get_unknown();
+        }
+        get_node<ast::Method_call_expr>(tree, expr_id).arguments = std::move(arguments_copy);
+        return get_node<ast::Method_call_expr>(tree, expr_id).type = env.tt.get_bool();
     }
 
     if (!ffi_name.empty() && env.is_native_defined(ffi_name)) {
@@ -3593,23 +3630,6 @@ types::Type_id Semantic_checker::check_yield_expr(ast::Expr_id expr_id, std::opt
         return get_node<ast::Yield_expr>(tree, expr_id).type = ret;
     }
     return get_node<ast::Yield_expr>(tree, expr_id).type = env.tt.get_void();
-}
-
-/*
- * [fstring_expr] -> Type
- * `-- enforce string conversions
- */
-types::Type_id Semantic_checker::check_fstring_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
-{
-    (void)context_type;
-    auto interpolations = get_node<ast::Fstring_expr>(tree, expr_id).interpolations;
-
-    for (auto interp : interpolations) {
-        if (!interp.is_null()) {
-            std::ignore = check_expr(interp);
-        }
-    }
-    return get_node<ast::Fstring_expr>(tree, expr_id).type = env.tt.get_string();
 }
 
 } // namespace phos

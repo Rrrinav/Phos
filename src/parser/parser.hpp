@@ -110,7 +110,6 @@ private:
     Result<ast::Expr_id> parse_closure_expression();
     Result<ast::Expr_id> parse_array_literal();
     Result<ast::Expr_id> parse_model_literal(const std::string &model_name);
-    Result<ast::Expr_id> parse_fstring(const lex::Token &tok);
 
     void stamp_loc(ast::Source_location &loc);
     void stamp_expr(ast::Expr_id expr);

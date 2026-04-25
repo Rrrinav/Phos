@@ -276,10 +276,6 @@ void Resolver::resolve_expr(ast::Expr_id expr_id)
                 resolve_expr(e.thread);
             } else if constexpr (std::is_same_v<T, ast::Yield_expr>) {
                 resolve_expr(e.value);
-            } else if constexpr (std::is_same_v<T, ast::Fstring_expr>) {
-                for (auto interp : e.interpolations) {
-                    resolve_expr(interp);
-                }
             }
         },
         expr_var);
