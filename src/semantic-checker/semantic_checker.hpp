@@ -86,7 +86,7 @@ public:
      * [check] -> diagnostics
      * entry point for semantic analysis
      */
-    std::vector<err::msg> check(const std::vector<ast::Stmt_id> &statements);
+    err::Engine check(const std::vector<ast::Stmt_id> &statements);
 
     Scope_tracker variables;
 
@@ -94,8 +94,7 @@ public:
     std::optional<types::Type_id> current_return_type;
     std::optional<types::Type_id> current_model_type;
 
-    std::vector<err::msg> errors;
-    std::string phase = "semantic-checking";
+    err::Engine diagnostics_{"semantic-checking"};
 
     /*
      * [diagnostics]

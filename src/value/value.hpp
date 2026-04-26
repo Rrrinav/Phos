@@ -193,7 +193,7 @@ private:
     } as;
 
     Value_tag tag_ = Value_tag::Nil;
-    uint8_t option_depth_ = 0;
+    uint8_t option_depth_ = 1;
 
     // Private raw constructors (Only used by the Arena Factories)
     Value(String_data *s, uint8_t d)       : tag_(Value_tag::String), option_depth_(d)

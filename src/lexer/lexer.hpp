@@ -1,13 +1,14 @@
 #pragma once
 
 #include "./token.hpp"
+#include "../error/err.hpp"
 #include "../memory/arena.hpp"
 
 #include <cctype>
-#include <expected>
 #include <format>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace phos::lex {
@@ -15,22 +16,30 @@ namespace phos::lex {
 class Lexer
 {
 public:
-    explicit Lexer(std::string_view src, phos::mem::Arena& arena) : source(src), arena_(arena)
-    {}
-
-    std::expected<std::vector<Token>, Token> tokenize()
+    struct Tokenize_result
     {
         std::vector<Token> tokens;
+        phos::err::Engine diagnostics{"lexing"};
+    };
+
+    explicit Lexer(std::string_view src, phos::mem::Arena &arena, std::string source_name = "<input>")
+        : source(src), arena_(arena), source_name_(std::move(source_name))
+    {}
+
+    Tokenize_result tokenize()
+    {
+        Tokenize_result result;
         while (!is_at_end()) {
             if (auto tok = scan_token(); tok.has_value()) {
                 if ((*tok).type == TokenType::Invalid) {
-                    return std::unexpected(tok.value());
+                    result.diagnostics.error(tok->line, tok->column, source_name_, "Invalid token: {}", tok->lexeme);
+                    continue;
                 }
-                tokens.push_back(std::move(*tok));
+                result.tokens.push_back(std::move(*tok));
             }
         }
-        tokens.emplace_back(TokenType::Eof, "", Value(), line, column);
-        return tokens;
+        result.tokens.emplace_back(TokenType::Eof, "", Value(), line, column);
+        return result;
     }
 
 private:
@@ -40,6 +49,7 @@ private:
     size_t column = 1;
 
     phos::mem::Arena& arena_;
+    std::string source_name_;
     const std::unordered_map<std::string_view, TokenType> keywords = token_keywords;
 
     //  primitives

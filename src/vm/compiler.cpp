@@ -734,78 +734,146 @@ void Compiler::compile_stmt_node(const ast::Match_stmt &stmt)
 {
     // 1. Evaluate the subject once
     uint8_t subject_reg = compile_expr(stmt.subject);
+    types::Type_id subject_type = ast::get_type(tree.get(stmt.subject).node);
 
     std::vector<size_t> end_jumps;
 
     // 2. Iterate through each arm
     for (const auto &arm : stmt.arms) {
         if (arm.is_wildcard) {
-            // Wildcard is a catch-all, just execute the body and skip the rest
             if (!arm.body.is_null()) {
                 compile_stmt(arm.body);
             }
-            break;
+            break; // Wildcard consumes the rest of the match
         }
-
-        // Extract the target variant name from the arm's pattern
-        std::string variant_str;
-        auto &pattern_node = tree.get(arm.pattern).node;
-        if (auto *sp = std::get_if<ast::Static_path_expr>(&pattern_node)) {
-            variant_str = sp->member.lexeme;
-        } else if (auto *em = std::get_if<ast::Enum_member_expr>(&pattern_node)) {
-            variant_str = em->member_name;
-        } else {
-            std::println(std::cerr, "Compiler Bug: Unsupported pattern type in match arm.");
-            std::exit(EXIT_FAILURE);
-        }
-
-        // 3. Load the target variant string and emit Test_union
-        uint8_t str_reg = allocate_register();
-        uint16_t str_idx = add_constant(Value::make_string(arena, variant_str));
-        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, str_reg, str_idx));
 
         uint8_t test_reg = allocate_register();
-        emit(vm::Instruction::make_rrr(vm::Opcode::Test_union, test_reg, subject_reg, str_reg));
+        auto &pattern_node = tree.get(arm.pattern).node;
 
-        // 4. Jump to the next arm if this test fails
+        // --- STRATEGY A: UNIONS AND ENUMS ---
+        if (std::holds_alternative<ast::Static_path_expr>(pattern_node) || std::holds_alternative<ast::Enum_member_expr>(pattern_node)) {
+            types::Type_id pattern_type = ast::get_type(tree.get(arm.pattern).node);
+
+            if (env.tt.is_union(subject_type)) {
+                std::string variant_str;
+                if (auto *sp = std::get_if<ast::Static_path_expr>(&pattern_node)) {
+                    variant_str = sp->member.lexeme;
+                } else if (auto *em = std::get_if<ast::Enum_member_expr>(&pattern_node)) {
+                    variant_str = em->member_name;
+                }
+
+                uint8_t str_reg = allocate_register();
+                uint16_t str_idx = add_constant(Value::make_string(arena, variant_str));
+                emit(vm::Instruction::make_ri(vm::Opcode::Load_const, str_reg, str_idx));
+                emit(vm::Instruction::make_rrr(vm::Opcode::Test_union, test_reg, subject_reg, str_reg));
+            } else {
+                uint8_t pattern_reg = compile_expr(arm.pattern);
+
+                types::Type_id subject_cmp_type = subject_type;
+                if (env.tt.is_enum(subject_cmp_type)) {
+                    subject_cmp_type = env.tt.get(subject_cmp_type).as<types::Enum_type>().base;
+                }
+
+                types::Type_id pattern_cmp_type = pattern_type;
+                if (env.tt.is_enum(pattern_cmp_type)) {
+                    pattern_cmp_type = env.tt.get(pattern_cmp_type).as<types::Enum_type>().base;
+                }
+
+                vm::Opcode eq_op = comparison_opcode_for(lex::TokenType::Equal, subject_cmp_type, pattern_cmp_type);
+                emit(vm::Instruction::make_rrr(eq_op, test_reg, subject_reg, pattern_reg));
+            }
+        }
+
+        // --- STRATEGY B: RANGE EXPRESSIONS (start..end) ---
+        else if (auto *range_expr = std::get_if<ast::Range_expr>(&pattern_node)) {
+            uint8_t start_reg = compile_expr(range_expr->start);
+            uint8_t end_reg = compile_expr(range_expr->end);
+
+            // Check if subject >= start
+            uint8_t gte_reg = allocate_register();
+            vm::Opcode gte_op = comparison_opcode_for(lex::TokenType::GreaterEqual, subject_type, subject_type);
+            emit(vm::Instruction::make_rrr(gte_op, gte_reg, subject_reg, start_reg));
+
+            // Check if subject < end (or <= if inclusive)
+            uint8_t lt_reg = allocate_register();
+            vm::Opcode lt_op =
+                comparison_opcode_for(range_expr->inclusive ? lex::TokenType::LessEqual : lex::TokenType::Less, subject_type, subject_type);
+            emit(vm::Instruction::make_rrr(lt_op, lt_reg, subject_reg, end_reg));
+
+            // Combine with Logical AND
+            // (Wait, your compiler handles logical AND via jumps, but for a simple local test we can use Bitwise AND for booleans)
+            emit(vm::Instruction::make_rrr(vm::Opcode::BitAnd_i64, test_reg, gte_reg, lt_reg));
+        }
+
+        // --- STRATEGY C: EXPLICIT NIL (OPTIONALS) ---
+        else if (auto *lit = std::get_if<ast::Literal_expr>(&pattern_node); lit && lit->value.is_nil()) {
+            emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, test_reg, subject_reg, 0));
+        }
+
+        // --- STRATEGY D: PRIMITIVES & CUSTOM PROTOCOLS ---
+        else {
+            types::Type_id pattern_type = ast::get_type(tree.get(arm.pattern).node);
+            uint8_t pattern_reg = compile_expr(arm.pattern);
+
+            if (env.tt.is_model(pattern_type)) {
+                // Call the custom __match__ protocol!
+                auto &model_name = std::get<types::Model_type>(env.tt.get(pattern_type).data).name;
+                uint8_t func_reg = allocate_register();
+                uint16_t const_idx = function_locations_[model_name + "::__match__"];
+                emit(vm::Instruction::make_ri(vm::Opcode::Load_const, func_reg, const_idx));
+
+                uint8_t call_base_reg = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base_reg, func_reg, 0));
+
+                uint8_t arg_this = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_this, pattern_reg, 0));
+
+                uint8_t arg_subject = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_subject, subject_reg, 0));
+
+                emit(vm::Instruction::make_rrr(vm::Opcode::Call, test_reg, call_base_reg, 2));
+            } else {
+                // Standard Equality (Strings, Booleans, Integers, Floats)
+                vm::Opcode eq_op = comparison_opcode_for(lex::TokenType::Equal, subject_type, pattern_type);
+                emit(vm::Instruction::make_rrr(eq_op, test_reg, subject_reg, pattern_reg));
+            }
+        }
+
+        // 3. Jump to the next arm if this test fails
         size_t jump_next_arm_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, test_reg, 0));
 
-        // 5. Set up scope for the arm body
+        // 4. Set up scope and payload bindings
         auto prev_locals_size = current_ctx_->locals.size();
 
-        // 6. If the user requested the payload, extract it and bind it to a local variable!
-        if (!arm.bind_name.empty()) {
+        if (!arm.bind_name.empty() && env.tt.is_union(subject_type)) {
             uint8_t payload_reg = allocate_register();
             emit(vm::Instruction::make_rrr(vm::Opcode::Load_union_payload, payload_reg, subject_reg, 0));
             current_ctx_->locals.push_back({arm.bind_name, payload_reg});
         }
 
-        // 7. Compile the arm body
+        // 5. Compile the arm body
         if (!arm.body.is_null()) {
             compile_stmt(arm.body);
         }
 
-        // 8. Restore scope
         current_ctx_->locals.resize(prev_locals_size);
 
-        // 9. Jump to the end of the entire match statement so we don't fall through into the next arm
+        // 6. Jump to the end of the match
         end_jumps.push_back(emit(vm::Instruction::make_i(vm::Opcode::Jump, 0)));
 
-        // 10. Patch the jump_next_arm instruction to land right here
+        // 7. Patch the jump_next_arm instruction
         uint16_t next_arm_target = static_cast<uint16_t>(current_block().instructions.size());
         current_block().instructions[jump_next_arm_idx].ri.imm = next_arm_target;
     }
 
-    // 11. Patch all the successful arm executions to jump to the very end
+    // 8. Patch all successful arm executions to jump to the very end
     uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
     for (size_t jump_idx : end_jumps) {
         current_block().instructions[jump_idx].i.imm = end_target;
     }
 }
-// =============================================================================
-// EXPRESSIONS
-// =============================================================================
 
+// EXPRESSIONS
 uint8_t Compiler::compile_expr(ast::Expr_id expr_id)
 {
     if (expr_id.is_null()) {
@@ -963,10 +1031,16 @@ uint8_t Compiler::compile_expr_node(const ast::Literal_expr &expr)
 
 uint8_t Compiler::compile_expr_node(const ast::Enum_member_expr &expr)
 {
-    // 1. Get the enum type
-    const auto &enum_t = std::get<types::Enum_type>(env.tt.get(expr.type).data);
+    // 1. Peel any optional wrappers added by the Semantic Checker's coercion
+    types::Type_id base_type = expr.type;
+    while (env.tt.is_optional(base_type)) {
+        base_type = env.tt.get_optional_base(base_type);
+    }
 
-    // 2. Fetch the resolved variant map from the environment
+    // 2. Get the enum type safely using the peeled base_type!
+    const auto &enum_t = std::get<types::Enum_type>(env.tt.get(base_type).data);
+
+    // 3. Fetch the resolved variant map from the environment
     auto enum_data_ptr = env.get_enum(enum_t.name);
 
     Value variant_val(nullptr);
@@ -977,7 +1051,7 @@ uint8_t Compiler::compile_expr_node(const ast::Enum_member_expr &expr)
         std::exit(EXIT_FAILURE);
     }
 
-    // 3. Treat the enum exactly like a hardcoded primitive literal!
+    // 4. Treat the enum exactly like a hardcoded primitive literal!
     uint8_t target_reg = allocate_register();
     uint16_t const_idx = add_constant(variant_val);
     emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
@@ -987,7 +1061,11 @@ uint8_t Compiler::compile_expr_node(const ast::Enum_member_expr &expr)
 
 uint8_t Compiler::compile_expr_node(const ast::Static_path_expr &expr)
 {
+    // Resolve from the receiver expression itself; the final static-path type may already be a function.
     types::Type_id base_type = ast::get_type(tree.get(expr.base).node);
+    while (env.tt.is_optional(base_type)) {
+        base_type = env.tt.get_optional_base(base_type);
+    }
 
     if (env.tt.is_enum(base_type)) {
         const auto &enum_t = std::get<types::Enum_type>(env.tt.get(base_type).data);
@@ -1010,6 +1088,10 @@ uint8_t Compiler::compile_expr_node(const ast::Static_path_expr &expr)
 
     if (env.tt.is_model(base_type)) {
         auto &model_name = std::get<types::Model_type>(env.tt.get(base_type).data).name;
+        if (auto static_field = env.get_model_static_field(model_name, expr.member.lexeme)) {
+            return compile_expr(*static_field);
+        }
+
         std::string global_func_name = model_name + "::" + expr.member.lexeme;
 
         if (function_locations_.contains(global_func_name)) {
@@ -1020,7 +1102,7 @@ uint8_t Compiler::compile_expr_node(const ast::Static_path_expr &expr)
         }
     }
 
-    std::println(std::cerr, "Compiler Bug: Static path expressions are currently only implemented for Enums.");
+    std::println(std::cerr, "Compiler Bug: Static path expressions are currently only implemented for Enums and Model Static Methods.");
     std::exit(EXIT_FAILURE);
     return 0;
 }

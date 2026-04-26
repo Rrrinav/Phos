@@ -425,8 +425,12 @@ std::string Value::to_debug_string(bool is_nested) const
         res = to_string();
     }
 
-    // Append optional depth tags
-    for (uint8_t i = 0; i < option_depth_; ++i) {
+    uint8_t visual_depth = option_depth_;
+    if (is_nil() && visual_depth > 0) {
+        visual_depth -= 1;
+    }
+
+    for (uint8_t i = 0; i < visual_depth; ++i) {
         res += "?";
     }
 

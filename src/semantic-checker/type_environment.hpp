@@ -21,6 +21,8 @@ struct Function_type_data
 struct Model_type_data
 {
     std::unordered_map<std::string, ast::Expr_id> field_defaults;
+    std::unordered_map<std::string, ast::Expr_id> static_fields;
+    std::unordered_map<std::string, types::Type_id> static_field_types;
     std::unordered_map<std::string, Function_type_data> methods;
     std::unordered_map<std::string, Function_type_data> static_methods;
 };
@@ -87,6 +89,7 @@ public:
     const types::Model_type_data *get_model(const std::string &name) const;
     const types::Function_type_data *get_model_method(const std::string &model_name, const std::string &method_name) const;
     const types::Function_type_data *get_model_static_method(const std::string &model_name, const std::string &method_name) const;
+    std::optional<ast::Expr_id> get_model_static_field(const std::string &model_name, const std::string &field_name) const;
     std::optional<ast::Expr_id> get_model_field_default(const std::string &model_name, const std::string &field_name) const;
 
     // Query API: Unions

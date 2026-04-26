@@ -75,6 +75,8 @@ struct Model_type
     std::string name;
     std::vector<std::pair<std::string, Type_id>> fields;
     std::unordered_map<std::string, uint32_t> field_indices;
+    std::vector<std::pair<std::string, Type_id>> static_fields;
+    std::unordered_map<std::string, uint32_t> static_field_indices;
     std::vector<std::pair<std::string, Function_type>> methods;
     std::unordered_map<std::string, uint32_t> method_indices;
     std::vector<std::pair<std::string, Function_type>> static_methods;

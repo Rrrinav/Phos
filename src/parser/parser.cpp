@@ -134,10 +134,10 @@ void Parser::synchronize()
 
 // Top-Level
 // program -> declaration* EOF
-Result<std::vector<ast::Stmt_id>> Parser::parse()
+Parser::Parse_result Parser::parse()
 {
-    std::vector<ast::Stmt_id> statements;
-    bool had_error = false;
+    diagnostics_ = err::Engine{stage_};
+    Parse_result result;
 
     while (!is_at_end()) {
         skip_newlines();
@@ -148,25 +148,25 @@ Result<std::vector<ast::Stmt_id>> Parser::parse()
         auto decl_result = declaration();
         if (!decl_result) {
             if (!decl_result.error().summary.empty()) {
-                std::println(stderr, "{}", decl_result.error().format());
+                diagnostics_.push(decl_result.error());
             }
 
-            had_error = true;
             synchronize();
             continue;
         }
 
         if (decl_result.value()) {
-            statements.push_back(*decl_result.value());
+            result.statements.push_back(*decl_result.value());
         }
     }
 
-    if (had_error) {
-        return std::unexpected(err::msg::error("parser", 0, 0, source_name_, "Compilation halted due to syntax errors"));
+    if (diagnostics_.has_errors()) {
+        diagnostics_.error(0, 0, source_name_, "Compilation halted due to syntax errors");
     }
 
-    stamp_statement_locations(statements);
-    return statements;
+    stamp_statement_locations(result.statements);
+    result.diagnostics = diagnostics_;
+    return result;
 }
 
 void Parser::stamp_loc(ast::Source_location &loc)
@@ -658,6 +658,7 @@ Result<ast::Stmt_id> Parser::enum_declaration()
 // field_decl -> IDENT ":" type ";"
 Result<ast::Typed_member_decl> Parser::parse_model_field()
 {
+    bool is_static = match({lex::TokenType::Static});
     auto name_result = __Try(consume(lex::TokenType::Identifier, "Expect field name"));
     __TryIgnore(consume(lex::TokenType::Colon, "Expect ':' after field name"));
     auto type_result = __Try(parse_type());
@@ -672,6 +673,7 @@ Result<ast::Typed_member_decl> Parser::parse_model_field()
     return ast::Typed_member_decl{
         .name = name_result.lexeme,
         .type = type_result,
+        .is_static = is_static,
         .default_value = default_value,
         .loc = {name_result.line, name_result.column},
     };
@@ -1055,15 +1057,13 @@ Result<ast::Stmt_id> Parser::match_statement()
 
                 // 2. Validate and extract the payload binding name
                 if (call_node->arguments.size() != 1) {
-                    return std::unexpected(
-                        err::msg::error("parser", loc.l, loc.c, source_name_, "Match union payloads can only bind exactly one variable"));
+                    return std::unexpected(create_error(previous(), "Match union payloads can only bind exactly one variable"));
                 }
 
                 if (auto *var_node = std::get_if<ast::Variable_expr>(&tree_.get(call_node->arguments[0].value).node)) {
                     arm.bind_name = var_node->name;
                 } else {
-                    return std::unexpected(
-                        err::msg::error("parser", loc.l, loc.c, source_name_, "Match binding payload must be a simple identifier"));
+                    return std::unexpected(create_error(previous(), "Match binding payload must be a simple identifier"));
                 }
             }
         }
@@ -1692,7 +1692,8 @@ Result<ast::Expr_id> Parser::primary()
                 }});
         }
 
-        if (check(lex::TokenType::LeftBrace)) {
+        if (check(lex::TokenType::Dot) && current_ + 1 < tokens_.size() && tokens_[current_ + 1].type == lex::TokenType::LeftBrace) {
+            advance();
             return parse_model_literal(id.lexeme);
         }
 

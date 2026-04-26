@@ -54,7 +54,7 @@ Semantic_checker::Semantic_checker(ast::Ast_tree &tree, Type_environment &env, m
  */
 void Semantic_checker::type_error(const ast::Source_location &loc, const std::string &message)
 {
-    errors.push_back(err::msg::error(this->phase, loc.l, loc.c, loc.file, "{}", message));
+    diagnostics_.error(loc.l, loc.c, loc.file, "{}", message);
 }
 
 /*
@@ -63,7 +63,7 @@ void Semantic_checker::type_error(const ast::Source_location &loc, const std::st
  */
 void Semantic_checker::type_warning(const ast::Source_location &loc, const std::string &message)
 {
-    errors.push_back(err::msg::warning(this->phase, loc.l, loc.c, loc.file, "{}", message));
+    diagnostics_.warning(loc.l, loc.c, loc.file, "{}", message);
 }
 
 /*
@@ -172,7 +172,14 @@ types::Type_id Semantic_checker::to_iterator_type(types::Type_id type) const
         return env.tt.iterator(env.tt.get_string());
     }
     if (env.tt.is_optional(type)) {
-        return env.tt.iterator(env.tt.get_optional_base(type));
+        auto base = env.tt.get_optional_base(type);
+        if (env.tt.is_array(base)) {
+            return env.tt.iterator(env.tt.get_array_elem(base));
+        }
+        if (env.tt.is_string(base)) {
+            return env.tt.iterator(env.tt.get_string());
+        }
+        return env.tt.iterator(base);
     }
     if (env.tt.is_nil(type)) {
         return env.tt.iterator(env.tt.get_any());
@@ -214,13 +221,22 @@ void Semantic_checker::hoist_globals(const std::vector<ast::Stmt_id> &statements
             auto &model = get_stmt<ast::Model_stmt>(tree, stmt_id);
             std::vector<std::pair<std::string, types::Type_id>> tt_fields;
             for (const auto &field : model.fields) {
-                tt_fields.push_back({field.name, resolve_type_recursively(field.type, field.loc)});
+                if (!field.is_static) {
+                    tt_fields.push_back({field.name, resolve_type_recursively(field.type, field.loc)});
+                }
             }
             env.global_types[model.name] = env.tt.model(model.name, tt_fields);
 
             types::Model_type_data m_data;
             for (const auto &field : model.fields) {
-                if (!field.default_value.is_null()) {
+                if (field.is_static) {
+                    if (field.default_value.is_null()) {
+                        type_error(field.loc, "Static field '" + field.name + "' must have an initializer.");
+                    } else {
+                        m_data.static_fields[field.name] = field.default_value;
+                    }
+                    m_data.static_field_types[field.name] = resolve_type_recursively(field.type, field.loc);
+                } else if (!field.default_value.is_null()) {
                     m_data.field_defaults[field.name] = field.default_value;
                 }
             }
@@ -308,7 +324,7 @@ void Semantic_checker::hoist_globals(const std::vector<ast::Stmt_id> &statements
  * |-- hoist globals
  * `-- verify all statements
  */
-std::vector<err::msg> Semantic_checker::check(const std::vector<ast::Stmt_id> &statements)
+err::Engine Semantic_checker::check(const std::vector<ast::Stmt_id> &statements)
 {
     hoist_globals(statements);
 
@@ -321,7 +337,7 @@ std::vector<err::msg> Semantic_checker::check(const std::vector<ast::Stmt_id> &s
 
     m_nil_checked_vars_stack.pop_back();
     variables.end_scope();
-    return errors;
+    return diagnostics_;
 }
 
 /*
@@ -607,10 +623,13 @@ void Semantic_checker::validate_model_defaults(const ast::Model_stmt &stmt)
     }
     for (const auto &field : stmt.fields) {
         if (field.default_value.is_null()) {
+            if (field.is_static) {
+                type_error(field.loc, std::format("Static field '{}' must have an initializer.", field.name));
+            }
             continue;
         }
         if (default_expr_uses_forbidden_names(field.default_value, forbidden_names)) {
-            type_error(field.loc, std::format("Default value for field '{}' cannot reference 'this' or another member.", field.name));
+            type_error(field.loc, std::format("Default value for member '{}' cannot reference 'this' or another member.", field.name));
         } else {
             auto default_type = check_expr(field.default_value, field.type);
             if (!is_compatible(field.type, default_type)) {
@@ -1403,14 +1422,14 @@ void Semantic_checker::check_var_stmt(ast::Stmt_id stmt_id)
                             env.tt.to_string(type)));
                 }
             } else {
-                auto diagnostic = err::msg::error(this->phase, loc.l, loc.c, loc.file, "Initializer type mismatch.");
+                auto diagnostic = err::msg::error(diagnostics_.phase(), loc.l, loc.c, loc.file, "Initializer type mismatch.");
                 diagnostic.expected_got(env.tt.to_string(type), env.tt.to_string(init_type));
-                errors.push_back(std::move(diagnostic));
+                diagnostics_.push(std::move(diagnostic));
             }
         } else {
-            auto diagnostic = err::msg::error(this->phase, loc.l, loc.c, loc.file, "Initializer type mismatch.");
+            auto diagnostic = err::msg::error(diagnostics_.phase(), loc.l, loc.c, loc.file, "Initializer type mismatch.");
             diagnostic.expected_got(env.tt.to_string(type), env.tt.to_string(init_type));
-            errors.push_back(std::move(diagnostic));
+            diagnostics_.push(std::move(diagnostic));
         }
     }
     declare(name, type, is_mut, loc);
@@ -1594,9 +1613,9 @@ void Semantic_checker::check_return_stmt(ast::Stmt_id stmt_id)
     if (!expression.is_null()) {
         auto val_type = check_expr(expression, current_return_type);
         if (!is_compatible(*current_return_type, val_type)) {
-            auto diagnostic = err::msg::error(this->phase, loc.l, loc.c, loc.file, "Return type mismatch.");
+            auto diagnostic = err::msg::error(diagnostics_.phase(), loc.l, loc.c, loc.file, "Return type mismatch.");
             diagnostic.expected_got(env.tt.to_string(*current_return_type), env.tt.to_string(val_type));
-            errors.push_back(std::move(diagnostic));
+            diagnostics_.push(std::move(diagnostic));
         }
     } else if (*current_return_type != env.tt.get_void()) {
         type_error(loc, "Function must return a value.");
@@ -1708,8 +1727,45 @@ void Semantic_checker::check_match_stmt(ast::Stmt_id stmt_id)
     }
 
     bool is_union_subject = env.tt.is_union(subject_type);
+    bool is_enum_subject = env.tt.is_enum(subject_type);
+    bool seen_wildcard = false;
+    std::unordered_set<std::string> seen_variants;
+
+    auto arm_loc = [&](const ast::Match_arm &arm) -> ast::Source_location {
+        if (!arm.pattern.is_null()) {
+            return ast::get_loc(tree.get(arm.pattern).node);
+        }
+        if (!arm.body.is_null()) {
+            return ast::get_loc(tree.get(arm.body).node);
+        }
+        return loc;
+    };
+
+    auto arm_variant_name = [&](const ast::Match_arm &arm) -> std::optional<std::string> {
+        if (arm.pattern.is_null()) {
+            return std::nullopt;
+        }
+        if (std::holds_alternative<ast::Static_path_expr>(tree.get(arm.pattern).node)) {
+            return get_node<ast::Static_path_expr>(tree, arm.pattern).member.lexeme;
+        }
+        if (std::holds_alternative<ast::Enum_member_expr>(tree.get(arm.pattern).node)) {
+            return get_node<ast::Enum_member_expr>(tree, arm.pattern).member_name;
+        }
+        return std::nullopt;
+    };
 
     for (auto &arm : arms) {
+        auto current_arm_loc = arm_loc(arm);
+        if (seen_wildcard) {
+            type_warning(current_arm_loc, "Unreachable match arm after wildcard '_'.");
+        } else if ((is_union_subject || is_enum_subject) && !arm.is_wildcard) {
+            if (auto variant_name = arm_variant_name(arm)) {
+                if (!seen_variants.insert(*variant_name).second) {
+                    type_warning(current_arm_loc, std::format("Unreachable duplicate match arm for variant '{}'.", *variant_name));
+                }
+            }
+        }
+
         variables.begin_scope();
         if (!arm.is_wildcard) {
             if (is_union_subject
@@ -1781,6 +1837,10 @@ void Semantic_checker::check_match_stmt(ast::Stmt_id stmt_id)
             check_stmt(arm.body);
         }
         variables.end_scope();
+
+        if (arm.is_wildcard) {
+            seen_wildcard = true;
+        }
     }
 
     bool has_wildcard = std::any_of(arms.begin(), arms.end(), [](const auto &arm) { return arm.is_wildcard; });
@@ -2133,9 +2193,9 @@ types::Type_id Semantic_checker::check_assignment_expr(ast::Expr_id expr_id, std
     auto val_type_res = check_expr(value_id, var_type);
 
     if (!is_compatible(var_type, val_type_res)) {
-        auto diagnostic = err::msg::error(this->phase, loc.l, loc.c, loc.file, "Assignment type mismatch.");
+        auto diagnostic = err::msg::error(diagnostics_.phase(), loc.l, loc.c, loc.file, "Assignment type mismatch.");
         diagnostic.expected_got(env.tt.to_string(var_type), env.tt.to_string(val_type_res));
-        errors.push_back(std::move(diagnostic));
+        diagnostics_.push(std::move(diagnostic));
     }
     return get_node<ast::Assignment_expr>(tree, expr_id).type = var_type;
 }
@@ -2432,7 +2492,7 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
         }
 
         auto diagnostic = err::msg::error(
-            this->phase,
+            diagnostics_.phase(),
             loc.l,
             loc.c,
             loc.file,
@@ -2483,7 +2543,7 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
 
         // Output the beautiful error block
         diagnostic.expected_got(expected_str, actual_str);
-        errors.push_back(std::move(diagnostic));
+        diagnostics_.push(std::move(diagnostic));
 
         return get_node<ast::Call_expr>(tree, expr_id).type = env.tt.get_unknown();
     }
@@ -2558,10 +2618,13 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
                     get_node<ast::Static_path_expr>(tree, callee_id).type = env.tt.function(fparams, decl->return_type);
 
                     return get_node<ast::Call_expr>(tree, expr_id).type = decl->return_type;
+                } else if (model_data_ptr->static_fields.contains(member_name)) {
+                    type_error(sp_loc, std::format("Model static field '{}' is not callable.", member_name));
+                    return get_node<ast::Call_expr>(tree, expr_id).type = env.tt.get_unknown();
                 }
             }
 
-            type_error(sp_loc, std::format("Model '{}' has no method '{}'.", model_name, member_name));
+            type_error(sp_loc, std::format("Model '{}' has no callable method '{}'.", model_name, member_name));
             return get_node<ast::Call_expr>(tree, expr_id).type = env.tt.get_unknown();
         }
     }
@@ -2604,9 +2667,9 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
             auto arg_type = check_expr(arguments_copy[i].value, sig.params[i]);
             if (!is_compatible(sig.params[i], arg_type)) {
                 auto aloc = ast::get_loc(tree.get(arguments_copy[i].value).node);
-                auto diagnostic = err::msg::error(this->phase, aloc.l, aloc.c, aloc.file, "Argument type mismatch.");
+                auto diagnostic = err::msg::error(diagnostics_.phase(), aloc.l, aloc.c, aloc.file, "Argument type mismatch.");
                 diagnostic.expected_got(env.tt.to_string(sig.params[i]), env.tt.to_string(arg_type));
-                errors.push_back(std::move(diagnostic));
+                diagnostics_.push(std::move(diagnostic));
             }
         }
     }
@@ -2859,6 +2922,25 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
         return get_node<ast::Static_path_expr>(tree, expr_id).type = base_type;
     } else if (env.tt.is_model(base_type)) {
         auto &model_t = std::get<types::Model_type>(env.tt.get(base_type).data);
+        if (const auto *model_data = env.get_model(model_t.name)) {
+            if (model_data->static_field_types.contains(member_lexeme)) {
+                auto field_type = model_data->static_field_types.at(member_lexeme);
+                return get_node<ast::Static_path_expr>(tree, expr_id).type = field_type;
+            }
+            if (model_data->static_methods.contains(member_lexeme)) {
+                auto method_decl_id = model_data->static_methods.at(member_lexeme).declaration;
+                if (auto *decl = std::get_if<ast::Function_stmt>(&tree.get(method_decl_id).node)) {
+                    std::vector<types::Type_id> fparams;
+                    fparams.reserve(decl->parameters.size());
+                    for (const auto &param : decl->parameters) {
+                        fparams.push_back(param.type);
+                    }
+                    auto ret = env.tt.function(fparams, decl->return_type);
+                    get_node<ast::Static_path_expr>(tree, expr_id).type = ret;
+                    return ret;
+                }
+            }
+        }
         if (contains_key(model_t.static_methods, member_lexeme)) {
             auto sig = find_by_key(model_t.static_methods, member_lexeme)->second;
             auto ret = env.tt.function(sig.params, sig.ret);
@@ -2874,7 +2956,7 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
             get_node<ast::Static_path_expr>(tree, expr_id).type = ret;
             return ret;
         }
-        type_error(loc, std::format("Model has no method '{}'.", member_lexeme));
+        type_error(loc, std::format("Model has no static member or method '{}'.", member_lexeme));
         return get_node<ast::Static_path_expr>(tree, expr_id).type = env.tt.get_unknown();
     } else if (env.tt.is_enum(base_type)) {
         auto enum_data_ptr = env.get_enum(std::get<types::Enum_type>(env.tt.get(base_type).data).name);
@@ -3408,9 +3490,9 @@ types::Type_id Semantic_checker::check_unary_expr(ast::Expr_id expr_id, std::opt
 
 /*
  * [array_literal_expr] -> Type
- * |-- align common types
- * |-- assert depth consistency
- * `-- upgrade array to wrap depth if nil is present
+ * |-- align common payload types
+ * |-- preserve nil as outer-none
+ * `-- lift only present values into deeper optional layers
  */
 types::Type_id Semantic_checker::check_array_literal_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
@@ -3427,31 +3509,58 @@ types::Type_id Semantic_checker::check_array_literal_expr(ast::Expr_id expr_id, 
 
     types::Type_id common_type = env.tt.get_nil();
     uint8_t max_depth = 0;
+    bool saw_nil_element = false;
 
     std::optional<types::Type_id> element_context = std::nullopt;
+    types::Type_id hinted_base = env.tt.get_nil();
+    uint8_t hinted_depth = 0;
     if (context_type && env.tt.is_array(*context_type)) {
         element_context = env.tt.get_array_elem(*context_type);
+        hinted_base = *element_context;
+        while (env.tt.is_optional(hinted_base)) {
+            hinted_base = env.tt.get_optional_base(hinted_base);
+            ++hinted_depth;
+        }
     }
 
-    // Pass 1: Find Common Type and Max Depth
+    // Pass 1: Find the shared payload type and the deepest optional level in use.
+    // The resolved element type already carries contextual optional depth.
+    // Only a raw nil literal needs auto_wrap_depth to reveal which optional level it means.
     for (const auto &elem_expr : elements) {
         auto elem_type = check_expr(elem_expr, element_context);
 
-        // Calculate depth: actual wrappers + auto_wrap_depth request
-        uint8_t current_depth = tree.get(elem_expr).auto_wrap_depth;
+        auto *lit = std::get_if<ast::Literal_expr>(&tree.get(elem_expr).node);
+        bool is_literal_nil = lit && lit->value.is_nil();
+
+        uint8_t type_depth = 0;
         types::Type_id base = elem_type;
         while (env.tt.is_optional(base)) {
-            current_depth++;
+            type_depth++;
             base = env.tt.get_optional_base(base);
         }
 
+        if (is_literal_nil || env.tt.is_nil(base)) {
+            saw_nil_element = true;
+            uint8_t current_depth = type_depth;
+            if (current_depth == 0) {
+                current_depth = std::max<uint8_t>(1, tree.get(elem_expr).auto_wrap_depth);
+            }
+            if (current_depth > max_depth) {
+                max_depth = current_depth;
+            }
+            continue;
+        }
+
+        uint8_t current_depth = type_depth;
         if (current_depth > max_depth) {
             max_depth = current_depth;
         }
 
-        if (env.tt.is_nil(base)) {
-            // Nil is the base, common type remains what it was
-        } else if (env.tt.is_nil(common_type)) {
+        if (env.tt.is_nil(common_type) && !env.tt.is_nil(hinted_base)) {
+            common_type = hinted_base;
+        }
+
+        if (env.tt.is_nil(common_type)) {
             common_type = base;
         } else {
             if (!is_compatible(common_type, base) && !is_compatible(base, common_type)) {
@@ -3461,23 +3570,45 @@ types::Type_id Semantic_checker::check_array_literal_expr(ast::Expr_id expr_id, 
         }
     }
 
-    // Pass 2: Standardize all elements to max_depth
+    if (env.tt.is_nil(common_type) && !env.tt.is_nil(hinted_base)) {
+        common_type = hinted_base;
+        max_depth = std::max(max_depth, hinted_depth);
+    }
+
+    if (!env.tt.is_nil(common_type) && saw_nil_element) {
+        max_depth = std::max<uint8_t>(max_depth, 1);
+    }
+
+    if (env.tt.is_nil(common_type)) {
+        type_error(loc, "Cannot infer the element type of an all-nil array.");
+        return get_node<ast::Array_literal_expr>(tree, expr_id).type = env.tt.array(env.tt.get_unknown());
+    }
+
+    // Pass 2: Lift only real payload values. Nil keeps its own optional level.
     for (auto elem_id : elements) {
+        auto *lit = std::get_if<ast::Literal_expr>(&tree.get(elem_id).node);
+        bool is_literal_nil = lit && lit->value.is_nil();
+
         types::Type_id elem_type = ast::get_type(tree.get(elem_id).node);
-        uint8_t current_depth = tree.get(elem_id).auto_wrap_depth;
+        uint8_t type_depth = 0;
         types::Type_id base = elem_type;
         while (env.tt.is_optional(base)) {
-            current_depth++;
+            type_depth++;
             base = env.tt.get_optional_base(base);
         }
 
-        // Lift everything to max_depth. No special exception for nil!
-        if (max_depth > current_depth) {
-            tree.get(elem_id).auto_wrap_depth += (max_depth - current_depth);
+        if (is_literal_nil || env.tt.is_nil(base)) {
+            continue;
+        }
+
+        uint8_t logical_depth = type_depth;
+
+        // Lift standard values to max_depth
+        if (max_depth > logical_depth) {
+            tree.get(elem_id).auto_wrap_depth += (max_depth - logical_depth);
         }
     }
 
-    // Re-wrap common type to the discovered max depth
     for (uint8_t i = 0; i < max_depth; ++i) {
         common_type = env.tt.optional(common_type);
     }

@@ -11,15 +11,15 @@ Resolver::Resolver(ast::Ast_tree &tree, Type_environment &env, mem::Arena& arena
 
 void Resolver::resolver_error(const ast::Source_location &loc, const std::string &message)
 {
-    errors.push_back(err::msg::error(this->phase, loc.l, loc.c, loc.file, "{}", message));
+    diagnostics_.error(loc.l, loc.c, loc.file, "{}", message);
 }
 
 void Resolver::resolver_warning(const ast::Source_location &loc, const std::string &message)
 {
-    errors.push_back(err::msg::warning(this->phase, loc.l, loc.c, loc.file, "{}", message));
+    diagnostics_.warning(loc.l, loc.c, loc.file, "{}", message);
 }
 
-std::vector<err::msg> Resolver::resolve(const std::vector<ast::Stmt_id> &statements)
+err::Engine Resolver::resolve(const std::vector<ast::Stmt_id> &statements)
 {
     // 1: Add all top-level names to the environment
     declare_globals(statements);
@@ -30,7 +30,7 @@ std::vector<err::msg> Resolver::resolve(const std::vector<ast::Stmt_id> &stateme
     // 3: Extract the fully resolved structural data into the Type_table
     populate_signatures(statements);
 
-    return errors;
+    return diagnostics_;
 }
 
 // Pass 1: Declare Globals
@@ -301,10 +301,19 @@ void Resolver::populate_signatures(const std::vector<ast::Stmt_id> &statements)
             auto &model_t = std::get<types::Model_type>(env.tt.types_[model_id.value].data);
 
             for (const auto &field : model_stmt->fields) {
-                model_t.fields.push_back({field.name, field.type});
-                model_t.field_indices[field.name] = static_cast<uint32_t>(model_t.fields.size() - 1);
-                if (!field.default_value.is_null()) {
-                    env.model_data[model_stmt->name].field_defaults[field.name] = field.default_value;
+                if (field.is_static) {
+                    model_t.static_fields.push_back({field.name, field.type});
+                    model_t.static_field_indices[field.name] = static_cast<uint32_t>(model_t.static_fields.size() - 1);
+                    if (!field.default_value.is_null()) {
+                        env.model_data[model_stmt->name].static_fields[field.name] = field.default_value;
+                    }
+                    env.model_data[model_stmt->name].static_field_types[field.name] = field.type;
+                } else {
+                    model_t.fields.push_back({field.name, field.type});
+                    model_t.field_indices[field.name] = static_cast<uint32_t>(model_t.fields.size() - 1);
+                    if (!field.default_value.is_null()) {
+                        env.model_data[model_stmt->name].field_defaults[field.name] = field.default_value;
+                    }
                 }
             }
 

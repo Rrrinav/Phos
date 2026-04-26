@@ -32,15 +32,15 @@ enum HttpVerb: string {
 }
 
 // Union construction prefers literal syntax.
-let ok_reply := Reply{ Ok: "done" };
-let error_reply := Reply{ Error: "try again" };
-let casual_greeting := Greeting{ Casual };
+let ok_reply := Reply.{ Ok: "done" };
+let error_reply := Reply.{ Error: "try again" };
+let casual_greeting := Greeting.{ Casual };
 
 // Contextual anonymous literals work too.
 let contextual_reply: Reply = .{ Ok: "from context" };
 let contextual_greeting: Greeting = .{ Casual };
 
-// Match can use contextual shorthand for union payload destructuring too.
+// // Match can use contextual shorthand for union payload destructuring too.
 match ok_reply {
     .Ok(message) => {
         print("ok: " + message);
@@ -59,10 +59,10 @@ match error_reply {
     },
 }
 
-// Enum access can be explicit...
+// // Enum access can be explicit...
 let code_ok := HttpCode::Ok;
 let verb_post := HttpVerb::Post;
-
+//
 // ...or implicit when the surrounding context already says which enum you mean.
 let current_mode: Mode? = .On;
 let recent_modes: Mode?[] = [.Off, nil, .On];

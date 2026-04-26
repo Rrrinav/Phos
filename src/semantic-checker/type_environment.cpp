@@ -110,6 +110,21 @@ Type_environment::get_model_static_method(const std::string &model_name, const s
     return nullptr;
 }
 
+std::optional<ast::Expr_id> Type_environment::get_model_static_field(const std::string &model_name, const std::string &field_name) const
+{
+    auto model_it = model_data.find(model_name);
+    if (model_it == model_data.end()) {
+        return std::nullopt;
+    }
+
+    auto field_it = model_it->second.static_fields.find(field_name);
+    if (field_it != model_it->second.static_fields.end()) {
+        return field_it->second;
+    }
+
+    return std::nullopt;
+}
+
 std::optional<ast::Expr_id> Type_environment::get_model_field_default(const std::string &model_name, const std::string &field_name) const
 {
     auto model_it = model_data.find(model_name);

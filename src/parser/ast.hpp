@@ -76,6 +76,7 @@ struct Typed_member_decl
 {
     std::string name;
     types::Type_id type;
+    bool is_static = false;
     Expr_id default_value = Expr_id::null();
     Source_location loc;
 };

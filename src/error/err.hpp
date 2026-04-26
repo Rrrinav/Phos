@@ -2,6 +2,8 @@
 #define _ERR_HPP_
 
 #include <format>
+#include <iostream>
+#include <ostream>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -12,13 +14,22 @@ namespace phos {
 namespace err {
 
 enum Phase { Parsing, TypeChecking, Runtime };
+
 enum class Severity { Warning, Error };
+
+struct render_options
+{
+    bool show_phase = true;
+    bool show_severity = true;
+};
 
 struct detail
 {
     std::string label;
     std::string value;
 };
+
+class renderer;
 
 struct msg
 {
@@ -103,19 +114,41 @@ struct msg
         return *this;
     }
 
-    std::string format() const
+    std::string format(render_options options = {}) const;
+};
+
+class renderer
+{
+public:
+    static std::string format(const msg &diagnostic, render_options options = {})
     {
         std::ostringstream out;
 
-        if (!filename.empty() && line > 0) {
-            out << filename << ":" << line << ":" << column << ": ";
-        } else if (line > 0) {
-            out << line << ":" << column << ": ";
+        if (!diagnostic.filename.empty() && diagnostic.line > 0) {
+            out << diagnostic.filename << ":" << diagnostic.line << ":" << diagnostic.column << ": ";
+        } else if (diagnostic.line > 0) {
+            out << diagnostic.line << ":" << diagnostic.column << ": ";
         }
 
-        out << "[" << severity_name(severity) << " in " << phase << "]: " << summary;
+        if (options.show_severity || options.show_phase) {
+            out << "[";
+            bool wrote = false;
+            if (options.show_severity) {
+                out << msg::severity_name(diagnostic.severity);
+                wrote = true;
+            }
+            if (options.show_phase && !diagnostic.phase.empty()) {
+                if (wrote) {
+                    out << " in ";
+                }
+                out << diagnostic.phase;
+            }
+            out << "]: ";
+        }
 
-        for (const auto &entry : details) {
+        out << diagnostic.summary;
+
+        for (const auto &entry : diagnostic.details) {
             out << "\n  " << entry.label << ": ";
 
             std::istringstream value_stream(entry.value);
@@ -135,6 +168,112 @@ struct msg
 
         return out.str();
     }
+
+    static void print(std::ostream &out, const msg &diagnostic, render_options options = {})
+    {
+        out << format(diagnostic, options) << '\n';
+    }
+};
+
+inline std::string msg::format(render_options options) const
+{
+    return renderer::format(*this, options);
+}
+
+class Engine
+{
+public:
+    Engine() = default;
+    explicit Engine(std::string phase) : default_phase_(std::move(phase))
+    {}
+
+    void set_phase(std::string phase)
+    {
+        default_phase_ = std::move(phase);
+    }
+
+    const std::string &phase() const
+    {
+        return default_phase_;
+    }
+
+    void push(msg diagnostic)
+    {
+        diagnostics_.push_back(std::move(diagnostic));
+    }
+
+    template <typename... Args>
+    msg &error(size_t line, size_t column, std::string filename, std::format_string<Args...> fmt, Args &&...args)
+    {
+        diagnostics_.push_back(msg::error(default_phase_, line, column, std::move(filename), fmt, std::forward<Args>(args)...));
+        return diagnostics_.back();
+    }
+
+    template <typename... Args>
+    msg &warning(size_t line, size_t column, std::string filename, std::format_string<Args...> fmt, Args &&...args)
+    {
+        diagnostics_.push_back(msg::warning(default_phase_, line, column, std::move(filename), fmt, std::forward<Args>(args)...));
+        return diagnostics_.back();
+    }
+
+    void append(const Engine &other)
+    {
+        diagnostics_.insert(diagnostics_.end(), other.diagnostics_.begin(), other.diagnostics_.end());
+    }
+
+    void append(std::vector<msg> other)
+    {
+        diagnostics_.insert(
+            diagnostics_.end(),
+            std::make_move_iterator(other.begin()),
+            std::make_move_iterator(other.end()));
+    }
+
+    [[nodiscard]] bool empty() const
+    {
+        return diagnostics_.empty();
+    }
+
+    [[nodiscard]] bool has_errors() const
+    {
+        for (const auto &diagnostic : diagnostics_) {
+            if (diagnostic.is_error()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] bool has_warnings() const
+    {
+        for (const auto &diagnostic : diagnostics_) {
+            if (diagnostic.is_warning()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    const std::vector<msg> &all() const
+    {
+        return diagnostics_;
+    }
+
+    std::vector<msg> take()
+    {
+        return std::move(diagnostics_);
+    }
+
+    void print(std::ostream &out = std::cerr, render_options options = {}) const
+    {
+        for (const auto &diagnostic : diagnostics_) {
+            renderer::print(out, diagnostic, options);
+        }
+    }
+
+private:
+    std::string default_phase_;
+    std::vector<msg> diagnostics_;
 };
 
 inline bool has_errors(const std::vector<msg> &messages)
@@ -145,6 +284,11 @@ inline bool has_errors(const std::vector<msg> &messages)
         }
     }
     return false;
+}
+
+inline bool has_errors(const Engine &engine)
+{
+    return engine.has_errors();
 }
 
 } // namespace err

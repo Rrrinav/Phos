@@ -17,6 +17,12 @@ namespace phos {
 class Parser
 {
 public:
+    struct Parse_result
+    {
+        std::vector<ast::Stmt_id> statements;
+        err::Engine diagnostics{"parser"};
+    };
+
     explicit Parser(
         std::vector<lex::Token> tokens,
         phos::types::Type_table &type_table,
@@ -26,7 +32,7 @@ public:
         : tree_(tree), type_table_(type_table), tokens_(std::move(tokens)), arena_(arena), source_name_(std::move(source_name))
     {}
 
-    Result<std::vector<ast::Stmt_id>> parse();
+    Parse_result parse();
 
 private:
     ast::Ast_tree &tree_;
@@ -36,6 +42,7 @@ private:
     std::string source_name_;
     size_t current_ = 0;
     std::string stage_ = "parser";
+    err::Engine diagnostics_{"parser"};
 
     // set while parsing inside a model body so 'this' is valid
     std::string current_model_;

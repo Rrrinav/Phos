@@ -17,7 +17,7 @@ class Resolver
 public:
     Resolver(ast::Ast_tree &tree, Type_environment &env, mem::Arena& arena);
 
-    std::vector<err::msg> resolve(const std::vector<ast::Stmt_id> &statements);
+    err::Engine resolve(const std::vector<ast::Stmt_id> &statements);
 
     // The 3 Resolution Passes
     void declare_globals(const std::vector<ast::Stmt_id> &statements);
@@ -33,8 +33,7 @@ private:
     ast::Ast_tree &tree;
     Type_environment &env;
     phos::mem::Arena& arena_;
-    std::vector<err::msg> errors;
-    std::string phase = "resolution";
+    err::Engine diagnostics_{"resolution"};
 
     void resolver_error(const ast::Source_location &loc, const std::string &message);
     void resolver_warning(const ast::Source_location &loc, const std::string &message);
