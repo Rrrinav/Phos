@@ -1,1405 +1,2224 @@
 #include "compiler.hpp"
 
-#include "opcodes.hpp"
-
-#include <algorithm>
+#include <cstdint>
+#include <cstdlib>
+#include <iostream>
 #include <print>
 
 namespace phos::vm {
 
-static const types::Function_type *find_model_method_signature(const types::Type &type, const std::string &name)
-{
-    if (!std::holds_alternative<mem::rc_ptr<types::Model_type>>(type))
-        return nullptr;
+Compiler::Compiler(const ast::Ast_tree &tree, const Type_environment &env, mem::Arena &arena_) : tree(tree), env(env), arena(arena_)
+{}
 
-    auto model_type = std::get<mem::rc_ptr<types::Model_type>>(type);
-    for (const auto &[method_name, signature] : model_type->methods)
-        if (method_name == name)
-            return &signature;
-    return nullptr;
+// =============================================================================
+// CONTEXT & LEXICAL SCOPING ENGINE
+// =============================================================================
+
+void Compiler::push_context(Compiler_context *ctx)
+{
+    ctx->enclosing = current_ctx_;
+    current_ctx_ = ctx;
 }
 
-static bool is_iterator_protocol_type(const types::Type &type)
+void Compiler::pop_context()
 {
-    if (std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(type))
-        return true;
-
-    auto next_method = find_model_method_signature(type, "next");
-    return next_method && next_method->parameter_types.empty() && types::is_optional(next_method->return_type);
+    current_ctx_ = current_ctx_->enclosing;
 }
 
-static bool has_iter_method(const types::Type &type)
+int Compiler::resolve_local(Compiler_context *ctx, const std::string &name)
 {
-    auto iter_method = find_model_method_signature(type, "iter");
-    return iter_method && iter_method->parameter_types.empty() && is_iterator_protocol_type(iter_method->return_type);
-}
-
-static const Type_checker::Native_sig *find_native_signature(const Compiler &compiler, const std::string &name, int signature_index)
-{
-    if (!compiler.type_checker || signature_index < 0)
-        return nullptr;
-
-    auto it = compiler.type_checker->native_signatures.find(name);
-    if (it == compiler.type_checker->native_signatures.end())
-        return nullptr;
-    if (static_cast<size_t>(signature_index) >= it->second.size())
-        return nullptr;
-    return &it->second[static_cast<size_t>(signature_index)];
-}
-
-Result<mem::rc_ptr<Closure_value>> Compiler::compile(const std::vector<ast::Stmt *> &statements)
-{
-    states.clear();
-
-    // The top-level script is just a giant function!
-    types::Function_type main_sig;
-    main_sig.return_type = types::Primitive_kind::Void;
-    auto main_chunk = mem::make_rc<Chunk>();
-    auto main_closure = mem::make_rc<Closure_value>("<main>", 0, main_sig, main_chunk);
-
-    states.push_back({main_closure, {}, {}, 0});
-
-    // Stack Slot 0 is reserved for the running function itself
-    current()->locals.push_back(Local{"<script>", 0});
-
-    for (auto *stmt : statements)
-        if (stmt)
-            compile_stmt(stmt);
-
-    // Implicitly return nil at the end of the script
-    emit_op(Op_code::Nil, {0, 0});
-    emit_op(Op_code::Return, {0, 0});
-
-    auto finished_script = current()->closure;
-    states.pop_back();
-    return finished_script;
-}
-
-// Scoping & Locals
-
-void Compiler::begin_scope()
-{
-    current()->scope_depth++;
-}
-
-void Compiler::end_scope(phos::ast::Source_location loc)
-{
-    current()->scope_depth--;
-    while (!current()->locals.empty() && current()->locals.back().depth > current()->scope_depth) {
-        emit_op(Op_code::Pop, loc);
-        current()->locals.pop_back();
+    // Search backwards so we find the most recently declared variable with this name (shadowing)
+    for (int i = static_cast<int>(ctx->locals.size()) - 1; i >= 0; i--) {
+        if (ctx->locals[i].name == name) {
+            return ctx->locals[i].reg;
+        }
     }
+    return -1; // Not found locally
 }
 
-int Compiler::resolve_local(const std::string &name)
+int Compiler::add_upvalue(Compiler_context *ctx, uint8_t index, bool is_local)
 {
-    for (int i = static_cast<int>(current()->locals.size()) - 1; i >= 0; i--)
-        if (current()->locals[i].name == name)
-            return i;
+    // Check if we already captured this exact variable! (Prevents duplicate captures)
+    for (size_t i = 0; i < ctx->upvalues.size(); i++) {
+        if (ctx->upvalues[i].index == index && ctx->upvalues[i].is_local == is_local) {
+            return static_cast<int>(i);
+        }
+    }
+
+    ctx->upvalues.push_back({index, is_local});
+    return static_cast<int>(ctx->upvalues.size() - 1);
+}
+
+int Compiler::resolve_upvalue(Compiler_context *ctx, const std::string &name)
+{
+    if (ctx->enclosing == nullptr) {
+        return -1; // We hit the global scope. It's not an upvalue.
+    }
+
+    // 1. Does the immediate parent have it as a local?
+    int local_index = resolve_local(ctx->enclosing, name);
+    if (local_index != -1) {
+        return add_upvalue(ctx, static_cast<uint8_t>(local_index), true);
+    }
+
+    // 2. If not, does the grandparent have it? (Recursion!)
+    int upvalue_index = resolve_upvalue(ctx->enclosing, name);
+    if (upvalue_index != -1) {
+        // The parent captured it, so we pass it down to ourselves as a non-local upvalue
+        return add_upvalue(ctx, static_cast<uint8_t>(upvalue_index), false);
+    }
+
     return -1;
 }
 
-// Dispatchers
-void Compiler::compile_stmt(ast::Stmt *stmt)
+// =============================================================================
+// MAIN COMPILATION FLOW
+// =============================================================================
+
+/*
+    Main Compilation Flow (Two-Pass Architecture):
+
+    Pass 1: Hoisting
+        For each top-level statement:
+            If it's a function:
+                Reserve an index in the constant pool.
+                Save mapping: function_locations_[name] = index.
+
+    Pass 2: Bytecode Generation
+        For each top-level statement:
+            compile_stmt(stmt)
+
+    Packaging:
+        Emit graceful Return instruction.
+        Allocate final instructions and constants into the memory Arena.
+*/
+Closure_data Compiler::compile(const std::vector<ast::Stmt_id> &statements)
 {
-    if (!stmt)
-        return;
-    if (auto *node = std::get_if<ast::Print_stmt>(&stmt->node))
-        visit_print_stmt(*node);
-    else if (auto *node = std::get_if<ast::Expr_stmt>(&stmt->node))
-        visit_expr_stmt(*node);
-    else if (auto *node = std::get_if<ast::Var_stmt>(&stmt->node))
-        visit_var_stmt(*node);
-    else if (auto *node = std::get_if<ast::Block_stmt>(&stmt->node))
-        visit_block_stmt(*node);
-    else if (auto *node = std::get_if<ast::If_stmt>(&stmt->node))
-        visit_if_stmt(*node);
-    else if (auto *node = std::get_if<ast::While_stmt>(&stmt->node))
-        visit_while_stmt(*node);
-    else if (auto *node = std::get_if<ast::For_stmt>(&stmt->node))
-        visit_for_stmt(*node);
-    else if (auto *node = std::get_if<ast::For_in_stmt>(&stmt->node))
-        visit_for_in_stmt(*node);
-    else if (auto *node = std::get_if<ast::Function_stmt>(&stmt->node))
-        visit_function_stmt(*node);
-    else if (auto *node = std::get_if<ast::Return_stmt>(&stmt->node))
-        visit_return_stmt(*node);
-    else if (auto *node = std::get_if<ast::Model_stmt>(&stmt->node))
-        visit_model_stmt(*node);
-    else if (auto *node = std::get_if<ast::Match_stmt>(&stmt->node))
-        visit_match_stmt(*node);
-    else if (auto *node = std::get_if<ast::Union_stmt>(&stmt->node))
-        visit_union_stmt(*node);
-    else if (auto *node = std::get_if<ast::Enum_stmt>(&stmt->node))
-        visit_enum_stmt(*node);
-    else
-        std::println(stderr, "Unimplemented stmt node at index: {}", stmt->node.index());
-}
+    // Push the global execution context
+    Compiler_context global_ctx;
+    global_ctx.enclosing = nullptr;
+    global_ctx.current_register = 0;
+    push_context(&global_ctx);
 
-void Compiler::compile_expr(ast::Expr *expr)
-{
-    if (!expr)
-        return;
-    if (auto *node = std::get_if<ast::Literal_expr>(&expr->node))
-        visit_literal_expr(*node);
-    else if (auto *node = std::get_if<ast::Binary_expr>(&expr->node))
-        visit_binary_expr(*node);
-    else if (auto *node = std::get_if<ast::Unary_expr>(&expr->node))
-        visit_unary_expr(*node);
-    else if (auto *node = std::get_if<ast::Variable_expr>(&expr->node))
-        visit_variable_expr(*node);
-    else if (auto *node = std::get_if<ast::Assignment_expr>(&expr->node))
-        visit_assignment_expr(*node);
-    else if (auto *node = std::get_if<ast::Call_expr>(&expr->node))
-        visit_call_expr(*node);
-    else if (auto *node = std::get_if<ast::Closure_expr>(&expr->node))
-        visit_closure_expr(*node);
-    else if (auto *node = std::get_if<ast::Model_literal_expr>(&expr->node))
-        visit_model_literal_expr(*node);
-    else if (auto *node = std::get_if<ast::Field_access_expr>(&expr->node))
-        visit_field_access_expr(*node);
-    else if (auto *node = std::get_if<ast::Field_assignment_expr>(&expr->node))
-        visit_field_assignment_expr(*node);
-    else if (auto *node = std::get_if<ast::Method_call_expr>(&expr->node))
-        visit_method_call_expr(*node);
-    else if (auto *node = std::get_if<ast::Static_path_expr>(&expr->node))
-        visit_static_path_expr(*node);
-    else if (auto *node = std::get_if<ast::Enum_member_expr>(&expr->node))
-        visit_enum_member_expr(*node);
-    else if (auto *node = std::get_if<ast::Array_literal_expr>(&expr->node))
-        visit_array_literal_expr(*node);
-    else if (auto *node = std::get_if<ast::Array_access_expr>(&expr->node))
-        visit_array_access_expr(*node);
-    else if (auto *node = std::get_if<ast::Array_assignment_expr>(&expr->node))
-        visit_array_assignment_expr(*node);
-    else if (auto *node = std::get_if<ast::Cast_expr>(&expr->node))
-        visit_cast_expr(*node);
-    else if (auto *node = std::get_if<ast::Range_expr>(&expr->node))
-        visit_range_expr(*node);
-    else if (auto *node = std::get_if<ast::Fstring_expr>(&expr->node))
-        visit_fstring_expr(*node);
-    else if (auto *node = std::get_if<ast::Anon_model_literal_expr>(&expr->node))
-        visit_anon_model_literal_expr(*node);
-    else
-        std::println(stderr, "Unimplemented expr node at index: {}", expr->node.index());
+    // Hoisting Natives
+    for (const auto &[name, sigs] : env.native_signatures) {
+        if (sigs.empty() || sigs[0].func == nullptr) {
+            continue;
+        }
 
-    for (uint8_t i = 0; i < expr->auto_wrap_depth; ++i) {
-        emit_op(Op_code::Wrap_optional, ast::get_loc(expr->node));
-    }
-}
+        Closure_data *closure = arena.allocate<Closure_data>();
+        new (closure) Closure_data();
 
-// Call Frames & Functions
-void Compiler::visit_function_stmt(const ast::Function_stmt &stmt)
-{
-    // 1. Build the Signature
-    types::Function_type sig;
-    for (const auto &p : stmt.parameters)
-        sig.parameter_types.push_back(p.type);
-    sig.return_type = stmt.return_type;
+        size_t name_size = sizeof(String_data) + name.length() + 1;
+        closure->name = static_cast<String_data *>(arena.allocate_bytes(name_size));
+        closure->name->length = name.length();
+        std::copy(name.begin(), name.end(), closure->name->chars);
+        closure->name->chars[name.length()] = '\0';
 
-    // 2. Setup isolated Chunk and State
-    auto chunk = mem::make_rc<Chunk>();
-    auto closure = mem::make_rc<Closure_value>(stmt.name, stmt.parameters.size(), sig, chunk);
+        closure->arity = sigs[0].params.size();
+        closure->native_func = sigs[0].func;
 
-    states.push_back({closure, {}, {}, 0});
+        // Native functions don't have bytecode or constants!
+        closure->code_count = 0;
+        closure->code = nullptr;
+        closure->constant_count = 0;
+        closure->constants = nullptr;
 
-    // 3. Slot 0 is always the function object itself
-    current()->locals.push_back(Local{stmt.name, 0});
-
-    // 4. Define parameters as standard local variables (Slots 1, 2, 3...)
-    for (const auto &p : stmt.parameters)
-        current()->locals.push_back(Local{p.name, 0});
-
-    // 5. Compile the body
-    compile_stmt(stmt.body);
-
-    // 6. Ensure every function safely returns
-    emit_op(Op_code::Nil, stmt.loc);
-    emit_op(Op_code::Return, stmt.loc);
-
-    // 7. Pop the finished compiler state AND grab upvalues
-    auto finished_closure = current()->closure;
-    auto upvalues = current()->upvalues; // <--- Grab before pop!
-    states.pop_back();
-
-    // 8. Emit the new function as a Closure
-    size_t idx = current_chunk()->add_constant(Value(finished_closure));
-    emit_op(Op_code::Make_closure, stmt.loc);
-    emit_byte(static_cast<uint8_t>(idx), stmt.loc);
-
-    // Loop through upvalues and emit their routing instructions
-    for (const auto &uv : upvalues) {
-        emit_byte(uv.is_local ? 1 : 0, stmt.loc);
-        emit_byte(uv.index, stmt.loc);
+        uint16_t const_idx = add_constant(Value::make_closure(closure));
+        function_locations_[name] = const_idx;
     }
 
-    // 9. Bind it to the variable name!
-    if (current()->scope_depth == 0) {
-        uint8_t name_idx = identifier_constant(stmt.name, stmt.loc);
-        emit_op(Op_code::Define_global, stmt.loc);
-        emit_byte(name_idx, stmt.loc);
-    } else {
-        current()->locals.push_back(Local{stmt.name, current()->scope_depth});
-    }
-}
+    // Hoisting User Functions
+    for (auto stmt_id : statements) {
+        if (stmt_id.is_null()) {
+            continue;
+        }
+        const auto &node = tree.get(stmt_id).node;
 
-void Compiler::visit_closure_expr(const ast::Closure_expr &expr)
-{
-    types::Function_type sig;
-    for (const auto &p : expr.parameters)
-        sig.parameter_types.push_back(p.type);
-    sig.return_type = expr.return_type;
+        if (std::holds_alternative<ast::Function_stmt>(node)) {
+            const auto &fn_stmt = std::get<ast::Function_stmt>(node);
+            function_locations_[fn_stmt.name] = add_constant(Value(nullptr));
 
-    auto chunk = mem::make_rc<Chunk>();
-    auto closure = mem::make_rc<Closure_value>("<closure>", expr.parameters.size(), sig, chunk);
-
-    states.push_back({closure, {}, {}, 0});
-
-    current()->locals.push_back(Local{"<closure>", 0});
-    for (const auto &p : expr.parameters)
-        current()->locals.push_back(Local{p.name, 0});
-
-    compile_stmt(expr.body);
-
-    emit_op(Op_code::Nil, expr.loc);
-    emit_op(Op_code::Return, expr.loc);
-
-    auto finished_closure = current()->closure;
-    auto upvalues = current()->upvalues; // <--- Grab before pop!
-    states.pop_back();
-
-    // Emit Make_closure and routing bytes
-    size_t idx = current_chunk()->add_constant(Value(finished_closure));
-    emit_op(Op_code::Make_closure, expr.loc);
-    emit_byte(static_cast<uint8_t>(idx), expr.loc);
-
-    for (const auto &uv : upvalues) {
-        emit_byte(uv.is_local ? 1 : 0, expr.loc);
-        emit_byte(uv.index, expr.loc);
-    }
-}
-
-void Compiler::visit_call_expr(const ast::Call_expr &expr)
-{
-    if (auto *var_callee = std::get_if<ast::Variable_expr>(&expr.callee->node)) {
-        if (var_callee->name == "iter" && expr.arguments.size() == 1) {
-            auto arg_type = ast::get_type(expr.arguments[0].value->node);
-
-            if (is_iterator_protocol_type(arg_type)) {
-                compile_expr(expr.arguments[0].value);
-                return;
-            }
-
-            if (has_iter_method(arg_type)) {
-                ast::Method_call_expr method_expr{
-                    .object = expr.arguments[0].value,
-                    .method_name = "iter",
-                    .arguments = {},
-                    .type = expr.type,
-                    .loc = expr.loc,
-                };
-                visit_method_call_expr(method_expr);
-                return;
+        } else if (std::holds_alternative<ast::Model_stmt>(node)) {
+            const auto &model_stmt = std::get<ast::Model_stmt>(node);
+            for (auto method_id : model_stmt.methods) {
+                if (method_id.is_null()) {
+                    continue;
+                }
+                if (auto *m_fn = std::get_if<ast::Function_stmt>(&tree.get(method_id).node)) {
+                    // This is now User::p!
+                    function_locations_[m_fn->name] = add_constant(Value(nullptr));
+                }
             }
         }
     }
 
-    // First, push the function object
-    compile_expr(expr.callee);
-
-    if (auto *var_callee = std::get_if<ast::Variable_expr>(&expr.callee->node)) {
-        if (auto *native_sig = find_native_signature(*this, var_callee->name, expr.native_signature_index)) {
-            for (size_t i = 0; i < expr.arguments.size(); ++i) {
-                if (expr.arguments[i].value)
-                    compile_expr(expr.arguments[i].value);
-                else
-                    emit_constant(*native_sig->params[i].default_value, expr.loc);
-            }
-
-            emit_op(Op_code::Call, expr.loc);
-            emit_byte(expr.arguments.size(), expr.loc);
-            return;
-        }
+    // Pass 2: Bytecode Generation
+    for (auto stmt_id : statements) {
+        compile_stmt(stmt_id);
     }
 
-    // Then, push all the arguments in order
-    for (const auto &arg : expr.arguments)
-        compile_expr(arg.value);
+    emit(vm::Instruction::make_rrr(vm::Opcode::Return, 0, 0, 0));
 
-    // Emit the magical Call opcode with the arity!
-    emit_op(Op_code::Call, expr.loc);
-    emit_byte(expr.arguments.size(), expr.loc);
+    Closure_data data{};
+    auto &final_block = current_block();
+
+    data.code_count = final_block.instructions.size();
+    if (data.code_count > 0) {
+        data.code = arena.allocate<vm::Instruction>(data.code_count);
+        std::copy(final_block.instructions.begin(), final_block.instructions.end(), data.code);
+    }
+
+    data.constant_count = final_block.constants.size();
+    if (data.constant_count > 0) {
+        data.constants = arena.allocate<Value>(data.constant_count);
+        std::copy(final_block.constants.begin(), final_block.constants.end(), data.constants);
+    }
+
+    pop_context();
+    return data;
 }
 
-void Compiler::visit_return_stmt(const ast::Return_stmt &stmt)
+// =============================================================================
+// BYTECODE & REGISTER HELPERS
+// =============================================================================
+
+/*
+    Virtual Register Allocation:
+    Claims the next available 8-bit register for temporary use in the current context.
+*/
+uint8_t Compiler::allocate_register()
 {
-    if (stmt.expression)
-        compile_expr(stmt.expression);
-    else
-        emit_op(Op_code::Nil, stmt.loc); // Return nil if empty
-
-    emit_op(Op_code::Return, stmt.loc);
+    if (current_ctx_->current_register >= 255) {
+        std::println(std::cerr, "Expression too complex! Exceeded 256 temporary registers.");
+        std::exit(EXIT_FAILURE);
+    }
+    return current_ctx_->current_register++;
 }
 
-// ============================================================================
-// Standard Statement/Expr Visitors (Same as before, routing to current_chunk)
-// ============================================================================
-
-void Compiler::visit_print_stmt(const ast::Print_stmt &stmt)
+void Compiler::reset_registers()
 {
-    for (auto *expr : stmt.expressions)
-        compile_expr(expr);
-
-    emit_constant(Value(stmt.sep), stmt.loc);
-    emit_constant(Value(stmt.end), stmt.loc);
-
-    if (stmt.stream == ast::Print_stream::STDERR)
-        emit_op(Op_code::Print_err, stmt.loc);
-    else
-        emit_op(Op_code::Print, stmt.loc);
-
-    emit_byte(static_cast<uint8_t>(stmt.expressions.size()), stmt.loc);
+    current_ctx_->current_register = 0;
 }
 
-void Compiler::visit_expr_stmt(const ast::Expr_stmt &stmt)
+size_t Compiler::emit(vm::Instruction inst)
+{
+    return current_block().emit(inst);
+}
+
+uint16_t Compiler::add_constant(Value val)
+{
+    return current_block().add_constant(val);
+}
+
+void Compiler::emit_numeric_normalize(uint8_t reg, types::Type_id type)
+{
+    if (!env.tt.is_numeric_primitive(type)) {
+        return;
+    }
+
+    auto kind = env.tt.get_primitive(type);
+    if (kind == types::Primitive_kind::I64 || kind == types::Primitive_kind::U64 || kind == types::Primitive_kind::F64) {
+        return;
+    }
+
+    emit(vm::Instruction::make_rrr(cast_opcode_for(type), reg, 0, 0));
+}
+
+vm::Opcode Compiler::cast_opcode_for(types::Type_id type) const
+{
+    switch (env.tt.get_primitive(type)) {
+    case types::Primitive_kind::I8:
+        return vm::Opcode::Cast_i8;
+    case types::Primitive_kind::I16:
+        return vm::Opcode::Cast_i16;
+    case types::Primitive_kind::I32:
+        return vm::Opcode::Cast_i32;
+    case types::Primitive_kind::I64:
+        return vm::Opcode::Cast_i64;
+    case types::Primitive_kind::U8:
+        return vm::Opcode::Cast_u8;
+    case types::Primitive_kind::U16:
+        return vm::Opcode::Cast_u16;
+    case types::Primitive_kind::U32:
+        return vm::Opcode::Cast_u32;
+    case types::Primitive_kind::U64:
+        return vm::Opcode::Cast_u64;
+    case types::Primitive_kind::F16:
+        return vm::Opcode::Cast_f16;
+    case types::Primitive_kind::F32:
+        return vm::Opcode::Cast_f32;
+    case types::Primitive_kind::F64:
+        return vm::Opcode::Cast_f64;
+    default:
+        std::println(std::cerr, "Compiler Bug: No cast opcode for type '{}'.", env.tt.to_string(type));
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+vm::Opcode Compiler::arithmetic_opcode_for(lex::TokenType op, types::Type_id type) const
+{
+    bool is_float = env.tt.is_float_primitive(type);
+    bool is_unsigned = env.tt.is_unsigned_integer_primitive(type);
+
+    switch (op) {
+    case lex::TokenType::Plus:
+        if (is_float) {
+            return vm::Opcode::Add_f64;
+        }
+        return is_unsigned ? vm::Opcode::Add_u64 : vm::Opcode::Add_i64;
+    case lex::TokenType::Minus:
+        if (is_float) {
+            return vm::Opcode::Sub_f64;
+        }
+        return is_unsigned ? vm::Opcode::Sub_u64 : vm::Opcode::Sub_i64;
+    case lex::TokenType::Star:
+        if (is_float) {
+            return vm::Opcode::Mul_f64;
+        }
+        return is_unsigned ? vm::Opcode::Mul_u64 : vm::Opcode::Mul_i64;
+    case lex::TokenType::Slash:
+        if (is_float) {
+            return vm::Opcode::Div_f64;
+        }
+        return is_unsigned ? vm::Opcode::Div_u64 : vm::Opcode::Div_i64;
+    case lex::TokenType::Percent:
+        if (is_float) {
+            return vm::Opcode::Mod_f64;
+        }
+        return is_unsigned ? vm::Opcode::Mod_u64 : vm::Opcode::Mod_i64;
+    default:
+        std::println(std::cerr, "Compiler Bug: Unsupported arithmetic operator.");
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+vm::Opcode Compiler::comparison_opcode_for(lex::TokenType op, types::Type_id left_type, types::Type_id right_type) const
+{
+    if (env.tt.is_string(left_type) && env.tt.is_string(right_type)) {
+        if (op == lex::TokenType::Equal) {
+            return vm::Opcode::Eq_str;
+        }
+        if (op == lex::TokenType::NotEqual) {
+            return vm::Opcode::Neq_str;
+        }
+    }
+    bool is_float = env.tt.is_float_primitive(left_type) || env.tt.is_float_primitive(right_type);
+    bool is_unsigned = env.tt.is_unsigned_integer_primitive(left_type) && env.tt.is_unsigned_integer_primitive(right_type);
+
+    switch (op) {
+    case lex::TokenType::Equal:
+        if (is_float) {
+            return vm::Opcode::Eq_f64;
+        }
+        return is_unsigned ? vm::Opcode::Eq_u64 : vm::Opcode::Eq_i64;
+    case lex::TokenType::NotEqual:
+        if (is_float) {
+            return vm::Opcode::Neq_f64;
+        }
+        return is_unsigned ? vm::Opcode::Neq_u64 : vm::Opcode::Neq_i64;
+    case lex::TokenType::Less:
+        if (is_float) {
+            return vm::Opcode::Lt_f64;
+        }
+        return is_unsigned ? vm::Opcode::Lt_u64 : vm::Opcode::Lt_i64;
+    case lex::TokenType::LessEqual:
+        if (is_float) {
+            return vm::Opcode::Lte_f64;
+        }
+        return is_unsigned ? vm::Opcode::Lte_u64 : vm::Opcode::Lte_i64;
+    case lex::TokenType::Greater:
+        if (is_float) {
+            return vm::Opcode::Gt_f64;
+        }
+        return is_unsigned ? vm::Opcode::Gt_u64 : vm::Opcode::Gt_i64;
+    case lex::TokenType::GreaterEqual:
+        if (is_float) {
+            return vm::Opcode::Gte_f64;
+        }
+        return is_unsigned ? vm::Opcode::Gte_u64 : vm::Opcode::Gte_i64;
+    default:
+        std::println(std::cerr, "Compiler Bug: Unsupported comparison operator.");
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+vm::Opcode Compiler::bitwise_opcode_for(lex::TokenType op, types::Type_id type) const
+{
+    bool is_unsigned = env.tt.is_unsigned_integer_primitive(type);
+    switch (op) {
+    case lex::TokenType::BitAnd:
+        return is_unsigned ? vm::Opcode::BitAnd_u64 : vm::Opcode::BitAnd_i64;
+    case lex::TokenType::Pipe:
+        return is_unsigned ? vm::Opcode::BitOr_u64 : vm::Opcode::BitOr_i64;
+    case lex::TokenType::BitXor:
+        return is_unsigned ? vm::Opcode::BitXor_u64 : vm::Opcode::BitXor_i64;
+    case lex::TokenType::BitLShift:
+        return is_unsigned ? vm::Opcode::Shl_u64 : vm::Opcode::Shl_i64;
+    case lex::TokenType::BitRshift:
+        return is_unsigned ? vm::Opcode::Shr_u64 : vm::Opcode::Shr_i64;
+    default:
+        std::println(std::cerr, "Compiler Bug: Unsupported bitwise operator.");
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+// =============================================================================
+// STATEMENTS
+// =============================================================================
+
+void Compiler::compile_stmt(ast::Stmt_id stmt_id)
+{
+    if (stmt_id.is_null()) {
+        return;
+    }
+
+    std::visit(
+        [this](const auto &s) {
+            using T = std::decay_t<decltype(s)>;
+            if constexpr (std::is_same_v<T, ast::Print_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Expr_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Var_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Block_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::If_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::While_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::For_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Function_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Return_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Enum_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Model_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Union_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Match_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::For_in_stmt>) {
+                compile_stmt_node(s);
+            } else {
+                auto l = ast::get_loc(s);
+                std::println(std::cerr, "{}:{} Unimplemented stmt node", l.l, l.c);
+            }
+        },
+        tree.get(stmt_id).node);
+}
+
+/*
+    if custom separator:
+        %sep = load_const "separator_string"
+    for each expression 'e':
+        if not first expression:
+            print %sep, stream
+        %res = compile(e)
+        print %res, stream
+    if custom end (e.g., \n):
+        %end = load_const "end_string"
+        print %end, stream
+*/
+void Compiler::compile_stmt_node(const ast::Print_stmt &stmt)
+{
+    uint8_t stream_flag = (stmt.stream == ast::Print_stream::STDERR) ? 1 : 0;
+    uint8_t sep_reg = 0;
+    bool has_sep = !stmt.sep.empty() && stmt.expressions.size() > 1;
+
+    if (has_sep) {
+        sep_reg = allocate_register();
+        uint16_t sep_idx = add_constant(Value::make_string(arena, stmt.sep));
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, sep_reg, sep_idx));
+    }
+
+    for (size_t i = 0; i < stmt.expressions.size(); ++i) {
+        if (i > 0 && has_sep) {
+            emit(vm::Instruction::make_rrr(vm::Opcode::Print, sep_reg, stream_flag, 0));
+        }
+
+        uint8_t result_reg = compile_expr(stmt.expressions[i]);
+        emit(vm::Instruction::make_rrr(vm::Opcode::Print, result_reg, stream_flag, 0));
+    }
+
+    if (!stmt.end.empty()) {
+        uint8_t end_reg = allocate_register();
+        uint16_t end_idx = add_constant(Value::make_string(arena, stmt.end));
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, end_reg, end_idx));
+        emit(vm::Instruction::make_rrr(vm::Opcode::Print, end_reg, stream_flag, 0));
+    }
+}
+
+void Compiler::compile_stmt_node(const ast::Expr_stmt &stmt)
 {
     compile_expr(stmt.expression);
-    emit_op(Op_code::Pop, stmt.loc);
-}
-void Compiler::visit_literal_expr(const ast::Literal_expr &expr)
-{
-    emit_constant(expr.value, expr.loc);
 }
 
-void Compiler::visit_var_stmt(const ast::Var_stmt &stmt)
+/*
+    if has initializer:
+        %target = compile(initializer)
+    else:
+        %target = allocate_register()
+    locals.push(name, %target)
+*/
+void Compiler::compile_stmt_node(const ast::Var_stmt &stmt)
 {
-    if (stmt.initializer)
-        compile_expr(stmt.initializer);
-    else
-        emit_op(Op_code::Nil, stmt.loc);
+    uint8_t target_reg = 0;
 
-    if (current()->scope_depth == 0) {
-        uint8_t name_idx = identifier_constant(stmt.name, stmt.loc);
-        emit_op(Op_code::Define_global, stmt.loc);
-        emit_byte(name_idx, stmt.loc);
-    } else {
-        current()->locals.push_back(Local{stmt.name, current()->scope_depth});
-    }
-}
-
-void Compiler::visit_block_stmt(const ast::Block_stmt &stmt)
-{
-    begin_scope();
-    for (auto *s : stmt.statements)
-        compile_stmt(s);
-    end_scope(stmt.loc);
-}
-
-void Compiler::visit_if_stmt(const ast::If_stmt &stmt)
-{
-    compile_expr(stmt.condition);
-    size_t then_jump = emit_jump(Op_code::Jump_if_false, stmt.loc);
-    emit_op(Op_code::Pop, stmt.loc);
-    compile_stmt(stmt.then_branch);
-    size_t else_jump = emit_jump(Op_code::Jump, stmt.loc);
-    patch_jump(then_jump, stmt.loc);
-    emit_op(Op_code::Pop, stmt.loc);
-    if (stmt.else_branch)
-        compile_stmt(stmt.else_branch);
-    patch_jump(else_jump, stmt.loc);
-}
-
-void Compiler::visit_while_stmt(const ast::While_stmt &stmt)
-{
-    size_t loop_start = current_chunk()->code.size();
-    compile_expr(stmt.condition);
-    size_t exit_jump = emit_jump(Op_code::Jump_if_false, stmt.loc);
-    emit_op(Op_code::Pop, stmt.loc);
-    compile_stmt(stmt.body);
-    emit_loop(loop_start, stmt.loc);
-    patch_jump(exit_jump, stmt.loc);
-    emit_op(Op_code::Pop, stmt.loc);
-}
-
-void Compiler::visit_for_stmt(const ast::For_stmt &stmt)
-{
-    begin_scope();
-    if (stmt.initializer)
-        compile_stmt(stmt.initializer);
-    size_t loop_start = current_chunk()->code.size();
-    size_t exit_jump = -1;
-    if (stmt.condition) {
-        compile_expr(stmt.condition);
-        exit_jump = emit_jump(Op_code::Jump_if_false, stmt.loc);
-        emit_op(Op_code::Pop, stmt.loc);
-    }
-    if (stmt.body)
-        compile_stmt(stmt.body);
-    if (stmt.increment) {
-        compile_expr(stmt.increment);
-        emit_op(Op_code::Pop, stmt.loc);
-    }
-    emit_loop(loop_start, stmt.loc);
-    if (stmt.condition) {
-        patch_jump(exit_jump, stmt.loc);
-        emit_op(Op_code::Pop, stmt.loc);
-    }
-    end_scope(stmt.loc);
-}
-
-void Compiler::visit_for_in_stmt(const ast::For_in_stmt &stmt)
-{
-    begin_scope(); // Hidden scope for '.iter'
-
-    // Fetch the resolved type of the iterable so we know how to route it
-    types::Type iterable_type = types::Primitive_kind::Any;
-    if (stmt.iterable)
-        iterable_type = ast::get_type(stmt.iterable->node);
-
-    // 1. DYNAMIC DISPATCH ROUTING
-    bool is_already_custom_iter = is_iterator_protocol_type(iterable_type)
-        && !std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(iterable_type);
-    bool has_custom_iter_method = has_iter_method(iterable_type);
-
-    types::Type custom_iter_type = types::Primitive_kind::Void;
-
-    // --- SETUP: INITIALIZE THE ITERATOR ---
-    if (is_already_custom_iter) {
-        custom_iter_type = iterable_type;
-        // It's already an iterator (e.g. `for i in vec.iter()`). Just push it!
-        if (stmt.iterable)
-            compile_expr(stmt.iterable);
-    } else if (has_custom_iter_method) {
-        // It's an iterable (e.g. `for i in vec`). Call `vec::iter()`!
-        auto iter_sig = find_model_method_signature(iterable_type, "iter");
-        custom_iter_type = iter_sig->return_type;
-        auto model_type = types::get_model_type(iterable_type);
-
-        std::string global_name = model_type->name + "::iter";
-        emit_op(Op_code::Get_global, stmt.loc);
-        emit_byte(identifier_constant(global_name, stmt.loc), stmt.loc);
-        if (stmt.iterable)
-            compile_expr(stmt.iterable); // Push 'this'
-        emit_op(Op_code::Call, stmt.loc);
-        emit_byte(1, stmt.loc);
-    } else {
-        // It's a native type (array, string, range). Call C++ FFI `iter()`
-        uint8_t make_idx = identifier_constant("iter", stmt.loc);
-        emit_op(Op_code::Get_global, stmt.loc);
-        emit_byte(make_idx, stmt.loc);
-        if (stmt.iterable)
-            compile_expr(stmt.iterable);
-        emit_op(Op_code::Call, stmt.loc);
-        emit_byte(1, stmt.loc);
-    }
-
-    current()->locals.push_back(Local{".iter", current()->scope_depth});
-    size_t iter_slot = current()->locals.size() - 1;
-
-    // --- LOOP START ---
-    size_t loop_start = current_chunk()->code.size();
-
-    // --- FETCH: CALL NEXT() ---
-    if (is_already_custom_iter || has_custom_iter_method) {
-        // Call the custom user method: CustomModel::next(.iter)
-        auto iter_model = types::get_model_type(custom_iter_type);
-        std::string next_name = iter_model->name + "::next";
-
-        emit_op(Op_code::Get_global, stmt.loc);
-        emit_byte(identifier_constant(next_name, stmt.loc), stmt.loc);
-        emit_op(Op_code::Get_local, stmt.loc);
-        emit_byte(static_cast<uint8_t>(iter_slot), stmt.loc);
-        emit_op(Op_code::Call, stmt.loc);
-        emit_byte(1, stmt.loc);
-    } else {
-        // Call the C++ FFI: Iter::next(.iter, step = 1)
-        uint8_t next_idx = identifier_constant("Iter::next", stmt.loc);
-        emit_op(Op_code::Get_global, stmt.loc);
-        emit_byte(next_idx, stmt.loc);
-        emit_op(Op_code::Get_local, stmt.loc);
-        emit_byte(static_cast<uint8_t>(iter_slot), stmt.loc);
-        emit_constant(Value(int64_t(1)), stmt.loc);
-        emit_op(Op_code::Call, stmt.loc);
-        emit_byte(2, stmt.loc);
-    }
-
-    // --- CHECK & UNWRAP ---
-    size_t exit_jump = emit_jump(Op_code::Jump_if_nil, stmt.loc);
-    emit_op(Op_code::Unwrap, stmt.loc);
-
-    // --- BODY ---
-    begin_scope();
-    current()->locals.push_back(Local{stmt.var_name, current()->scope_depth});
-    if (stmt.body)
-        compile_stmt(stmt.body);
-    end_scope(stmt.loc); // Pops 'item'
-
-    emit_loop(loop_start, stmt.loc);
-
-    // --- EXIT ---
-    patch_jump(exit_jump, stmt.loc);
-    emit_op(Op_code::Pop, stmt.loc); // Pop the exhausted base 'nil'
-    end_scope(stmt.loc);             // Pops '.iter'
-}
-
-void Compiler::visit_model_stmt(const ast::Model_stmt &stmt)
-{
-    // Compile every method bound to this model
-    for (const auto *method : stmt.methods) {
-        types::Function_type sig;
-        for (const auto &p : method->parameters)
-            sig.parameter_types.push_back(p.type);
-        sig.return_type = method->return_type;
-
-        auto chunk = mem::make_rc<Chunk>();
-        std::string global_name = stmt.name + "::" + method->name;
-
-        // Arity accounts for the hidden 'this' parameter if it's an instance method
-        size_t arity = method->parameters.size() + (method->is_static ? 0 : 1);
-        auto closure = mem::make_rc<Closure_value>(global_name, arity, sig, chunk);
-
-        states.push_back({closure, {}, {}, 0});
-
-        // Slot 0: The function itself
-        current()->locals.push_back(Local{global_name, 0});
-
-        // Slot 1: 'this' (if instance method)
-        if (!method->is_static)
-            current()->locals.push_back(Local{"this", 0});
-
-        for (const auto &p : method->parameters)
-            current()->locals.push_back(Local{p.name, 0});
-
-        compile_stmt(method->body);
-
-        emit_op(Op_code::Nil, method->loc);
-        emit_op(Op_code::Return, method->loc);
-
-        auto finished_closure = current()->closure;
-        auto upvalues = current()->upvalues; // <--- Grab before pop!
-        states.pop_back();
-
-        // Emit Make_closure and routing bytes
-        size_t idx = current_chunk()->add_constant(Value(finished_closure));
-        emit_op(Op_code::Make_closure, method->loc);
-        emit_byte(static_cast<uint8_t>(idx), method->loc);
-
-        for (const auto &uv : upvalues) {
-            emit_byte(uv.is_local ? 1 : 0, method->loc);
-            emit_byte(uv.index, method->loc);
+    if (!stmt.initializer.is_null()) {
+        target_reg = compile_expr(stmt.initializer);
+        types::Type_id source_type = ast::get_type(tree.get(stmt.initializer).node);
+        if (source_type != stmt.type) {
+            emit_numeric_normalize(target_reg, stmt.type);
         }
+    } else {
+        target_reg = allocate_register();
+    }
 
-        uint8_t name_idx = identifier_constant(global_name, method->loc);
-        emit_op(Op_code::Define_global, method->loc);
-        emit_byte(name_idx, method->loc);
+    current_ctx_->locals.push_back({stmt.name, target_reg});
+}
+
+/*
+    Save current locals count
+    compile(statements inside block)
+    Restore locals count (destroys block-scoped variables)
+*/
+void Compiler::compile_stmt_node(const ast::Block_stmt &stmt)
+{
+    auto prev_locals_size = current_ctx_->locals.size();
+
+    for (const auto &st : stmt.statements) {
+        compile_stmt(st);
+    }
+
+    current_ctx_->locals.resize(prev_locals_size);
+}
+
+/*
+    If-Else Pseudo-IR:
+        %cond = compile(condition)
+        jump_if_false %cond, .else_branch
+    .then_branch:
+        compile(then_body)
+        jump .if_end
+    .else_branch:
+        compile(else_body)
+    .if_end:
+*/
+void Compiler::compile_stmt_node(const ast::If_stmt &stmt)
+{
+    uint8_t cond_reg = compile_expr(stmt.condition);
+
+    size_t jump_if_false_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, cond_reg, 0));
+
+    if (!stmt.then_branch.is_null()) {
+        compile_stmt(stmt.then_branch);
+    }
+
+    if (!stmt.else_branch.is_null()) {
+        size_t jump_skip_else_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+
+        uint16_t else_start = static_cast<uint16_t>(current_block().instructions.size());
+        current_block().instructions[jump_if_false_idx].ri.imm = else_start;
+
+        compile_stmt(stmt.else_branch);
+
+        uint32_t skip_target = static_cast<uint32_t>(current_block().instructions.size());
+        current_block().instructions[jump_skip_else_idx].i.imm = skip_target;
+
+    } else {
+        uint16_t end_target = static_cast<uint16_t>(current_block().instructions.size());
+        current_block().instructions[jump_if_false_idx].ri.imm = end_target;
     }
 }
 
-void Compiler::visit_union_stmt(const ast::Union_stmt &stmt)
+/*
+    .loop_start:
+        %cond = compile(condition)
+        jump_if_false %cond, .loop_end
+    .loop_body:
+        compile(body)
+        jump .loop_start
+    .loop_end:
+*/
+void Compiler::compile_stmt_node(const ast::While_stmt &stmt)
 {
-    // Unions are purely static type definitions.
-    // The Type Checker has already validated everything.
-    // We emit absolutely ZERO bytecode for the declaration itself!
-    return;
+    std::uint32_t loop_start = static_cast<uint32_t>(current_block().instructions.size());
+
+    std::uint8_t condition_reg = compile_expr(stmt.condition);
+
+    size_t exit_jump_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, condition_reg, 0));
+
+    compile_stmt(stmt.body);
+
+    emit(vm::Instruction::make_i(vm::Opcode::Jump, loop_start));
+
+    uint16_t exit_target = static_cast<uint16_t>(current_block().instructions.size());
+    current_block().instructions[exit_jump_idx].ri.imm = exit_target;
 }
 
-void Compiler::visit_enum_stmt(const ast::Enum_stmt &stmt)
+/*
+    .loop_init:
+        compile(initializer)
+    .loop_start:
+        %cond = compile(condition)
+        jump_if_false %cond, .loop_end
+    .loop_body:
+        compile(body)
+    .loop_step:
+        compile(increment)
+        jump .loop_start
+    .loop_end:
+*/
+void Compiler::compile_stmt_node(const ast::For_stmt &stmt)
 {
-    // Enums are purely static type definitions.
-    // We emit absolutely ZERO bytecode for the declaration itself!
-    return;
+    auto prev_locals_size = current_ctx_->locals.size();
+
+    if (!stmt.initializer.is_null()) {
+        compile_stmt(stmt.initializer);
+    }
+
+    uint32_t loop_start = static_cast<uint32_t>(current_block().instructions.size());
+
+    size_t exit_jump_idx = -1;
+    if (!stmt.condition.is_null()) {
+        uint8_t cond_reg = compile_expr(stmt.condition);
+        exit_jump_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, cond_reg, 0));
+    }
+
+    compile_stmt(stmt.body);
+
+    if (!stmt.increment.is_null()) {
+        compile_expr(stmt.increment);
+    }
+
+    emit(vm::Instruction::make_i(vm::Opcode::Jump, loop_start));
+
+    if (exit_jump_idx != -1) {
+        uint16_t exit_target = static_cast<uint16_t>(current_block().instructions.size());
+        current_block().instructions[exit_jump_idx].ri.imm = exit_target;
+    }
+
+    current_ctx_->locals.resize(prev_locals_size);
 }
 
-void Compiler::visit_match_stmt(const ast::Match_stmt &stmt)
+/*
+    1. Push a new isolated environment (Compiler_context)
+    2. Assign the first registers to the parameters
+    3. Compile the function body
+    4. Emit a failsafe Return (in case the user forgot a return statement)
+    5. Package everything into a Closure_data using the Arena directly
+    6. Pop the environment
+    7. If it's a global function with no upvalues, update the hoisted Constant Pool entry.
+    8. Otherwise, emit Make_closure and routing bytes, and assign to a local register.
+*/
+void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
 {
-    if (stmt.subject)
-        compile_expr(stmt.subject);
+    Compiler_context fn_ctx;
+    fn_ctx.current_register = 0;
+    push_context(&fn_ctx);
 
-    // 1. Fetch the static type to differentiate Unions from Enums/Static values
-    types::Type subject_type = ast::get_type(stmt.subject->node);
-    bool is_union_subject = std::holds_alternative<mem::rc_ptr<types::Union_type>>(subject_type);
+    // Register the params from r[0].....r[arity - 1]
+    for (const auto &param : stmt.parameters) {
+        uint8_t reg = allocate_register();
+        current_ctx_->locals.push_back({param.name, reg});
+    }
 
-    current()->locals.push_back(Local{"<match_subject>", current()->scope_depth});
+    // Body
+    if (!stmt.body.is_null()) {
+        compile_stmt(stmt.body);
+    }
+
+    // Emit a failsafe `return nil` at the very end
+    uint8_t nil_reg = allocate_register();
+    emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, nil_reg, 0, 0));
+    emit(vm::Instruction::make_rrr(vm::Opcode::Return, nil_reg, 0, 0));
+
+    // Package the compiled block into a Closure_data manually
+    Closure_data *closure = arena.allocate<Closure_data>();
+    new (closure) Closure_data();
+
+    // Name
+    size_t name_size = sizeof(String_data) + stmt.name.length() + 1;
+    closure->name = static_cast<String_data *>(arena.allocate_bytes(name_size));
+    closure->name->length = stmt.name.length();
+    std::copy(stmt.name.begin(), stmt.name.end(), closure->name->chars);
+    closure->name->chars[stmt.name.length()] = '\0';
+
+    // Arity
+    closure->arity = stmt.parameters.size();
+
+    // Code block
+    closure->code_count = current_ctx_->block.instructions.size();
+    if (closure->code_count > 0) {
+        closure->code = arena.allocate<vm::Instruction>(closure->code_count);
+        std::copy(current_ctx_->block.instructions.begin(), current_ctx_->block.instructions.end(), closure->code);
+    }
+
+    // Constants
+    closure->constant_count = current_ctx_->block.constants.size();
+    if (closure->constant_count > 0) {
+        closure->constants = arena.allocate<Value>(closure->constant_count);
+        std::copy(current_ctx_->block.constants.begin(), current_ctx_->block.constants.end(), closure->constants);
+    }
+
+    // Upvalues signature
+    closure->native_func = std::nullopt;
+    closure->upvalue_count = current_ctx_->upvalues.size();
+    closure->upvalues = nullptr;
+
+    pop_context(); // Return to the parent's compiler context
+
+    // Add the blueprint to the parent's constant pool
+    uint16_t const_idx = add_constant(Value::make_closure(closure));
+
+    // If it's a global function and captures nothing, it can statically replace the hoisted placeholder
+    if (current_ctx_->enclosing == nullptr && closure->upvalue_count == 0) {
+        uint16_t hoisted_idx = function_locations_[stmt.name];
+        current_block().constants[hoisted_idx] = Value::make_closure(closure);
+        return;
+    }
+
+    // Otherwise, it requires a runtime Closure!
+    uint8_t dst_reg = allocate_register();
+    emit(vm::Instruction::make_ri(vm::Opcode::Make_closure, dst_reg, const_idx));
+
+    // Emit the dynamic upvalue routing bytes (Read by VM Make_closure loop)
+    for (const auto &uv : fn_ctx.upvalues) {
+        vm::Instruction route;
+        route.rrr.op = vm::Opcode::None; // Safe No-Op padding
+        route.rrr.src_a = uv.is_local ? 1 : 0;
+        route.rrr.src_b = uv.index;
+        route.rrr.dst = 0;
+        emit(route);
+    }
+
+    // Bind this newly instantiated runtime closure to a local register!
+    current_ctx_->locals.push_back({stmt.name, dst_reg});
+}
+
+void Compiler::compile_stmt_node(const ast::Return_stmt &stmt)
+{
+    uint8_t ret_reg = 0;
+
+    if (!stmt.expression.is_null()) {
+        ret_reg = compile_expr(stmt.expression);
+    } else {
+        ret_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, ret_reg, 0, 0));
+    }
+
+    emit(vm::Instruction::make_rrr(vm::Opcode::Return, ret_reg, 0, 0));
+}
+
+void Compiler::compile_stmt_node(const ast::Enum_stmt &stmt)
+{}
+void Compiler::compile_stmt_node(const ast::Model_stmt &stmt)
+{
+    // The model fields are purely compile-time info, but we MUST compile the methods!
+    for (auto method_id : stmt.methods) {
+        compile_stmt(method_id);
+    }
+}
+
+void Compiler::compile_stmt_node(const ast::Union_stmt &stmt)
+{
+    // Purely compile-time construct. No bytecode needed.
+}
+
+void Compiler::compile_stmt_node(const ast::Match_stmt &stmt)
+{
+    // 1. Evaluate the subject once
+    uint8_t subject_reg = compile_expr(stmt.subject);
+    types::Type_id subject_type = ast::get_type(tree.get(stmt.subject).node);
+
     std::vector<size_t> end_jumps;
 
+    // 2. Iterate through each arm
     for (const auto &arm : stmt.arms) {
         if (arm.is_wildcard) {
-            emit_op(Op_code::True, stmt.loc);
-        } else if (auto *literal = std::get_if<ast::Literal_expr>(&arm.pattern->node)) {
-            emit_op(Op_code::Get_local, stmt.loc);
-            emit_byte(static_cast<uint8_t>(current()->locals.size() - 1), stmt.loc);
-            compile_expr(arm.pattern);
-            emit_op(Op_code::Equal, stmt.loc);
-        } else if (auto *range = std::get_if<ast::Range_expr>(&arm.pattern->node)) {
-            uint8_t contains_idx = identifier_constant("Iter::contains", stmt.loc);
-            emit_op(Op_code::Get_global, stmt.loc);
-            emit_byte(contains_idx, stmt.loc);
-
-            const std::string helper_name = range->inclusive ? "__range_inclusive" : "__range_exclusive";
-            uint8_t helper_idx = identifier_constant(helper_name, stmt.loc);
-            emit_op(Op_code::Get_global, stmt.loc);
-            emit_byte(helper_idx, stmt.loc);
-            compile_expr(range->start);
-            compile_expr(range->end);
-            emit_op(Op_code::Call, stmt.loc);
-            emit_byte(2, stmt.loc);
-
-            emit_op(Op_code::Get_local, stmt.loc);
-            emit_byte(static_cast<uint8_t>(current()->locals.size() - 1), stmt.loc);
-
-            emit_op(Op_code::Call, stmt.loc);
-            emit_byte(2, stmt.loc);
-        } else if (auto *static_path = std::get_if<ast::Static_path_expr>(&arm.pattern->node)) {
-            // 2. Safely emit Match_variant ONLY if the subject is actually a Union!
-            if (is_union_subject) {
-                emit_op(Op_code::Match_variant, stmt.loc);
-                emit_byte(identifier_constant(static_path->member.lexeme, stmt.loc), stmt.loc);
-            } else {
-                // Otherwise, treat it as a standard Enum value check
-                emit_op(Op_code::Get_local, stmt.loc);
-                emit_byte(static_cast<uint8_t>(current()->locals.size() - 1), stmt.loc);
-                compile_expr(arm.pattern);
-                emit_op(Op_code::Equal, stmt.loc);
+            if (!arm.body.is_null()) {
+                compile_stmt(arm.body);
             }
-        } else if (auto *member = std::get_if<ast::Enum_member_expr>(&arm.pattern->node)) {
-            if (is_union_subject) {
-                emit_op(Op_code::Match_variant, stmt.loc);
-                emit_byte(identifier_constant(member->member_name, stmt.loc), stmt.loc);
+            break; // Wildcard consumes the rest of the match
+        }
+
+        uint8_t test_reg = allocate_register();
+        auto &pattern_node = tree.get(arm.pattern).node;
+
+        // --- STRATEGY A: UNIONS AND ENUMS ---
+        if (std::holds_alternative<ast::Static_path_expr>(pattern_node) || std::holds_alternative<ast::Enum_member_expr>(pattern_node)) {
+            types::Type_id pattern_type = ast::get_type(tree.get(arm.pattern).node);
+
+            if (env.tt.is_union(subject_type)) {
+                std::string variant_str;
+                if (auto *sp = std::get_if<ast::Static_path_expr>(&pattern_node)) {
+                    variant_str = sp->member.lexeme;
+                } else if (auto *em = std::get_if<ast::Enum_member_expr>(&pattern_node)) {
+                    variant_str = em->member_name;
+                }
+
+                uint8_t str_reg = allocate_register();
+                uint16_t str_idx = add_constant(Value::make_string(arena, variant_str));
+                emit(vm::Instruction::make_ri(vm::Opcode::Load_const, str_reg, str_idx));
+                emit(vm::Instruction::make_rrr(vm::Opcode::Test_union, test_reg, subject_reg, str_reg));
             } else {
-                emit_op(Op_code::Get_local, stmt.loc);
-                emit_byte(static_cast<uint8_t>(current()->locals.size() - 1), stmt.loc);
-                compile_expr(arm.pattern);
-                emit_op(Op_code::Equal, stmt.loc);
+                uint8_t pattern_reg = compile_expr(arm.pattern);
+
+                types::Type_id subject_cmp_type = subject_type;
+                if (env.tt.is_enum(subject_cmp_type)) {
+                    subject_cmp_type = env.tt.get(subject_cmp_type).as<types::Enum_type>().base;
+                }
+
+                types::Type_id pattern_cmp_type = pattern_type;
+                if (env.tt.is_enum(pattern_cmp_type)) {
+                    pattern_cmp_type = env.tt.get(pattern_cmp_type).as<types::Enum_type>().base;
+                }
+
+                vm::Opcode eq_op = comparison_opcode_for(lex::TokenType::Equal, subject_cmp_type, pattern_cmp_type);
+                emit(vm::Instruction::make_rrr(eq_op, test_reg, subject_reg, pattern_reg));
             }
+        }
+
+        // --- STRATEGY B: RANGE EXPRESSIONS (start..end) ---
+        else if (auto *range_expr = std::get_if<ast::Range_expr>(&pattern_node)) {
+            uint8_t start_reg = compile_expr(range_expr->start);
+            uint8_t end_reg = compile_expr(range_expr->end);
+
+            // Check if subject >= start
+            uint8_t gte_reg = allocate_register();
+            vm::Opcode gte_op = comparison_opcode_for(lex::TokenType::GreaterEqual, subject_type, subject_type);
+            emit(vm::Instruction::make_rrr(gte_op, gte_reg, subject_reg, start_reg));
+
+            // Check if subject < end (or <= if inclusive)
+            uint8_t lt_reg = allocate_register();
+            vm::Opcode lt_op =
+                comparison_opcode_for(range_expr->inclusive ? lex::TokenType::LessEqual : lex::TokenType::Less, subject_type, subject_type);
+            emit(vm::Instruction::make_rrr(lt_op, lt_reg, subject_reg, end_reg));
+
+            // Combine with Logical AND
+            // (Wait, your compiler handles logical AND via jumps, but for a simple local test we can use Bitwise AND for booleans)
+            emit(vm::Instruction::make_rrr(vm::Opcode::BitAnd_i64, test_reg, gte_reg, lt_reg));
+        }
+
+        // --- STRATEGY C: EXPLICIT NIL (OPTIONALS) ---
+        else if (auto *lit = std::get_if<ast::Literal_expr>(&pattern_node); lit && lit->value.is_nil()) {
+            emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, test_reg, subject_reg, 0));
+        }
+
+        // --- STRATEGY D: PRIMITIVES & CUSTOM PROTOCOLS ---
+        else {
+            types::Type_id pattern_type = ast::get_type(tree.get(arm.pattern).node);
+            uint8_t pattern_reg = compile_expr(arm.pattern);
+
+            if (env.tt.is_model(pattern_type)) {
+                // Call the custom __match__ protocol!
+                auto &model_name = std::get<types::Model_type>(env.tt.get(pattern_type).data).name;
+                uint8_t func_reg = allocate_register();
+                uint16_t const_idx = function_locations_[model_name + "::__match__"];
+                emit(vm::Instruction::make_ri(vm::Opcode::Load_const, func_reg, const_idx));
+
+                uint8_t call_base_reg = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base_reg, func_reg, 0));
+
+                uint8_t arg_this = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_this, pattern_reg, 0));
+
+                uint8_t arg_subject = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_subject, subject_reg, 0));
+
+                emit(vm::Instruction::make_rrr(vm::Opcode::Call, test_reg, call_base_reg, 2));
+            } else {
+                // Standard Equality (Strings, Booleans, Integers, Floats)
+                vm::Opcode eq_op = comparison_opcode_for(lex::TokenType::Equal, subject_type, pattern_type);
+                emit(vm::Instruction::make_rrr(eq_op, test_reg, subject_reg, pattern_reg));
+            }
+        }
+
+        // 3. Jump to the next arm if this test fails
+        size_t jump_next_arm_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, test_reg, 0));
+
+        // 4. Set up scope and payload bindings
+        auto prev_locals_size = current_ctx_->locals.size();
+
+        if (!arm.bind_name.empty() && env.tt.is_union(subject_type)) {
+            uint8_t payload_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Load_union_payload, payload_reg, subject_reg, 0));
+            current_ctx_->locals.push_back({arm.bind_name, payload_reg});
+        }
+
+        // 5. Compile the arm body
+        if (!arm.body.is_null()) {
+            compile_stmt(arm.body);
+        }
+
+        current_ctx_->locals.resize(prev_locals_size);
+
+        // 6. Jump to the end of the match
+        end_jumps.push_back(emit(vm::Instruction::make_i(vm::Opcode::Jump, 0)));
+
+        // 7. Patch the jump_next_arm instruction
+        uint16_t next_arm_target = static_cast<uint16_t>(current_block().instructions.size());
+        current_block().instructions[jump_next_arm_idx].ri.imm = next_arm_target;
+    }
+
+    // 8. Patch all successful arm executions to jump to the very end
+    uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
+    for (size_t jump_idx : end_jumps) {
+        current_block().instructions[jump_idx].i.imm = end_target;
+    }
+}
+
+// EXPRESSIONS
+uint8_t Compiler::compile_expr(ast::Expr_id expr_id)
+{
+    if (expr_id.is_null()) {
+        return 0;
+    }
+
+    std::uint8_t result_reg = std::visit(
+        [this](const auto &e) -> uint8_t {
+            using T = std::decay_t<decltype(e)>;
+
+            if constexpr (std::is_same_v<T, ast::Literal_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Binary_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Variable_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Assignment_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Cast_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Closure_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Call_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Enum_member_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Static_path_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Array_literal_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Array_access_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Array_assignment_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Model_literal_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Anon_model_literal_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Method_call_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Field_access_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Field_assignment_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Unary_expr>) {
+                return compile_expr_node(e);
+            } else if constexpr (std::is_same_v<T, ast::Range_expr>) {
+                return compile_expr_node(e);
+            } else {
+                auto l = ast::get_loc(e);
+                std::println("{}:{} Unimplemented expression node", l.l, l.c);
+            }
+            return 0;
+        },
+        tree.get(expr_id).node);
+
+    uint8_t wraps = tree.get(expr_id).auto_wrap_depth;
+    if (wraps > 0) {
+        uint8_t wrapped_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Wrap_option, wrapped_reg, result_reg, wraps));
+        return wrapped_reg;
+    }
+    return result_reg;
+}
+
+/*
+    Search backwards in locals (supports shadowing).
+    If found: return physical register assigned.
+    If not local: Check upvalues (captured variables).
+    If upvalue:
+        %dest = allocate_register()
+        get_upvalue %dest, index
+    If not upvalue: Check hoisted global functions.
+    If hoisted function:
+        %dest = allocate_register()
+        load_const %dest, $K_function_ptr
+*/
+uint8_t Compiler::compile_expr_node(const ast::Variable_expr &expr)
+{
+    // 1. Is it a local variable?
+    int local_arg = resolve_local(current_ctx_, expr.name);
+    if (local_arg != -1) {
+        return static_cast<uint8_t>(local_arg);
+    }
+
+    // 2. Is it a captured upvalue?
+    int upval_arg = resolve_upvalue(current_ctx_, expr.name);
+    if (upval_arg != -1) {
+        uint8_t target_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Get_upvalue, target_reg, static_cast<uint8_t>(upval_arg), 0));
+        return target_reg;
+    }
+
+    // 3. Is it a global/hoisted function?
+    if (function_locations_.contains(expr.name)) {
+        uint8_t target_reg = allocate_register();
+        uint16_t const_idx = function_locations_[expr.name];
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
+        return target_reg;
+    }
+
+    std::println(std::cerr, "Compiler Bug: Unresolved variable '{}' escaped semantic checker.", expr.name);
+    std::exit(1);
+    return 0;
+}
+
+/*
+    %rhs = compile(expr.value)
+    if local:
+        move %target_reg, %rhs
+    if upvalue:
+        set_upvalue %target_reg, %rhs
+*/
+uint8_t Compiler::compile_expr_node(const ast::Assignment_expr &expr)
+{
+    // Evaluate the right-hand side first
+    uint8_t rhs_reg = compile_expr(expr.value);
+    types::Type_id source_type = ast::get_type(tree.get(expr.value).node);
+    if (source_type != expr.type) {
+        emit_numeric_normalize(rhs_reg, expr.type);
+    }
+
+    // Search local
+    int local_arg = resolve_local(current_ctx_, expr.name);
+    if (local_arg != -1) {
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, static_cast<uint8_t>(local_arg), rhs_reg, 0));
+        return static_cast<uint8_t>(local_arg);
+    }
+
+    // Search upvalues
+    int upval_arg = resolve_upvalue(current_ctx_, expr.name);
+    if (upval_arg != -1) {
+        emit(vm::Instruction::make_rrr(vm::Opcode::Set_upvalue, static_cast<uint8_t>(upval_arg), rhs_reg, 0));
+        return rhs_reg;
+    }
+
+    std::println(std::cerr, "Compiler Bug: Reassignment of unresolved or global variable '{}'.", expr.name);
+    std::exit(1);
+    return 0;
+}
+
+/*
+    $K = add_constant(value)
+    %dest = allocate_register()
+    load_const %dest, $K
+*/
+uint8_t Compiler::compile_expr_node(const ast::Literal_expr &expr)
+{
+    uint8_t target_reg = allocate_register();
+    uint16_t const_idx = add_constant(expr.value);
+
+    emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
+    return target_reg;
+}
+
+uint8_t Compiler::compile_expr_node(const ast::Enum_member_expr &expr)
+{
+    // 1. Peel any optional wrappers added by the Semantic Checker's coercion
+    types::Type_id base_type = expr.type;
+    while (env.tt.is_optional(base_type)) {
+        base_type = env.tt.get_optional_base(base_type);
+    }
+
+    // 2. Get the enum type safely using the peeled base_type!
+    const auto &enum_t = std::get<types::Enum_type>(env.tt.get(base_type).data);
+
+    // 3. Fetch the resolved variant map from the environment
+    auto enum_data_ptr = env.get_enum(enum_t.name);
+
+    Value variant_val(nullptr);
+    if (enum_data_ptr && enum_data_ptr->variants.contains(expr.member_name)) {
+        variant_val = enum_data_ptr->variants.at(expr.member_name);
+    } else {
+        std::println(std::cerr, "Compiler Bug: Enum variant not found: {}::{}", enum_t.name, expr.member_name);
+        std::exit(EXIT_FAILURE);
+    }
+
+    // 4. Treat the enum exactly like a hardcoded primitive literal!
+    uint8_t target_reg = allocate_register();
+    uint16_t const_idx = add_constant(variant_val);
+    emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
+
+    return target_reg;
+}
+
+uint8_t Compiler::compile_expr_node(const ast::Static_path_expr &expr)
+{
+    // Resolve from the receiver expression itself; the final static-path type may already be a function.
+    types::Type_id base_type = ast::get_type(tree.get(expr.base).node);
+    while (env.tt.is_optional(base_type)) {
+        base_type = env.tt.get_optional_base(base_type);
+    }
+
+    if (env.tt.is_enum(base_type)) {
+        const auto &enum_t = std::get<types::Enum_type>(env.tt.get(base_type).data);
+        auto enum_data_ptr = env.get_enum(enum_t.name);
+
+        Value variant_val(nullptr);
+        if (enum_data_ptr && enum_data_ptr->variants.contains(expr.member.lexeme)) {
+            variant_val = enum_data_ptr->variants.at(expr.member.lexeme);
         } else {
-            // --- NEW: THE CUSTOM PROTOCOL EXECUTION ---
-            types::Type pattern_type = ast::get_type(arm.pattern->node);
-            bool uses_custom_protocol = false;
+            std::println(std::cerr, "Compiler Bug: Enum variant not found: {}::{}", enum_t.name, expr.member.lexeme);
+            std::exit(EXIT_FAILURE);
+        }
 
-            if (auto *model_t = std::get_if<mem::rc_ptr<types::Model_type>>(&pattern_type)) {
-                auto &methods = (*model_t)->methods;
-                if (auto it = std::find_if(
-                        methods.begin(),
-                        methods.end(),
-                        [](std::pair<std::string, types::Function_type> &x) { return x.first == "__match__"; });
-                    it != methods.end())
-                    uses_custom_protocol = true;
+        uint8_t target_reg = allocate_register();
+        uint16_t const_idx = add_constant(variant_val);
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
+
+        return target_reg;
+    }
+
+    if (env.tt.is_model(base_type)) {
+        auto &model_name = std::get<types::Model_type>(env.tt.get(base_type).data).name;
+        if (auto static_field = env.get_model_static_field(model_name, expr.member.lexeme)) {
+            return compile_expr(*static_field);
+        }
+
+        std::string global_func_name = model_name + "::" + expr.member.lexeme;
+
+        if (function_locations_.contains(global_func_name)) {
+            uint8_t target_reg = allocate_register();
+            uint16_t const_idx = function_locations_[global_func_name];
+            emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
+            return target_reg;
+        }
+    }
+
+    std::println(std::cerr, "Compiler Bug: Static path expressions are currently only implemented for Enums and Model Static Methods.");
+    std::exit(EXIT_FAILURE);
+    return 0;
+}
+
+uint8_t Compiler::compile_expr_node(const ast::Cast_expr &expr)
+{
+    uint8_t value_reg = compile_expr(expr.expression);
+    types::Type_id source_type = ast::get_type(tree.get(expr.expression).node);
+
+    if (env.tt.is_string(source_type) && env.tt.is_array(expr.target_type)) {
+        uint8_t dest_reg = allocate_register();
+        // src_b flag: 1 if it's an i8 array, 0 if it's a u8 array
+        uint8_t is_signed = (env.tt.get_array_elem(expr.target_type) == env.tt.get_i8()) ? 1 : 0;
+        emit(vm::Instruction::make_rrr(vm::Opcode::Cast_str_to_arr, dest_reg, value_reg, is_signed));
+        return dest_reg;
+    }
+
+    if (env.tt.is_array(source_type) && env.tt.is_string(expr.target_type)) {
+        uint8_t dest_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Cast_arr_to_str, dest_reg, value_reg, 0));
+        return dest_reg;
+    }
+
+    if (!env.tt.is_numeric_primitive(expr.target_type)) {
+        std::println(
+            std::cerr,
+            "Compiler Bug: Only numeric cast expressions are currently implemented, got '{}'.",
+            env.tt.to_string(expr.target_type));
+        std::exit(EXIT_FAILURE);
+    }
+
+    emit(vm::Instruction::make_rrr(cast_opcode_for(expr.target_type), value_reg, 0, 0));
+    return value_reg;
+}
+
+/*
+    Compiles an anonymous closure expression.
+    Operates identically to Function_stmt, but returns a register holding the closure.
+*/
+uint8_t Compiler::compile_expr_node(const ast::Closure_expr &expr)
+{
+    Compiler_context fn_ctx;
+    fn_ctx.current_register = 0;
+    push_context(&fn_ctx);
+
+    // Register parameters
+    for (const auto &param : expr.parameters) {
+        uint8_t reg = allocate_register();
+        current_ctx_->locals.push_back({param.name, reg});
+    }
+
+    // Body
+    if (!expr.body.is_null()) {
+        compile_stmt(expr.body);
+    }
+
+    // Failsafe return
+    uint8_t nil_reg = allocate_register();
+    emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, nil_reg, 0, 0));
+    emit(vm::Instruction::make_rrr(vm::Opcode::Return, nil_reg, 0, 0));
+
+    Closure_data *closure = arena.allocate<Closure_data>();
+    new (closure) Closure_data();
+
+    // Anonymous name
+    std::string name = "anon";
+    size_t name_size = sizeof(String_data) + name.length() + 1;
+    closure->name = static_cast<String_data *>(arena.allocate_bytes(name_size));
+    closure->name->length = name.length();
+    std::copy(name.begin(), name.end(), closure->name->chars);
+    closure->name->chars[name.length()] = '\0';
+
+    closure->arity = expr.parameters.size();
+
+    // Copy Bytecode
+    closure->code_count = current_ctx_->block.instructions.size();
+    if (closure->code_count > 0) {
+        closure->code = arena.allocate<vm::Instruction>(closure->code_count);
+        std::copy(current_ctx_->block.instructions.begin(), current_ctx_->block.instructions.end(), closure->code);
+    }
+
+    // Copy Constants
+    closure->constant_count = current_ctx_->block.constants.size();
+    if (closure->constant_count > 0) {
+        closure->constants = arena.allocate<Value>(closure->constant_count);
+        std::copy(current_ctx_->block.constants.begin(), current_ctx_->block.constants.end(), closure->constants);
+    }
+
+    closure->native_func = std::nullopt;
+    closure->upvalue_count = current_ctx_->upvalues.size();
+    closure->upvalues = nullptr;
+
+    pop_context(); // Back to parent context
+
+    // Since this is an expression, it is ALWAYS evaluated at runtime.
+    // We add the blueprint to the constant pool, and emit a Make_closure instruction.
+    uint16_t const_idx = add_constant(Value::make_closure(closure));
+    uint8_t dst_reg = allocate_register();
+    emit(vm::Instruction::make_ri(vm::Opcode::Make_closure, dst_reg, const_idx));
+
+    // Emit the routing bytes
+    for (const auto &uv : fn_ctx.upvalues) {
+        vm::Instruction route;
+        route.rrr.op = vm::Opcode::None;
+        route.rrr.src_a = uv.is_local ? 1 : 0;
+        route.rrr.src_b = uv.index;
+        route.rrr.dst = 0;
+        emit(route);
+    }
+
+    return dst_reg; // Returning the register that will hold the instantiated closure
+}
+
+/*
+    Binary Expression Dispatcher
+*/
+uint8_t Compiler::compile_expr_node(const ast::Binary_expr &expr)
+{
+    if (expr.op == lex::TokenType::LogicalAnd) {
+        uint8_t reg_a = compile_expr(expr.left);
+        uint8_t dest_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, dest_reg, reg_a, 0));
+        size_t jump_end_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, reg_a, 0));
+        uint8_t reg_b = compile_expr(expr.right);
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, dest_reg, reg_b, 0));
+        uint16_t end_target = static_cast<uint16_t>(current_block().instructions.size());
+        current_block().instructions[jump_end_idx].ri.imm = end_target;
+        return dest_reg;
+    }
+
+    if (expr.op == lex::TokenType::LogicalOr) {
+        uint8_t reg_a = compile_expr(expr.left);
+        uint8_t dest_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, dest_reg, reg_a, 0));
+        size_t jump_eval_b_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, reg_a, 0));
+        size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+        uint16_t eval_b_target = static_cast<uint16_t>(current_block().instructions.size());
+        current_block().instructions[jump_eval_b_idx].ri.imm = eval_b_target;
+        uint8_t reg_b = compile_expr(expr.right);
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, dest_reg, reg_b, 0));
+        uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
+        current_block().instructions[jump_end_idx].i.imm = end_target;
+        return dest_reg;
+    }
+
+    uint8_t reg_a = compile_expr(expr.left);
+    uint8_t reg_b = compile_expr(expr.right);
+
+    uint8_t dest_reg = allocate_register();
+    types::Type_id left_type = ast::get_type(tree.get(expr.left).node);
+    types::Type_id right_type = ast::get_type(tree.get(expr.right).node);
+
+    vm::Opcode opcode = vm::Opcode::Move;
+    switch (expr.op) {
+    case lex::TokenType::Plus:
+    case lex::TokenType::Minus:
+    case lex::TokenType::Star:
+    case lex::TokenType::Slash:
+    case lex::TokenType::Percent:
+        opcode = arithmetic_opcode_for(expr.op, expr.type);
+        break;
+    case lex::TokenType::Equal:
+    case lex::TokenType::NotEqual:
+    case lex::TokenType::Less:
+    case lex::TokenType::LessEqual:
+    case lex::TokenType::Greater:
+    case lex::TokenType::GreaterEqual: {
+        opcode = comparison_opcode_for(expr.op, left_type, right_type);
+        break;
+    }
+    case lex::TokenType::BitAnd:
+    case lex::TokenType::Pipe:
+    case lex::TokenType::BitXor:
+    case lex::TokenType::BitLShift:
+    case lex::TokenType::BitRshift: {
+        opcode = bitwise_opcode_for(expr.op, expr.type);
+        break;
+    }
+    default:
+        std::println(std::cerr, "Unsupported binary operator in compiler");
+        std::exit(EXIT_FAILURE);
+    }
+
+    emit(vm::Instruction::make_rrr(opcode, dest_reg, reg_a, reg_b));
+    emit_numeric_normalize(dest_reg, expr.type);
+    return dest_reg;
+}
+
+uint8_t Compiler::compile_expr_node(const ast::Unary_expr &expr)
+{
+    uint8_t right_reg = compile_expr(expr.right);
+    uint8_t dest_reg = allocate_register();
+
+    types::Type_id right_type = ast::get_type(tree.get(expr.right).node);
+    vm::Opcode opcode = vm::Opcode::Move;
+
+    if (expr.op == lex::TokenType::Minus) {
+        if (env.tt.is_float_primitive(right_type)) {
+            opcode = vm::Opcode::Neg_f64;
+        } else {
+            opcode = vm::Opcode::Neg_i64;
+        }
+    } else if (expr.op == lex::TokenType::LogicalNot) {
+        opcode = vm::Opcode::Not;
+    } else if (expr.op == lex::TokenType::BitNot) {
+        if (env.tt.is_unsigned_integer_primitive(right_type)) {
+            opcode = vm::Opcode::BitNot_u64;
+        } else {
+            opcode = vm::Opcode::BitNot_i64;
+        }
+    } else {
+        std::println(std::cerr, "Compiler Bug: Unsupported unary operator");
+        std::exit(EXIT_FAILURE);
+    }
+
+    // src_b is unused (0) for unary operations
+    emit(vm::Instruction::make_rrr(opcode, dest_reg, right_reg, 0));
+
+    return dest_reg;
+}
+
+uint8_t Compiler::compile_expr_node(const ast::Call_expr &expr)
+{
+    if (auto *var_callee = std::get_if<ast::Variable_expr>(&tree.get(expr.callee).node)) {
+        if (var_callee->name == "len") {
+            uint8_t arg_reg = compile_expr(expr.arguments[0].value);
+            uint8_t dst_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Len, dst_reg, arg_reg, 0));
+            return dst_reg;
+        }
+    }
+    if (auto *var_callee = std::get_if<ast::Variable_expr>(&tree.get(expr.callee).node)) {
+        if (var_callee->name == "iter") {
+            uint8_t arg_reg = compile_expr(expr.arguments[0].value);
+            types::Type_id arg_type = ast::get_type(tree.get(expr.arguments[0].value).node);
+
+            if (env.tt.is_model(arg_type)) {
+                // custom model desugaring
+                // desugar `iter(my_model)` into `my_model.iter()`
+                auto &model_name = std::get<types::Model_type>(env.tt.get(arg_type).data).name;
+
+                uint8_t func_reg = allocate_register();
+                uint16_t const_idx = function_locations_[model_name + "::iter"];
+                emit(vm::Instruction::make_ri(vm::Opcode::Load_const, func_reg, const_idx));
+
+                uint8_t call_base_reg = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base_reg, func_reg, 0));
+
+                uint8_t arg_this_reg = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_this_reg, arg_reg, 0));
+
+                uint8_t dst_reg = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Call, dst_reg, call_base_reg, 1));
+                return dst_reg;
+            } else {
+                // native fast-path
+                uint8_t dst_reg = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Make_iter, dst_reg, arg_reg, 0));
+                return dst_reg;
             }
+        }
+    }
+    // 1. Evaluate callee
+    uint8_t callee_eval_reg = compile_expr(expr.callee);
 
-            if (uses_custom_protocol) {
-                auto model_type = types::get_model_type(pattern_type);
-                std::string global_method_name = model_type->name + "::__match__";
+    // 2. Evaluate all arguments into scattered temporary registers
+    std::vector<uint8_t> arg_eval_regs;
+    for (const auto &arg : expr.arguments) {
+        arg_eval_regs.push_back(compile_expr(arg.value));
+    }
 
-                // 1. Fetch the __match__ function pointer from globals
-                emit_op(Op_code::Get_global, stmt.loc);
-                emit_byte(identifier_constant(global_method_name, stmt.loc), stmt.loc);
+    // 3. Allocate a strictly contiguous block of registers for the ABI.
+    uint8_t call_base_reg = allocate_register();
+    emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base_reg, callee_eval_reg, 0));
 
-                // 2. Push the pattern object (This acts as the implicit 'this' context)
-                compile_expr(arm.pattern);
+    // The subsequent registers MUST hold the evaluated arguments in order.
+    for (size_t i = 0; i < expr.arguments.size(); ++i) {
+        uint8_t arg_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_reg, arg_eval_regs[i], 0));
+    }
 
-                // 3. Push the subject (This acts as the argument)
-                emit_op(Op_code::Get_local, stmt.loc);
-                emit_byte(static_cast<uint8_t>(current()->locals.size() - 1), stmt.loc);
+    // 4. Allocate destination and emit the Call instruction
+    uint8_t dest_reg = allocate_register();
+    uint8_t argc = static_cast<uint8_t>(expr.arguments.size());
 
-                // 4. Call the method! (Arity 2: 'this' + 'subject') -> leaves a bool on stack
-                emit_op(Op_code::Call, stmt.loc);
-                emit_byte(2, stmt.loc);
-            } else if (
-                std::holds_alternative<ast::Anon_model_literal_expr>(arm.pattern->node)
-                || std::holds_alternative<ast::Model_literal_expr>(arm.pattern->node)) {
-                // Structural field-by-field match
-                // The subject is already on the stack as a local — fetch its model type
-                auto *model_t = std::get_if<mem::rc_ptr<types::Model_type>>(&pattern_type);
-                if (!model_t) {
-                    emit_op(Op_code::False, stmt.loc);
-                } else {
-                    auto &fields = (*model_t)->fields;
-                    // Collect the pattern's field values
-                    // We'll emit: (subj.f0 == pat.f0) && (subj.f1 == pat.f1) && ...
-                    // Build it as a sequence of comparisons AND-ed together
+    emit(vm::Instruction::make_rrr(vm::Opcode::Call, dest_reg, call_base_reg, argc));
 
-                    // Helper: get the pattern fields in signature order
-                    std::vector<ast::Expr *> pattern_field_exprs(fields.size(), nullptr);
+    return dest_reg;
+}
 
-                    if (auto *anon = std::get_if<ast::Anon_model_literal_expr>(&arm.pattern->node)) {
-                        for (size_t i = 0; i < fields.size(); ++i)
-                            for (auto &[name, val_expr] : anon->fields)
-                                if (name == fields[i].first) {
-                                    pattern_field_exprs[i] = val_expr;
-                                    break;
-                                }
-                    } else if (auto *named = std::get_if<ast::Model_literal_expr>(&arm.pattern->node)) {
-                        for (size_t i = 0; i < fields.size(); ++i)
-                            for (auto &[name, val_expr] : named->fields)
-                                if (name == fields[i].first) {
-                                    pattern_field_exprs[i] = val_expr;
-                                    break;
-                                }
-                    }
+uint8_t Compiler::compile_expr_node(const ast::Model_literal_expr &expr)
+{
+    // --- UNION INSTANTIATION ---
+    if (env.tt.is_union(expr.type)) {
+        auto &union_t = std::get<types::Union_type>(env.tt.get(expr.type).data);
+        std::string variant_name = expr.fields[0].first;
+        ast::Expr_id payload_expr = expr.fields[0].second;
 
-                    uint8_t subject_slot = static_cast<uint8_t>(current()->locals.size() - 1);
+        // 1. Evaluate payload
+        uint8_t payload_reg = 0;
+        if (!payload_expr.is_null()) {
+            payload_reg = compile_expr(payload_expr);
+        } else {
+            payload_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, payload_reg, 0, 0));
+        }
 
-                    // Emit the first comparison to bootstrap the AND chain
-                    emit_op(Op_code::Get_local, stmt.loc);
-                    emit_byte(subject_slot, stmt.loc);
-                    emit_op(Op_code::Get_field, stmt.loc);
-                    emit_byte(static_cast<uint8_t>(0), stmt.loc);
-                    compile_expr(pattern_field_exprs[0]);
-                    emit_op(Op_code::Equal, stmt.loc);
+        // 2. Load strings into contiguous ABI registers
+        uint8_t names_base = allocate_register();
+        uint16_t u_name_idx = add_constant(Value::make_string(arena, union_t.name));
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, names_base, u_name_idx));
 
-                    // AND in each subsequent field
-                    for (size_t i = 1; i < fields.size(); ++i) {
-                        size_t short_circuit = emit_jump(Op_code::Jump_if_false, stmt.loc);
-                        emit_op(Op_code::Pop, stmt.loc);
+        uint8_t v_name_reg = allocate_register(); // Guaranteed to be names_base + 1
+        uint16_t v_name_idx = add_constant(Value::make_string(arena, variant_name));
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, v_name_reg, v_name_idx));
 
-                        emit_op(Op_code::Get_local, stmt.loc);
-                        emit_byte(subject_slot, stmt.loc);
-                        emit_op(Op_code::Get_field, stmt.loc);
-                        emit_byte(static_cast<uint8_t>(i), stmt.loc);
-                        compile_expr(pattern_field_exprs[i]);
-                        emit_op(Op_code::Equal, stmt.loc);
+        // 3. Emit Make_union
+        uint8_t dst_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Make_union, dst_reg, names_base, payload_reg));
+        return dst_reg;
+    }
 
-                        patch_jump(short_circuit, stmt.loc);
-                    }
+    // --- MODEL INSTANTIATION ---
+    std::vector<uint8_t> field_regs;
+    for (const auto &[name, value_expr] : expr.fields) {
+        field_regs.push_back(compile_expr(value_expr));
+    }
+
+    uint8_t base_reg = allocate_register();
+    if (!field_regs.empty()) {
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, base_reg, field_regs[0], 0));
+        for (size_t i = 1; i < field_regs.size(); ++i) {
+            uint8_t next_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, next_reg, field_regs[i], 0));
+        }
+    }
+
+    uint8_t dest_reg = allocate_register();
+    uint8_t count = static_cast<uint8_t>(field_regs.size());
+    emit(vm::Instruction::make_rrr(vm::Opcode::Make_model, dest_reg, base_reg, count));
+
+    return dest_reg;
+}
+
+uint8_t Compiler::compile_expr_node(const ast::Anon_model_literal_expr &expr)
+{
+    // --- UNION INSTANTIATION ---
+    if (env.tt.is_union(expr.type)) {
+        auto &union_t = std::get<types::Union_type>(env.tt.get(expr.type).data);
+        std::string variant_name = expr.fields[0].first;
+        ast::Expr_id payload_expr = expr.fields[0].second;
+
+        uint8_t payload_reg = 0;
+        if (!payload_expr.is_null()) {
+            payload_reg = compile_expr(payload_expr);
+        } else {
+            payload_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, payload_reg, 0, 0));
+        }
+
+        uint8_t names_base = allocate_register();
+        uint16_t u_name_idx = add_constant(Value::make_string(arena, union_t.name));
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, names_base, u_name_idx));
+
+        uint8_t v_name_reg = allocate_register();
+        uint16_t v_name_idx = add_constant(Value::make_string(arena, variant_name));
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, v_name_reg, v_name_idx));
+
+        uint8_t dst_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Make_union, dst_reg, names_base, payload_reg));
+        return dst_reg;
+    }
+
+    // --- MODEL INSTANTIATION ---
+    std::vector<uint8_t> field_regs;
+    for (const auto &[name, value_expr] : expr.fields) {
+        field_regs.push_back(compile_expr(value_expr));
+    }
+
+    uint8_t base_reg = allocate_register();
+    if (!field_regs.empty()) {
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, base_reg, field_regs[0], 0));
+        for (size_t i = 1; i < field_regs.size(); ++i) {
+            uint8_t next_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, next_reg, field_regs[i], 0));
+        }
+    }
+
+    uint8_t dest_reg = allocate_register();
+    uint8_t count = static_cast<uint8_t>(field_regs.size());
+    emit(vm::Instruction::make_rrr(vm::Opcode::Make_model, dest_reg, base_reg, count));
+
+    return dest_reg;
+}
+
+uint8_t Compiler::compile_expr_node(const ast::Method_call_expr &expr)
+{
+    types::Type_id obj_type = ast::get_type(tree.get(expr.object).node);
+
+    if (env.tt.is_optional(obj_type)) {
+        uint8_t obj_reg = compile_expr(expr.object);
+
+        if (expr.method_name == "is_nil") {
+            uint8_t dst_reg = allocate_register();
+            // Test_nil perfectly identifies a Depth 0 (End of chain) Nil
+            emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, dst_reg, obj_reg, 0));
+            return dst_reg;
+        }
+
+        if (expr.method_name == "is_val" || expr.method_name == "has_val") {
+            uint8_t dst_reg = allocate_register();
+            // Test_val cleanly handles nested optionals without a NOT operation
+            emit(vm::Instruction::make_rrr(vm::Opcode::Test_val, dst_reg, obj_reg, 0));
+            return dst_reg;
+        }
+
+        if (expr.method_name == "get") {
+            if (expr.arguments.empty()) {
+                uint8_t dst_reg = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, dst_reg, obj_reg, 0));
+                return dst_reg;
+            } else {
+                types::Type_id arg_type = ast::get_type(tree.get(expr.arguments[0].value).node);
+
+                if (env.tt.is_string(arg_type)) {
+                    uint8_t has_val_reg = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Test_val, has_val_reg, obj_reg, 0));
+
+                    // Jump to panic block if FALSE (Depth == 0)
+                    size_t jump_panic_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, has_val_reg, 0));
+
+                    // .ok_block:
+                    uint8_t dst_reg = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, dst_reg, obj_reg, 0));
+                    size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+
+                    // .panic_block:
+                    uint16_t panic_target = static_cast<uint16_t>(current_block().instructions.size());
+                    current_block().instructions[jump_panic_idx].ri.imm = panic_target;
+
+                    uint8_t msg_reg = compile_expr(expr.arguments[0].value);
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Panic, 0, msg_reg, 0));
+
+                    // .end:
+                    uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
+                    current_block().instructions[jump_end_idx].i.imm = end_target;
+
+                    return dst_reg;
+
+                } else if (env.tt.is_function(arg_type)) {
+                    uint8_t dst_reg = allocate_register();
+                    uint8_t has_val_reg = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Test_val, has_val_reg, obj_reg, 0));
+
+                    // Jump to closure block if FALSE (Depth == 0)
+                    size_t jump_closure_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, has_val_reg, 0));
+
+                    // .unwrap_block (Has Value):
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, dst_reg, obj_reg, 0));
+                    size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+
+                    // .closure_block:
+                    uint16_t closure_target = static_cast<uint16_t>(current_block().instructions.size());
+                    current_block().instructions[jump_closure_idx].ri.imm = closure_target;
+
+                    uint8_t closure_reg = compile_expr(expr.arguments[0].value);
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Call, dst_reg, closure_reg, 0));
+
+                    // .end:
+                    uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
+                    current_block().instructions[jump_end_idx].i.imm = end_target;
+
+                    return dst_reg;
                 }
             }
         }
 
-        size_t next_arm_jump = emit_jump(Op_code::Jump_if_false, stmt.loc);
-        emit_op(Op_code::Pop, stmt.loc);
+        if (expr.method_name == "or_else") {
+            uint8_t dst_reg = allocate_register();
+            uint8_t has_val_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Test_val, has_val_reg, obj_reg, 0));
 
-        begin_scope();
+            // Jump to closure block if FALSE (Depth == 0)
+            size_t jump_closure_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, has_val_reg, 0));
 
-        bool is_union_match = !arm.is_wildcard && is_union_subject
-            && (std::holds_alternative<ast::Static_path_expr>(arm.pattern->node)
-                || std::holds_alternative<ast::Enum_member_expr>(arm.pattern->node));
+            // .unwrap_block (Has Value):
+            emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, dst_reg, obj_reg, 0));
+            size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
 
-        if (is_union_match) {
-            if (!arm.bind_name.empty())
-                current()->locals.push_back(Local{arm.bind_name, current()->scope_depth});
-            else
-                emit_op(Op_code::Pop, stmt.loc);
+            // .closure_block:
+            uint16_t closure_target = static_cast<uint16_t>(current_block().instructions.size());
+            current_block().instructions[jump_closure_idx].ri.imm = closure_target;
+
+            uint8_t closure_reg = compile_expr(expr.arguments[0].value);
+            emit(vm::Instruction::make_rrr(vm::Opcode::Call, dst_reg, closure_reg, 0));
+
+            // .end:
+            uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
+            current_block().instructions[jump_end_idx].i.imm = end_target;
+
+            return dst_reg;
+        }
+        if (expr.method_name == "value_or") {
+            // 1. Evaluate the fallback expression FIRST
+            uint8_t fallback_reg = compile_expr(expr.arguments[0].value);
+
+            uint8_t dst_reg = allocate_register();
+            uint8_t has_val_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Test_val, has_val_reg, obj_reg, 0));
+
+            // 2. Jump to fallback block if FALSE (Depth == 0)
+            size_t jump_fallback_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, has_val_reg, 0));
+
+            // .unwrap_block (Has Value):
+            emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, dst_reg, obj_reg, 0));
+            size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+
+            // .fallback_block:
+            uint16_t fallback_target = static_cast<uint16_t>(current_block().instructions.size());
+            current_block().instructions[jump_fallback_idx].ri.imm = fallback_target;
+
+            // Just move the already evaluated fallback into the destination!
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, dst_reg, fallback_reg, 0));
+
+            // .end:
+            uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
+            current_block().instructions[jump_end_idx].i.imm = end_target;
+
+            return dst_reg;
         }
 
-        if (arm.body)
-            compile_stmt(arm.body);
+        if (expr.method_name == "map") {
+            uint8_t dst_reg = allocate_register();
+            uint8_t has_val_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Test_val, has_val_reg, obj_reg, 0));
 
-        end_scope(stmt.loc);
+            // Jump to nil block if FALSE (Depth == 0)
+            size_t jump_nil_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, has_val_reg, 0));
 
-        end_jumps.push_back(emit_jump(Op_code::Jump, stmt.loc));
+            // .call_block (Has Value):
+            uint8_t unwrapped_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, unwrapped_reg, obj_reg, 0));
 
-        patch_jump(next_arm_jump, stmt.loc);
-        emit_op(Op_code::Pop, stmt.loc);
+            uint8_t closure_reg = compile_expr(expr.arguments[0].value);
 
-        if (is_union_match)
-            emit_op(Op_code::Pop, stmt.loc);
-    }
+            // Setup ABI
+            uint8_t call_base_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base_reg, closure_reg, 0));
+            uint8_t arg_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_reg, unwrapped_reg, 0));
 
-    // Patch the jumps to land exactly ON the Pop instruction!
-    // This ensures successful branches clean up the match subject before continuing.
-    for (size_t j : end_jumps)
-        patch_jump(j, stmt.loc);
+            uint8_t res_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Call, res_reg, call_base_reg, 1));
 
-    emit_op(Op_code::Pop, stmt.loc);
-    current()->locals.pop_back();
-}
+            emit(vm::Instruction::make_rrr(vm::Opcode::Wrap_option, dst_reg, res_reg, 1));
+            size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
 
-void Compiler::visit_variable_expr(const ast::Variable_expr &expr)
-{
-    int arg = resolve_local(expr.name);
-    if (arg != -1) {
-        emit_op(Op_code::Get_local, expr.loc);
-        emit_byte(static_cast<uint8_t>(arg), expr.loc);
-    } else if (int upval = resolve_upvalue(current(), expr.name); upval != -1) {
-        emit_op(Op_code::Get_upvalue, expr.loc);
-        emit_byte(static_cast<uint8_t>(upval), expr.loc);
-    } else {
-        uint8_t name_idx = identifier_constant(expr.name, expr.loc);
-        emit_op(Op_code::Get_global, expr.loc);
-        emit_byte(name_idx, expr.loc);
-    }
-}
+            // .is_nil_block:
+            uint16_t nil_target = static_cast<uint16_t>(current_block().instructions.size());
+            current_block().instructions[jump_nil_idx].ri.imm = nil_target;
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, dst_reg, obj_reg, 0));
 
-void Compiler::visit_assignment_expr(const ast::Assignment_expr &expr)
-{
-    compile_expr(expr.value);
-    int arg = resolve_local(expr.name);
-    if (arg != -1) {
-        emit_op(Op_code::Set_local, expr.loc);
-        emit_byte(static_cast<uint8_t>(arg), expr.loc);
-    } else if (int upval = resolve_upvalue(current(), expr.name); upval != -1) {
-        emit_op(Op_code::Set_upvalue, expr.loc);
-        emit_byte(static_cast<uint8_t>(upval), expr.loc);
-    } else {
-        uint8_t name_idx = identifier_constant(expr.name, expr.loc);
-        emit_op(Op_code::Set_global, expr.loc);
-        emit_byte(name_idx, expr.loc);
-    }
-}
+            // .end:
+            uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
+            current_block().instructions[jump_end_idx].i.imm = end_target;
 
-void Compiler::visit_binary_expr(const ast::Binary_expr &expr)
-{
-    if (expr.op == lex::TokenType::LogicalAnd) {
-        compile_expr(expr.left);
-        size_t end_jump = emit_jump(Op_code::Jump_if_false, expr.loc);
-        emit_op(Op_code::Pop, expr.loc);
-        compile_expr(expr.right);
-        patch_jump(end_jump, expr.loc);
-        return;
-    } else if (expr.op == lex::TokenType::LogicalOr) {
-        compile_expr(expr.left);
-        size_t end_jump = emit_jump(Op_code::Jump_if_true, expr.loc);
-        emit_op(Op_code::Pop, expr.loc);
-        compile_expr(expr.right);
-        patch_jump(end_jump, expr.loc);
-        return;
-    }
-
-    compile_expr(expr.left);
-    compile_expr(expr.right);
-    switch (expr.op) {
-    case lex::TokenType::Plus:
-        emit_op(Op_code::Add, expr.loc);
-        break;
-    case lex::TokenType::Minus:
-        emit_op(Op_code::Subtract, expr.loc);
-        break;
-    case lex::TokenType::Star:
-        emit_op(Op_code::Multiply, expr.loc);
-        break;
-    case lex::TokenType::Slash:
-        emit_op(Op_code::Divide, expr.loc);
-        break;
-    case lex::TokenType::Percent:
-        emit_op(Op_code::Modulo, expr.loc);
-        break;
-    case lex::TokenType::Equal:
-        emit_op(Op_code::Equal, expr.loc);
-        break;
-    case lex::TokenType::NotEqual:
-        emit_op(Op_code::Not_equal, expr.loc);
-        break;
-    case lex::TokenType::Less:
-        emit_op(Op_code::Less, expr.loc);
-        break;
-    case lex::TokenType::LessEqual:
-        emit_op(Op_code::Less_equal, expr.loc);
-        break;
-    case lex::TokenType::Greater:
-        emit_op(Op_code::Greater, expr.loc);
-        break;
-    case lex::TokenType::GreaterEqual:
-        emit_op(Op_code::Greater_equal, expr.loc);
-        break;
-    case lex::TokenType::BitAnd:
-        emit_op(Op_code::BitAnd, expr.loc);
-        break;
-    case lex::TokenType::Pipe:
-        emit_op(Op_code::BitOr, expr.loc);
-        break;
-    case lex::TokenType::BitXor:
-        emit_op(Op_code::BitXor, expr.loc);
-        break;
-    case lex::TokenType::BitRshift:
-        emit_op(Op_code::BitRShift, expr.loc);
-        break;
-    case lex::TokenType::BitLShift:
-        emit_op(Op_code::BitLShift, expr.loc);
-        break;
-    default:
-        break;
-    }
-}
-
-void Compiler::visit_unary_expr(const ast::Unary_expr &expr)
-{
-    compile_expr(expr.right);
-    switch (expr.op) {
-    case lex::TokenType::LogicalNot:
-        emit_op(Op_code::Not, expr.loc);
-        break;
-    case lex::TokenType::BitNot:
-        emit_op(Op_code::BitNot, expr.loc);
-        break;
-    case lex::TokenType::Minus:
-        emit_op(Op_code::Negate, expr.loc);
-        break;
-    default:
-        break;
-    }
-}
-
-void Compiler::visit_model_literal_expr(const ast::Model_literal_expr &expr)
-{
-    auto type_var = expr.type;
-
-    if (std::holds_alternative<mem::rc_ptr<types::Union_type>>(type_var)) {
-        auto union_type_ptr = std::get<mem::rc_ptr<types::Union_type>>(type_var);
-
-        // A union literal only ever has 1 field, as enforced by the Type Checker
-        std::string variant_name = expr.fields[0].first;
-        ast::Expr *payload = expr.fields[0].second;
-
-        // 1. Push the payload onto the stack
-        if (payload)
-            compile_expr(payload);
-        else
-            emit_op(Op_code::Nil, expr.loc);
-
-        // 2. Wrap it in the Union memory object!
-        emit_op(Op_code::Construct_union, expr.loc);
-        emit_byte(identifier_constant(union_type_ptr->name, expr.loc), expr.loc);
-        emit_byte(identifier_constant(variant_name, expr.loc), expr.loc);
-        return;
-    }
-
-    auto model_type_ptr = std::get<mem::rc_ptr<types::Model_type>>(type_var);
-
-    // Compile fields in the EXACT memory order dictated by the signature
-    for (const auto &sig_field : model_type_ptr->fields) {
-        for (const auto &ast_field : expr.fields) {
-            if (ast_field.first == sig_field.first) {
-                compile_expr(ast_field.second);
-                break;
-            }
+            return dst_reg;
         }
     }
 
-    emit_op(Op_code::Construct_model, expr.loc);
-    emit_byte(static_cast<uint8_t>(model_type_ptr->fields.size()), expr.loc);
-    emit_byte(identifier_constant(model_type_ptr->name, expr.loc), expr.loc);
-}
+    if (env.tt.is_union(obj_type) && (expr.method_name == "has" || expr.method_name == "get")) {
+        uint8_t obj_reg = compile_expr(expr.object);
 
-void Compiler::visit_field_access_expr(const ast::Field_access_expr &expr)
-{
-    compile_expr(expr.object);
+        std::string variant_str;
+        auto &arg_node = tree.get(expr.arguments[0].value).node;
+        if (auto *sp = std::get_if<ast::Static_path_expr>(&arg_node)) {
+            variant_str = sp->member.lexeme;
+        } else if (auto *em = std::get_if<ast::Enum_member_expr>(&arg_node)) {
+            variant_str = em->member_name;
+        }
 
-    auto type_var = ast::get_type(expr.object->node);
-    auto model_type_ptr = std::get<mem::rc_ptr<types::Model_type>>(type_var);
+        uint8_t str_reg = allocate_register();
+        uint16_t str_idx = add_constant(Value::make_string(arena, variant_str));
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, str_reg, str_idx));
 
-    uint8_t index = 0;
-    for (size_t i = 0; i < model_type_ptr->fields.size(); ++i) {
-        if (model_type_ptr->fields[i].first == expr.field_name) {
-            index = i;
-            break;
+        if (expr.method_name == "has") {
+            uint8_t dst_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Test_union, dst_reg, obj_reg, str_reg));
+            return dst_reg;
+        } else { // get
+            uint8_t test_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Test_union, test_reg, obj_reg, str_reg));
+
+            // Jump to the panic block if the variant didn't match (FALSE)
+            size_t jump_panic_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, test_reg, 0));
+
+            // .ok_block:
+            uint8_t dst_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Load_union_payload, dst_reg, obj_reg, 0));
+            size_t jump_end_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+
+            // .panic_block:
+            uint16_t panic_target = static_cast<uint16_t>(current_block().instructions.size());
+            current_block().instructions[jump_panic_idx].ri.imm = panic_target;
+
+            uint8_t msg_reg = allocate_register();
+            std::string err_msg = "Union variant mismatch. Expected " + variant_str;
+            uint16_t msg_idx = add_constant(Value::make_string(arena, err_msg));
+            emit(vm::Instruction::make_ri(vm::Opcode::Load_const, msg_reg, msg_idx));
+            emit(vm::Instruction::make_rrr(vm::Opcode::Panic, 0, msg_reg, 0));
+
+            // .end:
+            uint32_t end_target = static_cast<uint32_t>(current_block().instructions.size());
+            current_block().instructions[jump_end_idx].i.imm = end_target;
+
+            return dst_reg;
         }
     }
 
-    emit_op(Op_code::Get_field, expr.loc);
-    emit_byte(index, expr.loc);
-}
+    if (env.tt.is_model(obj_type)) {
+        auto &model_name = std::get<types::Model_type>(env.tt.get(obj_type).data).name;
+        auto model_data_ptr = env.get_model(model_name);
 
-void Compiler::visit_field_assignment_expr(const ast::Field_assignment_expr &expr)
-{
-    compile_expr(expr.value);  // Pushes the value
-    compile_expr(expr.object); // Pushes the object
+        if (model_data_ptr && model_data_ptr->methods.contains(expr.method_name)) {
+            std::string global_func_name = model_name + "::" + expr.method_name;
 
-    auto type_var = ast::get_type(expr.object->node);
-    auto model_type_ptr = std::get<mem::rc_ptr<types::Model_type>>(type_var);
+            // 1. Load the function closure
+            uint8_t func_reg = allocate_register();
+            uint16_t const_idx = function_locations_[global_func_name];
+            emit(vm::Instruction::make_ri(vm::Opcode::Load_const, func_reg, const_idx));
 
-    uint8_t index = 0;
-    for (size_t i = 0; i < model_type_ptr->fields.size(); ++i) {
-        if (model_type_ptr->fields[i].first == expr.field_name) {
-            index = i;
-            break;
-        }
-    }
-
-    emit_op(Op_code::Set_field, expr.loc);
-    emit_byte(index, expr.loc);
-}
-
-void Compiler::visit_method_call_expr(const ast::Method_call_expr &expr)
-{
-    if (expr.is_closure_field) {
-        compile_expr(expr.object); // Pushes the Model
-
-        emit_op(Op_code::Get_field, expr.loc);
-        emit_byte(expr.field_index, expr.loc); // Replaces Model with the Closure on the stack!
-
-        for (const auto &arg : expr.arguments)
-            compile_expr(arg.value); // Push args
-
-        emit_op(Op_code::Call, expr.loc); // Execute!
-        emit_byte(static_cast<uint8_t>(expr.arguments.size()), expr.loc);
-        return;
-    }
-
-    auto type_var = ast::get_type(expr.object->node);
-    std::string global_name;
-
-    if (std::holds_alternative<mem::rc_ptr<types::Optional_type>>(type_var) && expr.method_name == "or_else") {
-        compile_expr(expr.object);
-        size_t nil_jump = emit_jump(Op_code::Jump_if_nil, expr.loc);
-        size_t done_jump = emit_jump(Op_code::Jump, expr.loc);
-
-        patch_jump(nil_jump, expr.loc);
-        emit_op(Op_code::Pop, expr.loc);
-
-        compile_expr(expr.arguments[0].value);
-        emit_op(Op_code::Call, expr.loc);
-        emit_byte(0, expr.loc);
-
-        patch_jump(done_jump, expr.loc);
-        return;
-    }
-
-    // If it's a Model, route to ModelName::method
-    if (auto *model_t = std::get_if<mem::rc_ptr<types::Model_type>>(&type_var))
-        global_name = (*model_t)->name + "::" + expr.method_name;
-    // If it's an Array, route to Array::method
-    else if (std::holds_alternative<mem::rc_ptr<types::Array_type>>(type_var))
-        global_name = "Array::" + expr.method_name;
-    else if (std::holds_alternative<mem::rc_ptr<types::Optional_type>>(type_var))
-        global_name = "Optional::" + expr.method_name;
-    else if (std::holds_alternative<mem::rc_ptr<types::Iterator_type>>(type_var))
-        global_name = "Iter::" + expr.method_name;
-    // If it's a string, route to string::method
-    else if (auto *prim = std::get_if<types::Primitive_kind>(&type_var); prim && *prim == types::Primitive_kind::String)
-        global_name = "string::" + expr.method_name;
-
-    uint8_t name_idx = identifier_constant(global_name, expr.loc);
-    emit_op(Op_code::Get_global, expr.loc);
-    emit_byte(name_idx, expr.loc);
-
-    compile_expr(expr.object); // Push the hidden 'this'
-
-    if (auto *native_sig = find_native_signature(*this, global_name, expr.native_signature_index)) {
-        for (size_t i = 0; i < expr.arguments.size(); ++i) {
-            if (expr.arguments[i].value)
-                compile_expr(expr.arguments[i].value);
-            else
-                emit_constant(*native_sig->params[i + 1].default_value, expr.loc);
-        }
-
-        emit_op(Op_code::Call, expr.loc);
-        emit_byte(static_cast<uint8_t>(expr.arguments.size() + 1), expr.loc); // +1 for 'this'
-        return;
-    }
-
-    for (const auto &arg : expr.arguments)
-        compile_expr(arg.value);
-
-    emit_op(Op_code::Call, expr.loc);
-    emit_byte(static_cast<uint8_t>(expr.arguments.size() + 1), expr.loc); // +1 for 'this'
-}
-
-void Compiler::visit_static_path_expr(const ast::Static_path_expr &expr)
-{
-    auto type_var = ast::get_type(expr.base->node);
-    if (std::holds_alternative<mem::rc_ptr<types::Union_type>>(type_var)) {
-        if (!std::holds_alternative<mem::rc_ptr<types::Union_type>>(expr.type)) {
-            emit_op(Op_code::Nil, expr.loc);
-            return;
-        }
-
-        // It's a Union Variant with NO payload!
-        auto union_name = std::get<mem::rc_ptr<types::Union_type>>(type_var)->name;
-
-        emit_op(Op_code::Nil, expr.loc);
-        emit_op(Op_code::Construct_union, expr.loc);
-        emit_byte(identifier_constant(union_name, expr.loc), expr.loc);
-        emit_byte(identifier_constant(expr.member.lexeme, expr.loc), expr.loc);
-        return;
-    }
-    if (std::holds_alternative<mem::rc_ptr<types::Enum_type>>(type_var)) {
-        auto enum_type = std::get<mem::rc_ptr<types::Enum_type>>(type_var);
-        Value val = enum_type->variants->map.at(expr.member.lexeme);
-        emit_constant(val, expr.loc);
-        return;
-    }
-    // e.g., User::new -> Compiles down to Get_global "User::new"
-    if (auto *base_var = std::get_if<ast::Variable_expr>(&expr.base->node)) {
-        std::string global_name = base_var->name + "::" + expr.member.lexeme;
-        uint8_t name_idx = identifier_constant(global_name, expr.loc);
-        emit_op(Op_code::Get_global, expr.loc);
-        emit_byte(name_idx, expr.loc);
-    }
-}
-
-void Compiler::visit_enum_member_expr(const ast::Enum_member_expr &expr)
-{
-    types::Type base_type = expr.type;
-    if (auto *opt_t = std::get_if<mem::rc_ptr<types::Optional_type>>(&base_type)) {
-        base_type = (*opt_t)->base_type;
-    }
-
-    if (auto *enum_type_ptr = std::get_if<mem::rc_ptr<types::Enum_type>>(&base_type)) {
-        Value val = (*enum_type_ptr)->variants->map.at(expr.member_name);
-        emit_constant(val, expr.loc);
-    } else {
-        emit_op(Op_code::Nil, expr.loc);
-    }
-}
-
-void Compiler::visit_array_literal_expr(const ast::Array_literal_expr &expr)
-{
-    // Push all elements to the stack from left to right
-    for (auto *elem : expr.elements)
-        compile_expr(elem);
-
-    // Tell the VM to pop N elements and wrap them in an Array_value
-    emit_op(Op_code::Create_array, expr.loc);
-    emit_byte(static_cast<uint8_t>(expr.elements.size()), expr.loc);
-}
-
-void Compiler::visit_array_access_expr(const ast::Array_access_expr &expr)
-{
-    compile_expr(expr.array); // Pushes the array
-    compile_expr(expr.index); // Pushes the index
-    emit_op(Op_code::Get_index, expr.loc);
-}
-
-void Compiler::visit_cast_expr(const ast::Cast_expr &expr)
-{
-    if (auto *target_array = std::get_if<mem::rc_ptr<types::Array_type>>(&expr.target_type)) {
-        if ((*target_array)->element_type == types::Type(types::Primitive_kind::U8)) {
-            uint8_t bytes_idx = identifier_constant("bytes", expr.loc);
-            emit_op(Op_code::Get_global, expr.loc);
-            emit_byte(bytes_idx, expr.loc);
-            compile_expr(expr.expression);
-            emit_op(Op_code::Call, expr.loc);
-            emit_byte(1, expr.loc);
-            return;
-        }
-    }
-
-    compile_expr(expr.expression);
-
-    if (std::holds_alternative<types::Primitive_kind>(expr.target_type)) {
-        auto prim = std::get<types::Primitive_kind>(expr.target_type);
-
-        // We only need runtime casts for actual memory-changing conversions
-        // You can expand this if-statement as you add i32, u8, etc.
-        if (types::is_numeric_primitive(prim)) {
-            emit_op(Op_code::Cast, expr.loc);
-            emit_byte(static_cast<uint8_t>(prim), expr.loc); // The operand is the target type!
-        }
-    }
-}
-
-void Compiler::visit_array_assignment_expr(const ast::Array_assignment_expr &expr)
-{
-    compile_expr(expr.value); // Pushes the value FIRST
-    compile_expr(expr.array); // Pushes the array
-    compile_expr(expr.index); // Pushes the index
-    emit_op(Op_code::Set_index, expr.loc);
-}
-
-void Compiler::visit_range_expr(const ast::Range_expr &expr)
-{
-    const std::string helper_name = expr.inclusive ? "__range_inclusive" : "__range_exclusive";
-    uint8_t helper_idx = identifier_constant(helper_name, expr.loc);
-    emit_op(Op_code::Get_global, expr.loc);
-    emit_byte(helper_idx, expr.loc);
-    compile_expr(expr.start);
-    compile_expr(expr.end);
-    emit_op(Op_code::Call, expr.loc);
-    emit_byte(2, expr.loc);
-}
-
-void Compiler::visit_fstring_expr(const ast::Fstring_expr &expr)
-{
-    bool has_component = false;
-    size_t interpolation_index = 0;
-    std::string literal_buf;
-
-    auto append_literal = [&](const std::string &text) {
-        if (text.empty())
-            return;
-        emit_constant(Value(text), expr.loc);
-        if (has_component)
-            emit_op(Op_code::Add, expr.loc);
-        else
-            has_component = true;
-    };
-
-    auto append_interpolation = [&](ast::Expr *interpolation) {
-        uint8_t to_str_idx = identifier_constant("to_str", expr.loc);
-        emit_op(Op_code::Get_global, expr.loc);
-        emit_byte(to_str_idx, expr.loc);
-        compile_expr(interpolation);
-        emit_op(Op_code::Call, expr.loc);
-        emit_byte(1, expr.loc);
-
-        if (has_component)
-            emit_op(Op_code::Add, expr.loc);
-        else
-            has_component = true;
-    };
-
-    size_t i = 0;
-    while (i < expr.raw_template.size()) {
-        if (expr.raw_template[i] == '{') {
-            // RESOLVE ESCAPED OPEN BRACE
-            if (i + 1 < expr.raw_template.size() && expr.raw_template[i + 1] == '{') {
-                literal_buf += '{';
-                i += 2;
-                continue;
+            // 2. Evaluate arguments
+            std::vector<uint8_t> arg_eval_regs;
+            for (const auto &arg : expr.arguments) {
+                arg_eval_regs.push_back(compile_expr(arg.value));
             }
 
-            append_literal(literal_buf);
-            literal_buf.clear();
+            // 3. Set up contiguous ABI block
+            uint8_t call_base_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base_reg, func_reg, 0));
 
-            size_t start = ++i;
-            int depth = 1;
-            while (i < expr.raw_template.size() && depth > 0) {
-                if (expr.raw_template[i] == '{')
-                    depth++;
-                else if (expr.raw_template[i] == '}')
-                    depth--;
-                if (depth > 0)
-                    i++;
+            for (size_t i = 0; i < expr.arguments.size(); ++i) {
+                uint8_t arg_reg = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_reg, arg_eval_regs[i], 0));
             }
-            (void)start;
-            i++;
 
-            if (interpolation_index < expr.interpolations.size())
-                append_interpolation(expr.interpolations[interpolation_index++]);
-        } else if (expr.raw_template[i] == '}') {
-            // RESOLVE ESCAPED CLOSE BRACE
-            if (i + 1 < expr.raw_template.size() && expr.raw_template[i + 1] == '}') {
-                literal_buf += '}';
-                i += 2;
-                continue;
-            }
-            i++; // Fallback in case of isolated '}' (caught by parser anyway)
+            uint8_t dest_reg = allocate_register();
+            uint8_t argc = static_cast<uint8_t>(expr.arguments.size());
+            emit(vm::Instruction::make_rrr(vm::Opcode::Call, dest_reg, call_base_reg, argc));
+
+            return dest_reg;
         } else {
-            literal_buf += expr.raw_template[i++];
+            // ... fallback for closure fields ...
+            auto &model_t = std::get<types::Model_type>(env.tt.get(obj_type).data);
+            for (size_t i = 0; i < model_t.fields.size(); ++i) {
+                if (model_t.fields[i].first == expr.method_name) {
+                    uint8_t obj_reg = compile_expr(expr.object);
+                    uint8_t field_idx = static_cast<uint8_t>(i);
+                    uint8_t func_reg = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Load_field, func_reg, obj_reg, field_idx));
+
+                    std::vector<uint8_t> arg_eval_regs;
+                    for (const auto &arg : expr.arguments) {
+                        arg_eval_regs.push_back(compile_expr(arg.value));
+                    }
+
+                    uint8_t call_base_reg = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base_reg, func_reg, 0));
+
+                    for (size_t j = 0; j < expr.arguments.size(); ++j) {
+                        uint8_t arg_reg = allocate_register();
+                        emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_reg, arg_eval_regs[j], 0));
+                    }
+
+                    uint8_t dest_reg = allocate_register();
+                    uint8_t argc = static_cast<uint8_t>(expr.arguments.size());
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Call, dest_reg, call_base_reg, argc));
+
+                    return dest_reg;
+                }
+            }
         }
     }
 
-    append_literal(literal_buf);
-
-    if (!has_component)
-        emit_constant(Value(std::string("")), expr.loc);
-}
-
-void Compiler::visit_anon_model_literal_expr(const ast::Anon_model_literal_expr &expr)
-{
-    // Unwrap the Optional context if it exists
-    types::Type base_type = expr.type;
-    if (auto *opt_t = std::get_if<mem::rc_ptr<types::Optional_type>>(&base_type))
-        base_type = (*opt_t)->base_type;
-
-    // --- 1. UNION ANONYMOUS LITERAL ---
-    if (std::holds_alternative<mem::rc_ptr<types::Union_type>>(base_type)) {
-        auto union_type_ptr = std::get<mem::rc_ptr<types::Union_type>>(base_type);
-
-        // The Type Checker guarantees unions have exactly 1 field here
-        std::string variant_name = expr.fields[0].first;
-
-        // Push the payload onto the stack
-        if (expr.fields[0].second)
-            compile_expr(expr.fields[0].second);
-        else
-            emit_op(Op_code::Nil, expr.loc);
-
-        // Tell the VM to wrap it in a Union_value
-        emit_op(Op_code::Construct_union, expr.loc);
-        emit_byte(identifier_constant(union_type_ptr->name, expr.loc), expr.loc);
-        emit_byte(identifier_constant(variant_name, expr.loc), expr.loc);
-        return;
+    if (expr.method_name == "iter") {
+        uint8_t obj_reg = compile_expr(expr.object);
+        uint8_t dst_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Make_iter, dst_reg, obj_reg, 0));
+        return dst_reg;
     }
 
-    // --- 2. MODEL ANONYMOUS LITERAL ---
-    if (std::holds_alternative<mem::rc_ptr<types::Model_type>>(base_type)) {
-        // Compile each field's value in structural order
-        for (const auto &field : expr.fields)
-            compile_expr(field.second);
-
-        auto model_type_ptr = std::get<mem::rc_ptr<types::Model_type>>(base_type);
-
-        emit_op(Op_code::Construct_model, expr.loc);
-        emit_byte(static_cast<uint8_t>(model_type_ptr->fields.size()), expr.loc);
-        emit_byte(identifier_constant(model_type_ptr->name, expr.loc), expr.loc);
-        return;
+    if (env.tt.is_iterator(obj_type)) {
+        uint8_t obj_reg = compile_expr(expr.object);
+        if (expr.method_name == "next") {
+            uint8_t dst_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Iter_next, dst_reg, obj_reg, 0));
+            return dst_reg;
+        }
+        if (expr.method_name == "prev") {
+            uint8_t dst_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Iter_prev, dst_reg, obj_reg, 0));
+            return dst_reg;
+        }
     }
+    std::string ffi_name{""};
+
+    if (env.tt.is_array(obj_type)) {
+        ffi_name = "Array::" + expr.method_name;
+    } else if (env.tt.is_iterator(obj_type)) {
+        ffi_name = "Iter::" + expr.method_name;
+    } else if (env.tt.is_string(obj_type)) {
+        ffi_name = "String::" + expr.method_name;
+    }
+
+    if (!ffi_name.empty() && function_locations_.contains(ffi_name)) {
+        // 1. Evaluate the receiver (the string or array)
+        uint8_t obj_reg = compile_expr(expr.object);
+
+        // 2. Evaluate all arguments into scattered temporary registers
+        std::vector<uint8_t> arg_eval_regs;
+        for (const auto &arg : expr.arguments) {
+            arg_eval_regs.push_back(compile_expr(arg.value));
+        }
+
+        // 3. Load the native C++ function closure from the constant pool
+        uint8_t func_reg = allocate_register();
+        uint16_t const_idx = function_locations_[ffi_name];
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, func_reg, const_idx));
+
+        // 4. Set up the ABI contiguous register block: [Closure, Receiver, Arg1, Arg2...]
+        uint8_t call_base_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base_reg, func_reg, 0));
+
+        // Push the receiver as the implicit first argument
+        uint8_t arg_this = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_this, obj_reg, 0));
+
+        // Push the rest of the arguments
+        for (size_t i = 0; i < expr.arguments.size(); ++i) {
+            uint8_t arg_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_reg, arg_eval_regs[i], 0));
+        }
+
+        // 5. Emit the Call opcode (argc + 1 because the receiver counts as an argument)
+        uint8_t dest_reg = allocate_register();
+        uint8_t argc = static_cast<uint8_t>(expr.arguments.size() + 1);
+        emit(vm::Instruction::make_rrr(vm::Opcode::Call, dest_reg, call_base_reg, argc));
+
+        return dest_reg;
+    }
+
+    std::println(std::cerr, "Compiler Bug: These type ({}) of method calls not fully implemented in Bytecode yet!", expr.method_name);
+    std::exit(EXIT_FAILURE);
+    return 0;
 }
 
-// ============================================================================
-// Emitters
-// ============================================================================
-
-void Compiler::emit_op(Op_code op, phos::ast::Source_location loc)
+uint8_t Compiler::compile_expr_node(const ast::Field_access_expr &expr)
 {
-    current_chunk()->write(static_cast<uint8_t>(op), loc);
+    uint8_t obj_reg = compile_expr(expr.object);
+    types::Type_id obj_type = ast::get_type(tree.get(expr.object).node);
+
+    auto field_idx_opt = env.tt.get_model_field_index(obj_type, expr.field_name);
+    if (!field_idx_opt) {
+        std::println(std::cerr, "Compiler Bug: Field access offset missing.");
+        std::exit(1);
+    }
+
+    uint8_t field_idx = static_cast<uint8_t>(*field_idx_opt);
+    uint8_t dest_reg = allocate_register();
+    emit(vm::Instruction::make_rrr(vm::Opcode::Load_field, dest_reg, obj_reg, field_idx));
+
+    return dest_reg;
 }
-void Compiler::emit_byte(uint8_t byte, phos::ast::Source_location loc)
+
+uint8_t Compiler::compile_expr_node(const ast::Field_assignment_expr &expr)
 {
-    current_chunk()->write(byte, loc);
+    uint8_t value_reg = compile_expr(expr.value);
+    types::Type_id source_type = ast::get_type(tree.get(expr.value).node);
+    if (source_type != expr.type) {
+        emit_numeric_normalize(value_reg, expr.type);
+    }
+
+    uint8_t obj_reg = compile_expr(expr.object);
+    types::Type_id obj_type = ast::get_type(tree.get(expr.object).node);
+
+    auto field_idx_opt = env.tt.get_model_field_index(obj_type, expr.field_name);
+    if (!field_idx_opt) {
+        std::println(std::cerr, "Compiler Bug: Field assignment offset missing.");
+        std::exit(1);
+    }
+
+    uint8_t field_idx = static_cast<uint8_t>(*field_idx_opt);
+    emit(vm::Instruction::make_rrr(vm::Opcode::Store_field, obj_reg, field_idx, value_reg));
+
+    return value_reg;
 }
 
-void Compiler::emit_constant(Value value, phos::ast::Source_location loc)
+uint8_t Compiler::compile_expr_node(const ast::Array_literal_expr &expr)
 {
-    size_t index = current_chunk()->add_constant(std::move(value));
-    emit_op(Op_code::Constant, loc);
-    emit_byte(static_cast<uint8_t>(index), loc);
+    // 1. Evaluate all elements into scattered temporary registers
+    std::vector<uint8_t> element_regs;
+    for (const auto &el_expr : expr.elements) {
+        element_regs.push_back(compile_expr(el_expr));
+    }
+
+    // 2. Allocate a strictly contiguous block of registers
+    uint8_t base_reg = allocate_register();
+    if (!element_regs.empty()) {
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, base_reg, element_regs[0], 0));
+        for (size_t i = 1; i < element_regs.size(); ++i) {
+            uint8_t next_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, next_reg, element_regs[i], 0));
+        }
+    }
+
+    // 3. Emit Make_array
+    uint8_t dest_reg = allocate_register();
+    uint8_t count = static_cast<uint8_t>(element_regs.size());
+    emit(vm::Instruction::make_rrr(vm::Opcode::Make_array, dest_reg, base_reg, count));
+
+    return dest_reg;
 }
 
-uint8_t Compiler::identifier_constant(const std::string &name, phos::ast::Source_location loc)
+uint8_t Compiler::compile_expr_node(const ast::Array_access_expr &expr)
 {
-    return static_cast<uint8_t>(current_chunk()->add_constant(Value(name)));
+    // Evaluate array and index
+    uint8_t arr_reg = compile_expr(expr.array);
+    uint8_t idx_reg = compile_expr(expr.index);
+
+    // Emit Load_index
+    uint8_t dest_reg = allocate_register();
+    emit(vm::Instruction::make_rrr(vm::Opcode::Load_index, dest_reg, arr_reg, idx_reg));
+
+    return dest_reg;
 }
 
-size_t Compiler::emit_jump(Op_code instruction, phos::ast::Source_location loc)
+uint8_t Compiler::compile_expr_node(const ast::Array_assignment_expr &expr)
 {
-    emit_op(instruction, loc);
-    emit_byte(0xff, loc);
-    emit_byte(0xff, loc);
-    return current_chunk()->code.size() - 2;
+    // 1. Evaluate the value being assigned
+    uint8_t value_reg = compile_expr(expr.value);
+    types::Type_id source_type = ast::get_type(tree.get(expr.value).node);
+    if (source_type != expr.type) {
+        emit_numeric_normalize(value_reg, expr.type);
+    }
+
+    // 2. Evaluate array and index
+    uint8_t arr_reg = compile_expr(expr.array);
+    uint8_t idx_reg = compile_expr(expr.index);
+
+    // 3. Emit Store_index (dst = array, src_a = index, src_b = value)
+    emit(vm::Instruction::make_rrr(vm::Opcode::Store_index, arr_reg, idx_reg, value_reg));
+
+    return value_reg;
 }
 
-void Compiler::patch_jump(size_t offset, phos::ast::Source_location loc)
+uint8_t Compiler::compile_expr_node(const ast::Range_expr &expr)
 {
-    size_t jump = current_chunk()->code.size() - offset - 2;
-    current_chunk()->code[offset] = (jump >> 8) & 0xff;
-    current_chunk()->code[offset + 1] = jump & 0xff;
+    uint8_t start_reg = compile_expr(expr.start);
+    uint8_t end_reg = compile_expr(expr.end);
+
+    uint8_t dst_reg = allocate_register();
+
+    vm::Opcode opcode = expr.inclusive ? vm::Opcode::Make_range_in : vm::Opcode::Make_range_ex;
+    emit(vm::Instruction::make_rrr(opcode, dst_reg, start_reg, end_reg));
+
+    return dst_reg;
 }
 
-void Compiler::emit_loop(size_t loop_start, phos::ast::Source_location loc)
+void Compiler::compile_stmt_node(const ast::For_in_stmt &stmt)
 {
-    emit_op(Op_code::Loop, loc);
-    size_t jump = current_chunk()->code.size() - loop_start + 2;
-    emit_byte((jump >> 8) & 0xff, loc);
-    emit_byte(jump & 0xff, loc);
+    auto prev_locals_size = current_ctx_->locals.size();
+
+    // Evaluate iterable once
+    uint8_t iterable_reg = compile_expr(stmt.iterable);
+    types::Type_id iterable_type = ast::get_type(tree.get(stmt.iterable).node);
+
+    bool is_custom_model = env.tt.is_model(iterable_type);
+
+    // Pre-bind loop variable register
+    uint8_t loop_var_reg = allocate_register();
+    current_ctx_->locals.push_back({stmt.var_name, loop_var_reg});
+
+    // ============================================================
+    // CUSTOM MODEL ITERATORS
+    // ============================================================
+    if (is_custom_model) {
+        auto &model_name =
+            std::get<types::Model_type>(env.tt.get(iterable_type).data).name;
+
+        auto model_data_ptr = env.get_model(model_name);
+
+        uint8_t iter_reg = allocate_register();
+        std::string iter_model_name = model_name;
+
+        // iterable.iter()
+        if (model_data_ptr && model_data_ptr->methods.contains("iter")) {
+            uint8_t func_reg = allocate_register();
+            uint16_t const_idx = function_locations_[model_name + "::iter"];
+
+            emit(vm::Instruction::make_ri(
+                vm::Opcode::Load_const,
+                func_reg,
+                const_idx));
+
+            uint8_t call_base = allocate_register();
+            emit(vm::Instruction::make_rrr(
+                vm::Opcode::Move,
+                call_base,
+                func_reg,
+                0));
+
+            uint8_t arg_this = allocate_register();
+            emit(vm::Instruction::make_rrr(
+                vm::Opcode::Move,
+                arg_this,
+                iterable_reg,
+                0));
+
+            emit(vm::Instruction::make_rrr(
+                vm::Opcode::Call,
+                iter_reg,
+                call_base,
+                1));
+
+            auto iter_decl_id =
+                model_data_ptr->methods.at("iter").declaration;
+
+            auto iter_decl =
+                std::get_if<ast::Function_stmt>(
+                    &tree.get(iter_decl_id).node);
+
+            iter_model_name =
+                std::get<types::Model_type>(
+                    env.tt.get(iter_decl->return_type).data).name;
+        } else {
+            emit(vm::Instruction::make_rrr(
+                vm::Opcode::Move,
+                iter_reg,
+                iterable_reg,
+                0));
+        }
+
+        // Optional step=1 support for next(this, step)
+        uint8_t step_reg = allocate_register();
+        uint16_t one_idx = add_constant(Value(static_cast<int64_t>(1)));
+        emit(vm::Instruction::make_ri(
+            vm::Opcode::Load_const,
+            step_reg,
+            one_idx));
+
+        // ---------------- LOOP START ----------------
+        uint32_t loop_start =
+            static_cast<uint32_t>(current_block().instructions.size());
+
+        auto next_decl_id =
+            env.get_model(iter_model_name)->methods.at("next").declaration;
+
+        auto next_decl =
+            std::get_if<ast::Function_stmt>(
+                &tree.get(next_decl_id).node);
+
+        uint8_t argc =
+            static_cast<uint8_t>(next_decl->parameters.size());
+
+        uint8_t next_func = allocate_register();
+        uint16_t next_idx =
+            function_locations_[iter_model_name + "::next"];
+
+        emit(vm::Instruction::make_ri(
+            vm::Opcode::Load_const,
+            next_func,
+            next_idx));
+
+        uint8_t call_base = allocate_register();
+        emit(vm::Instruction::make_rrr(
+            vm::Opcode::Move,
+            call_base,
+            next_func,
+            0));
+
+        uint8_t arg_this = allocate_register();
+        emit(vm::Instruction::make_rrr(
+            vm::Opcode::Move,
+            arg_this,
+            iter_reg,
+            0));
+
+        if (argc == 2) {
+            uint8_t arg_step = allocate_register();
+            emit(vm::Instruction::make_rrr(
+                vm::Opcode::Move,
+                arg_step,
+                step_reg,
+                0));
+        }
+
+        uint8_t opt_val_reg = allocate_register();
+
+        emit(vm::Instruction::make_rrr(
+            vm::Opcode::Call,
+            opt_val_reg,
+            call_base,
+            argc));
+
+        // Correct sentinel logic:
+        // nil(depth=0) => stop
+        // Some(nil) / Some(x) => continue
+        uint8_t end_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(
+            vm::Opcode::Test_nil,
+            end_reg,
+            opt_val_reg,
+            0));
+
+        size_t jump_body =
+            emit(vm::Instruction::make_ri(
+                vm::Opcode::Jump_if_false,
+                end_reg,
+                0));
+
+        size_t jump_exit =
+            emit(vm::Instruction::make_i(
+                vm::Opcode::Jump,
+                0));
+
+        // body target
+        uint16_t body_target =
+            static_cast<uint16_t>(current_block().instructions.size());
+
+        current_block().instructions[jump_body].ri.imm = body_target;
+
+        emit(vm::Instruction::make_rrr(
+            vm::Opcode::Unwrap_option,
+            loop_var_reg,
+            opt_val_reg,
+            0));
+
+        compile_stmt(stmt.body);
+
+        emit(vm::Instruction::make_i(
+            vm::Opcode::Jump,
+            loop_start));
+
+        uint32_t exit_target =
+            static_cast<uint32_t>(current_block().instructions.size());
+
+        current_block().instructions[jump_exit].i.imm = exit_target;
+    }
+
+    // ============================================================
+    // BUILTIN ITERATORS
+    // ============================================================
+    else {
+        uint8_t iter_reg = allocate_register();
+
+        emit(vm::Instruction::make_rrr(
+            vm::Opcode::Make_iter,
+            iter_reg,
+            iterable_reg,
+            0));
+
+        uint8_t opt_val_reg = allocate_register();
+
+        // ---------------- LOOP START ----------------
+        uint32_t loop_start =
+            static_cast<uint32_t>(current_block().instructions.size());
+
+        emit(vm::Instruction::make_rrr(
+            vm::Opcode::Iter_next,
+            opt_val_reg,
+            iter_reg,
+            0));
+
+        uint8_t end_reg = allocate_register();
+
+        emit(vm::Instruction::make_rrr(
+            vm::Opcode::Test_nil,
+            end_reg,
+            opt_val_reg,
+            0));
+
+        size_t jump_body =
+            emit(vm::Instruction::make_ri(
+                vm::Opcode::Jump_if_false,
+                end_reg,
+                0));
+
+        size_t jump_exit =
+            emit(vm::Instruction::make_i(
+                vm::Opcode::Jump,
+                0));
+
+        uint16_t body_target =
+            static_cast<uint16_t>(current_block().instructions.size());
+
+        current_block().instructions[jump_body].ri.imm = body_target;
+
+        emit(vm::Instruction::make_rrr(
+            vm::Opcode::Unwrap_option,
+            loop_var_reg,
+            opt_val_reg,
+            0));
+
+        compile_stmt(stmt.body);
+
+        emit(vm::Instruction::make_i(
+            vm::Opcode::Jump,
+            loop_start));
+
+        uint32_t exit_target =
+            static_cast<uint32_t>(current_block().instructions.size());
+
+        current_block().instructions[jump_exit].i.imm = exit_target;
+    }
+
+    current_ctx_->locals.resize(prev_locals_size);
 }
 
-int Compiler::resolve_local_in_state(Compiler_state *state, const std::string &name)
-{
-    for (int i = static_cast<int>(state->locals.size()) - 1; i >= 0; i--)
-        if (state->locals[i].name == name)
-            return i;
-    return -1;
-}
-
-int Compiler::add_upvalue(Compiler_state *state, uint8_t index, bool is_local)
-{
-    for (size_t i = 0; i < state->upvalues.size(); i++)
-        if (state->upvalues[i].index == index && state->upvalues[i].is_local == is_local)
-            return static_cast<int>(i);
-    state->upvalues.push_back({index, is_local});
-    state->closure->upvalue_count = state->upvalues.size();
-    return static_cast<int>(state->upvalues.size() - 1);
-}
-
-int Compiler::resolve_upvalue(Compiler_state *state, const std::string &name)
-{
-    if (state == &states.front())
-        return -1; // The global script scope has no upvalues
-
-    Compiler_state *parent = state - 1;
-
-    // 1. Is it a local variable in the immediate parent?
-    int local = resolve_local_in_state(parent, name);
-    if (local != -1)
-        return add_upvalue(state, static_cast<uint8_t>(local), true);
-
-    // 2. Is it an upvalue in the parent? (Recursive searching upwards!)
-    int upvalue = resolve_upvalue(parent, name);
-    if (upvalue != -1)
-        return add_upvalue(state, static_cast<uint8_t>(upvalue), false);
-
-    return -1;
-}
 } // namespace phos::vm

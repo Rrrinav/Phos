@@ -22,8 +22,9 @@ class rc_ptr
 
         ~__control_block_t__()
         {
-            if (ptr)
+            if (ptr) {
                 deleter(ptr);
+            }
         }
     };
 
@@ -40,8 +41,9 @@ public:
 
     rc_ptr(const rc_ptr &other) noexcept : ctrl(other.ctrl)
     {
-        if (ctrl)
+        if (ctrl) {
             ++ctrl->ref_count;
+        }
     }
 
     rc_ptr(rc_ptr &&other) noexcept : ctrl(other.ctrl)
@@ -55,8 +57,9 @@ public:
         if (this != &other) {
             release();
             ctrl = other.ctrl;
-            if (ctrl)
+            if (ctrl) {
                 ++ctrl->ref_count;
+            }
         }
         return *this;
     }
@@ -122,8 +125,9 @@ public:
             ctrl = nullptr;
         }
 
-        if (new_ptr)
+        if (new_ptr) {
             ctrl = new __control_block_t__(new_ptr, [](T *p) { delete p; });
+        }
     }
 
 private:
@@ -151,8 +155,9 @@ class rc_ptr<T[]>
 
         ~_control_block_()
         {
-            if (ptr)
+            if (ptr) {
                 deleter(ptr);
+            }
         }
     };
 
@@ -167,8 +172,9 @@ public:
 
     rc_ptr(const rc_ptr &other) noexcept : ctrl(other.ctrl)
     {
-        if (ctrl)
+        if (ctrl) {
             ++ctrl->ref_count;
+        }
     }
 
     rc_ptr(rc_ptr &&other) noexcept : ctrl(other.ctrl)
@@ -182,8 +188,9 @@ public:
         if (this != &other) {
             release();
             ctrl = other.ctrl;
-            if (ctrl)
+            if (ctrl) {
                 ++ctrl->ref_count;
+            }
         }
         return *this;
     }

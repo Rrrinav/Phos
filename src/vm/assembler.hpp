@@ -1,26 +1,27 @@
 #pragma once
 
-#include "../memory/ref_counted.hpp"
+#include "../memory/arena.hpp"
 #include "../value/value.hpp"
-#include "opcodes.hpp"
+#include "instruction.hpp"
 
 #include <string>
-#include <unordered_map>
 
 namespace phos::vm {
 
 class Assembler
 {
 public:
-    // 1. Bytecode -> PhosAsm (Zero Cost Export)
-    static std::string serialize(mem::rc_ptr<Closure_value> main_closure);
+    // Serializes a Closure_data object into a deterministic, human-readable text format.
+    // Handles string escaping automatically to ensure safe multiline strings.
+    static std::string serialize(const Closure_data &closure);
 
-    // 2. PhosAsm -> Bytecode (Zero Cost Import)
-    static mem::rc_ptr<Closure_value> assemble(const std::string &ir_source);
+    // Reads deterministic text back into executable VM memory using the provided Arena.
+    // Automatically unescapes strings and links 24-bit jump instructions.
+    static Closure_data deserialize(const std::string &ir_source, mem::Arena &arena);
 
-private:
-    static std::unordered_map<std::string, Op_code> get_opcode_map();
-    static std::unordered_map<Op_code, std::string> get_mnemonic_map();
+    // Converts a single 32-bit Instruction into an LLVM-style assembly string.
+    // If a closure is provided, it will resolve constant pool indices ($K) into inline comments.
+    static std::string disassemble_instruction(Instruction inst, const Closure_data *closure = nullptr);
 };
 
 } // namespace phos::vm

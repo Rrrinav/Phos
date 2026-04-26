@@ -7,6 +7,7 @@
 model Point {
     x: i64;
     y: i64;
+    static dimensions: i64 = 2;
 }
 
 model Color {
@@ -22,30 +23,32 @@ bind Point {
         return (this.x * this.x) + (this.y * this.y);
     }
 
-    fn translated(dx: i64, dy: i64) -> Point {
-        return Point{
+    fn translated(dx: i32, dy: i32) -> Point {
+        return Point.{
             x: this.x + dx,
             y: this.y + dy,
         };
     }
 
     static fn origin() -> Point {
-        return Point{0, 0};
+        return Point.{0, 0};
     }
 }
 
 // Model literals can use named fields.
-let start := Point{x: 3, y: 4};
-let white := Color{};
-let accent := Color{r: 0x20, b: 0x80,};
+let start := Point.{x: 3, y: 4};
+let white := Color.{};
+let accent := Color.{r: 0x20, b: 0x80,};
 
 // They can also use positional fields in declaration order.
 let moved := start.translated(10, -2);
-let zero := Point::origin();
+let zero  := Point::origin();
+let dims  := Point::dimensions;
 
 print("start.magnitude_squared() = ", start.magnitude_squared(), sep = "");
 print(moved);
 print(zero);
+print("Point::dimensions = ", dims, sep = "");
 print(white);
 print(accent);
 

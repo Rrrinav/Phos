@@ -79,8 +79,9 @@ consteval std::array<char, 16> make_version()
             v /= 10;
         } while (v);
 
-        while (n--)
+        while (n--) {
             buf[pos++] = tmp[n];
+        }
     };
 
     append_int(major);
@@ -196,10 +197,12 @@ public:
 
     ~Arena()
     {
-        for (auto it = destructors_.rbegin(); it != destructors_.rend(); ++it)
+        for (auto it = destructors_.rbegin(); it != destructors_.rend(); ++it) {
             (*it)();
-        for (auto &b : blocks_)
+        }
+        for (auto &b : blocks_) {
             ::operator delete(b.data);
+        }
     }
 
     template <typename... Args>
@@ -252,8 +255,9 @@ public:
     {}
     auto operator()(const T &val) const -> std::expected<void, std::string>
     {
-        if (l <= val && val <= h)
+        if (l <= val && val <= h) {
             return {};
+        }
         return std::unexpected(std::format("Value {} out of range [{}, {}]", val, l, h));
     }
     std::string help() const
@@ -493,18 +497,24 @@ template <typename T>
 [[nodiscard]]
 consteval Opt_type parsable_to_opt_type()
 {
-    if constexpr (is_std_array_v<T>)
+    if constexpr (is_std_array_v<T>) {
         return parsable_to_opt_type<typename T::value_type>();
-    if constexpr (std::is_same_v<T, bool>)
+    }
+    if constexpr (std::is_same_v<T, bool>) {
         return Opt_type::Bool;
-    if constexpr (std::integral<T>)
+    }
+    if constexpr (std::integral<T>) {
         return Opt_type::Int;
-    if constexpr (std::floating_point<T>)
+    }
+    if constexpr (std::floating_point<T>) {
         return Opt_type::Float;
-    if constexpr (std::is_convertible_v<T, std::string>)
+    }
+    if constexpr (std::is_convertible_v<T, std::string>) {
         return Opt_type::Str;
-    if constexpr (std::is_convertible_v<T, std::string_view>)
+    }
+    if constexpr (std::is_convertible_v<T, std::string_view>) {
         return Opt_type::Str;
+    }
 }
 
 // Get Opt_type from Gettable types (used in get())
@@ -513,20 +523,27 @@ template <typename T>
 [[nodiscard]]
 consteval Opt_type gettable_to_opt_type()
 {
-    if constexpr (is_std_array_v<T>)
+    if constexpr (is_std_array_v<T>) {
         return gettable_to_opt_type<typename T::value_type>();
-    if constexpr (is_std_vector_v<T>)
+    }
+    if constexpr (is_std_vector_v<T>) {
         return gettable_to_opt_type<typename T::value_type>();
-    if constexpr (std::is_same_v<T, bool>)
+    }
+    if constexpr (std::is_same_v<T, bool>) {
         return Opt_type::Bool;
-    if constexpr (std::integral<T>)
+    }
+    if constexpr (std::integral<T>) {
         return Opt_type::Int;
-    if constexpr (std::floating_point<T>)
+    }
+    if constexpr (std::floating_point<T>) {
         return Opt_type::Float;
-    if constexpr (std::is_convertible_v<T, std::string>)
+    }
+    if constexpr (std::is_convertible_v<T, std::string>) {
         return Opt_type::Str;
-    if constexpr (std::is_convertible_v<T, std::string_view>)
+    }
+    if constexpr (std::is_convertible_v<T, std::string_view>) {
         return Opt_type::Str;
+    }
 }
 
 // Get Storage_kind from any Gettable type
@@ -535,10 +552,12 @@ template <typename T>
 [[nodiscard]]
 consteval Storage_kind type_to_storage_kind()
 {
-    if constexpr (is_std_vector_v<T>)
+    if constexpr (is_std_vector_v<T>) {
         return Storage_kind::Vector;
-    if constexpr (is_std_array_v<T>)
+    }
+    if constexpr (is_std_array_v<T>) {
         return Storage_kind::Array;
+    }
     return Storage_kind::Scalar;
 }
 
@@ -941,16 +960,18 @@ T *Arena::make(Args &&...args)
     void *mem = alloc(sizeof(T), alignof(T));
     T *obj = ::new (mem) T(std::forward<Args>(args)...);
 
-    if constexpr (!std::is_trivially_destructible_v<T>)
+    if constexpr (!std::is_trivially_destructible_v<T>) {
         destructors_.push_back([obj]() { obj->~T(); });
+    }
 
     return obj;
 }
 
 std::string_view Arena::str(std::string_view s)
 {
-    if (s.empty())
+    if (s.empty()) {
         return {};
+    }
     char *mem = static_cast<char *>(alloc(s.size() + 1, alignof(char)));
     std::memcpy(mem, s.data(), s.size());
     mem[s.size()] = '\0';
@@ -960,8 +981,9 @@ std::string_view Arena::str(std::string_view s)
 [[nodiscard]]
 std::string_view Arena::str(const char *s)
 {
-    if (!s)
+    if (!s) {
         return {};
+    }
     return str(std::string_view{s});
 }
 
@@ -999,34 +1021,40 @@ inline std::string format_option_flags(const detail::Option *opt)
 {
     std::string s;
     // Short name
-    if (!opt->names[0].empty())
+    if (!opt->names[0].empty()) {
         s += std::format("-{}", opt->names[0]);
+    }
 
     // Comma if both exist
-    if (!opt->names[0].empty() && !opt->names[1].empty())
+    if (!opt->names[0].empty() && !opt->names[1].empty()) {
         s += ", ";
+    }
 
     // Long name
-    if (!opt->names[1].empty())
+    if (!opt->names[1].empty()) {
         s += std::format("--{}", opt->names[1]);
+    }
 
     // Value hint
     if (opt->arity > 0) {
         std::string type_hint = "VAL";
-        if (opt->type == Opt_type::Int)
+        if (opt->type == Opt_type::Int) {
             type_hint = "INT";
-        else if (opt->type == Opt_type::Float)
+        } else if (opt->type == Opt_type::Float) {
             type_hint = "FLOAT";
-        else if (opt->type == Opt_type::Str)
+        } else if (opt->type == Opt_type::Str) {
             type_hint = "STR";
+        }
 
-        if (!opt->meta.empty())
+        if (!opt->meta.empty()) {
             type_hint = opt->meta;
+        }
 
-        if (opt->arity > 1 || (opt->flags & *Flags::Multi))
+        if (opt->arity > 1 || (opt->flags & *Flags::Multi)) {
             s += std::format(" <{}...>", type_hint);
-        else
+        } else {
             s += std::format(" <{}>", type_hint);
+        }
     }
     return s;
 }
@@ -1075,8 +1103,9 @@ auto cl::Parser::add(Name_config name_cfg, Configs &&...confs) -> Opt_id
     opt.args[1] = name_cfg.long_name;
     opt.loc = name_cfg.loc;
 
-    if (opt.args[0].empty() && opt.args[1].empty())
+    if (opt.args[0].empty() && opt.args[1].empty()) {
         throw std::invalid_argument("Option must have at least one name (short or long)");
+    }
 
     (confs(opt), ...);
     try {
@@ -1100,17 +1129,19 @@ inline auto cl::Parser::add_impl(Opt<T> opt) -> Opt_id
             "Long option '{}' invalid. Must be alphanumeric/_/-, cannot start with '-'.",
             __name);
         cl::asrt::t(__name.size() > 1, "Long option '{}' must be > 1 char.", __name);
-        if (this->_schema->sub_cmds_[opt.sub_cmd_id]->long_arg_to_id_.contains(__name))
+        if (this->_schema->sub_cmds_[opt.sub_cmd_id]->long_arg_to_id_.contains(__name)) {
             throw std::logic_error(
                 std::format("Name: {} already exists in {} scope", __name, (this->_schema->sub_cmds_[opt.sub_cmd_id]->name)));
+        }
     };
 
     auto validate_short_name = [&](std::string_view __name) {
         cl::asrt::t(__name.size() == 1, "Short option '{}' must be 1 char.", __name);
         cl::asrt::t(std::isalpha(__name[0]), "Short option '{}' must be a letter.", __name);
-        if (this->_schema->sub_cmds_[opt.sub_cmd_id]->long_arg_to_id_.contains(__name))
+        if (this->_schema->sub_cmds_[opt.sub_cmd_id]->long_arg_to_id_.contains(__name)) {
             throw std::logic_error(
                 std::format("Name: {} already exists in {} scope", __name, (this->_schema->sub_cmds_[opt.sub_cmd_id]->name)));
+        }
     };
 
     // auto validate_env_name = [&](std::string_view name)
@@ -1130,8 +1161,9 @@ inline auto cl::Parser::add_impl(Opt<T> opt) -> Opt_id
 
     // Safety Checks
     cl::asrt::t(!(is_std_array_v<T> && is_multi), "Arrays cannot be multi. Use vector (scalar + F_MULTI).");
-    if ((opt.flags & *Flags::Env) && (target_enum != Opt_type::Str || is_multi))
+    if ((opt.flags & *Flags::Env) && (target_enum != Opt_type::Str || is_multi)) {
         throw std::invalid_argument("Environment variable fallback only applies to scalar strings.");
+    }
 
     // Determine Storage Kind and Arity
     Storage_kind storage_kind = Storage_kind::Scalar;
@@ -1139,17 +1171,20 @@ inline auto cl::Parser::add_impl(Opt<T> opt) -> Opt_id
 
     if (is_multi) {
         storage_kind = Storage_kind::Vector;
-        if (opt.multi_cfg.type == Multi_type::Delimited && opt.multi_cfg.delimiter.empty())
+        if (opt.multi_cfg.type == Multi_type::Delimited && opt.multi_cfg.delimiter.empty()) {
             throw std::invalid_argument("DELIMITED multi mode requires non-empty delimiter");
+        }
     } else if constexpr (is_std_array_v<T>) {
         storage_kind = Storage_kind::Array;
         arity = std::tuple_size_v<T>;
 
-        if (opt.list_cfg.type == List_type::Consecutive && cfg_.value_binding == Binding_type::Equal)
+        if (opt.list_cfg.type == List_type::Consecutive && cfg_.value_binding == Binding_type::Equal) {
             throw std::invalid_argument("CONSECUTIVE arrays incompatible with Binding_type::Equal.");
+        }
     } else if constexpr (std::is_same_v<T, bool>) {
-        if (!(opt.flags & *Flags::Explicit_Bool))
+        if (!(opt.flags & *Flags::Explicit_Bool)) {
             arity = 0;
+        }
     }
 
     // ==================================================================================
@@ -1157,11 +1192,13 @@ inline auto cl::Parser::add_impl(Opt<T> opt) -> Opt_id
     // ==================================================================================
     auto id = assign_id();
 
-    if (!opt.args[this->_ln_index].empty())
+    if (!opt.args[this->_ln_index].empty()) {
         validate_long_name(opt.args[1]);
+    }
 
-    if (!opt.args[this->_sn_index].empty())
+    if (!opt.args[this->_sn_index].empty()) {
         validate_short_name(opt.args[0]);
+    }
 
     // ==================================================================================
     // 4. Default Value Construction (FIXED LOGIC)
@@ -1174,11 +1211,13 @@ inline auto cl::Parser::add_impl(Opt<T> opt) -> Opt_id
         std::vector<CanonElem> vec;
         if constexpr (is_std_array_v<T>) {
             vec.reserve(std::tuple_size_v<T>);
-            for (const auto &item : source)
+            for (const auto &item : source) {
                 vec.push_back(static_cast<CanonElem>(item));
+            }
         } else if constexpr (is_std_vector_v<T>) {
-            for (const auto &item : source)
+            for (const auto &item : source) {
                 vec.push_back(static_cast<CanonElem>(item));
+            }
         } else {
             // Multi-scalar
             vec.push_back(static_cast<CanonElem>(source));
@@ -1190,22 +1229,24 @@ inline auto cl::Parser::add_impl(Opt<T> opt) -> Opt_id
         default_str_hint = this->_schema->arena_.str(std::format("{}", opt.default_val));
 
         if (storage_kind == Storage_kind::Scalar) {
-            if constexpr (!is_std_array_v<T> && !is_std_vector_v<T>)
+            if constexpr (!is_std_array_v<T> && !is_std_vector_v<T>) {
                 default_rt_val = static_cast<CanonElem>(opt.default_val);
-            else
+            } else {
                 throw std::logic_error("Internal Error: Storage kind Scalar mismatch with Container Type.");
+            }
         } else {
             // Vector or Array storage
             default_rt_val = make_vector_storage(opt.default_val);
         }
     } else {
         // Initialize Empty
-        if (storage_kind == Storage_kind::Scalar)
+        if (storage_kind == Storage_kind::Scalar) {
             default_rt_val = CanonElem{};
-        else if (storage_kind == Storage_kind::Array)
+        } else if (storage_kind == Storage_kind::Array) {
             default_rt_val = std::vector<CanonElem>(arity, CanonElem{});
-        else
+        } else {
             default_rt_val = std::vector<CanonElem>{};
+        }
     }
 
     // ==================================================================================
@@ -1213,8 +1254,9 @@ inline auto cl::Parser::add_impl(Opt<T> opt) -> Opt_id
     // ==================================================================================
     std::vector<std::string_view> v_helps;
     v_helps.reserve(opt.validators_.size());
-    for (const auto &v : opt.validators_)
+    for (const auto &v : opt.validators_) {
         v_helps.push_back(this->_schema->arena_.str(v.help));
+    }
 
     std::function<std::expected<void, std::string>(const Runtime_value &)> val_fn;
 
@@ -1223,9 +1265,11 @@ inline auto cl::Parser::add_impl(Opt<T> opt) -> Opt_id
     } else {
         val_fn = [entries = opt.validators_, storage_kind](const Runtime_value &rv) -> std::expected<void, std::string> {
             auto check_instance = [&](const T &instance) -> std::expected<void, std::string> {
-                for (const auto &e : entries)
-                    if (auto r = e.func(instance); !r)
+                for (const auto &e : entries) {
+                    if (auto r = e.func(instance); !r) {
                         return r;
+                    }
+                }
                 return {};
             };
 
@@ -1238,22 +1282,27 @@ inline auto cl::Parser::add_impl(Opt<T> opt) -> Opt_id
 
                     if constexpr (is_std_vector_v<T>) {
                         container.reserve(raw_vec.size());
-                        for (const auto &e : raw_vec)
+                        for (const auto &e : raw_vec) {
                             container.push_back(static_cast<ValType>(e));
+                        }
                     } else {
-                        for (size_t i = 0; i < raw_vec.size() && i < std::tuple_size_v<T>; ++i)
+                        for (size_t i = 0; i < raw_vec.size() && i < std::tuple_size_v<T>; ++i) {
                             container[i] = static_cast<ValType>(raw_vec[i]);
+                        }
                     }
                     return check_instance(container);
                 } else {
-                    for (size_t i = 0; i < raw_vec.size(); ++i)
-                        if (auto r = check_instance(static_cast<T>(raw_vec[i])); !r)
+                    for (size_t i = 0; i < raw_vec.size(); ++i) {
+                        if (auto r = check_instance(static_cast<T>(raw_vec[i])); !r) {
                             return std::unexpected(std::format("Item {}: {}", i, r.error()));
+                        }
+                    }
                     return {};
                 }
             } else {
-                if constexpr (!is_std_array_v<T>)
+                if constexpr (!is_std_array_v<T>) {
                     return check_instance(static_cast<T>(std::get<CanonElem>(rv)));
+                }
                 return {};
             }
         };
@@ -1288,8 +1337,9 @@ inline auto cl::Parser::add_impl(Opt<T> opt) -> Opt_id
     _runtime.push_back(rt);
 
     // Register to subcommand
-    if (opt.sub_cmd_id >= this->_schema->sub_cmds_.size())
+    if (opt.sub_cmd_id >= this->_schema->sub_cmds_.size()) {
         throw std::invalid_argument(std::format("Invalid subcommand id: {}.", opt.sub_cmd_id));
+    }
 
     Subcommand *sub_command = this->_schema->sub_cmds_[opt.sub_cmd_id];
 
@@ -1320,16 +1370,18 @@ auto cl::Parser::parse(int argc, char *argv[]) -> std::expected<Parse_res, Parse
     while (!args.empty()) {
         std::string_view tok = args.pop();
 
-        if (tok.starts_with("--"))
+        if (tok.starts_with("--")) {
             this->handle_long_token(ctx, tok.substr(2));
-        else if (tok.starts_with("-"))
+        } else if (tok.starts_with("-")) {
             this->handle_short_token(ctx, tok.substr(1));
-        else
+        } else {
             this->handle_positional_and_subcmds(ctx, tok);
+        }
     }
 
-    if (!err.errors.empty())
+    if (!err.errors.empty()) {
         return std::unexpected(err);
+    }
 
     for (size_t i = 0; i < this->_schema->options_.size(); ++i) {
         detail::Option *opt = this->_schema->options_[i];
@@ -1358,20 +1410,24 @@ auto cl::Parser::parse(int argc, char *argv[]) -> std::expected<Parse_res, Parse
         // 3. Check Required (Final Check)
         if (!rt.parsed && (opt->flags & *Flags::Required)) {
             // NEW: Only enforce requirement if the option is Global OR belongs to the Active Subcommand
-            if (opt->sub_id == global_command || opt->sub_id == ctx._active_sub_id)
+            if (opt->sub_id == global_command || opt->sub_id == ctx._active_sub_id) {
                 err.push_err(opt->names[0], "Required option is missing.");
+            }
         }
-        if (rt.parsed)
+        if (rt.parsed) {
             continue;
+        }
 
-        if ((opt->flags & (*Flags::Default)))
+        if ((opt->flags & (*Flags::Default))) {
             rt.runtime_value = opt->default_value;
+        }
     }
 
-    if (!err.errors.empty())
+    if (!err.errors.empty()) {
         return std::unexpected(err);
-    else
+    } else {
         return res;
+    }
 }
 
 template <typename Dest>
@@ -1381,25 +1437,31 @@ inline auto cl::Parser::string_to_value(std::string_view s) -> std::expected<Des
     if constexpr (std::is_same_v<Dest, std::string> || std::is_same_v<Dest, std::string_view>) {
         return std::string(s);
     } else if constexpr (std::is_same_v<Dest, bool>) {
-        for (auto &t : truthy_strs)
-            if (s == t)
+        for (auto &t : truthy_strs) {
+            if (s == t) {
                 return true;
-        for (auto &f : falsy_strs)
-            if (s == f)
+            }
+        }
+        for (auto &f : falsy_strs) {
+            if (s == f) {
                 return false;
+            }
+        }
 
         return std::unexpected(std::format("Invalid boolean value: '{}'", s));
     } else if constexpr (std::is_integral_v<Dest>) {
         Dest v{};
         auto [p, ec] = std::from_chars(s.data(), s.data() + s.size(), v);
-        if (ec != std::errc{})
+        if (ec != std::errc{}) {
             return std::unexpected(std::format("Invalid integer: '{}'", s));
+        }
         return v;
     } else if constexpr (std::is_floating_point_v<Dest>) {
         Dest v{};
         auto [p, ec] = std::from_chars(s.data(), s.data() + s.size(), v);
-        if (ec != std::errc{})
+        if (ec != std::errc{}) {
             return std::unexpected(std::format("Invalid float: '{}'", s));
+        }
         return v;
     }
 }
@@ -1411,47 +1473,54 @@ void cl::Parser::handle_long_token(cl::detail::Parse_ctx &ctx, std::string_view 
     ctx._curr_key = body;
 
     if (size_t eq_pos = body.find('='); eq_pos != std::string_view::npos) {
-        if (this->cfg_.value_binding == Binding_type::Next)
+        if (this->cfg_.value_binding == Binding_type::Next) {
             return ctx.error("Equals '=' binding is disabled by configuration.");
+        }
         key = body.substr(0, eq_pos);
         ctx._curr_key = key;
         explicit_val = body.substr(eq_pos + 1);
     }
 
     auto it = ctx._active_subcomamnd->long_arg_to_id_.find(key);
-    if (it == ctx._active_subcomamnd->long_arg_to_id_.end())
+    if (it == ctx._active_subcomamnd->long_arg_to_id_.end()) {
         return ctx.error("Unknown option");
+    }
 
     detail::Option *opt = this->_schema->options_[it->second];
 
-    if (opt->sub_id != global_command && opt->sub_id != ctx._active_sub_id)
+    if (opt->sub_id != global_command && opt->sub_id != ctx._active_sub_id) {
         return ctx.error("Option '--{}' is not valid in the current context.", key);
+    }
 
     acquire_value(ctx, opt, explicit_val);
 }
 
 void cl::Parser::handle_short_token(cl::detail::Parse_ctx &ctx, std::string_view body)
 {
-    if (body.empty())
+    if (body.empty()) {
         return;
+    }
     std::string_view key = body.substr(0, 1);
     ctx._curr_key = key;
 
     auto it = ctx._active_subcomamnd->short_arg_to_id_.find(key);
-    if (it == ctx._active_subcomamnd->short_arg_to_id_.end())
+    if (it == ctx._active_subcomamnd->short_arg_to_id_.end()) {
         return ctx.error("Unknown flag -{}", key);
+    }
 
     detail::Option *opt = this->_schema->options_[it->second];
 
-    if (opt->sub_id != global_command && opt->sub_id != ctx._active_sub_id)
+    if (opt->sub_id != global_command && opt->sub_id != ctx._active_sub_id) {
         return ctx.error("Flag '-{}' is not valid in the current context.", key);
+    }
 
     if (opt->arity == 0) {
         this->assign_true(ctx._res._runtime->at(opt->id));
         // If characters remain, handle them recursively
         if (body.size() > 1) {
-            if (!ctx._cfg.allow_combined_short_flags)
+            if (!ctx._cfg.allow_combined_short_flags) {
                 return ctx.error("Combined short flags are disabled.");
+            }
 
             this->add_short_combined(ctx, body.substr(1));
         }
@@ -1462,15 +1531,17 @@ void cl::Parser::handle_short_token(cl::detail::Parse_ctx &ctx, std::string_view
 
     if (body.size() > 1) {
         // Check if user is trying to attach a value
-        if (!ctx._cfg.allow_short_value_concat)
+        if (!ctx._cfg.allow_short_value_concat) {
             return ctx.error("Concatenated values disabled.");
+        }
 
         // Handle edge case: -j=4 vs -j4
         // Only strip '=' if the binding config allows it (Equal or Both)
-        if (body[1] == '=' && ctx._cfg.value_binding != Binding_type::Next)
+        if (body[1] == '=' && ctx._cfg.value_binding != Binding_type::Next) {
             attached_val = body.substr(2); // Skip flag and '='
-        else
+        } else {
             attached_val = body.substr(1); // Skip just the flag, rest is value
+        }
     }
 
     // Delegate to value acquisition (handles parsing/storage)
@@ -1536,8 +1607,9 @@ bool cl::Parser::acquire_value(cl::detail::Parse_ctx &ctx, detail::Option *opt, 
         if (opt->arity > 1 || ((opt->flags & (*Flags::Multi)) && (opt->multi_cfg.type == Multi_type::Delimited))) {
             std::string_view delim = (opt->arity > 1) ? opt->list_cfg.delimiter : opt->multi_cfg.delimiter;
 
-            for (auto &&part : std::views::split(*explicit_val, delim))
+            for (auto &&part : std::views::split(*explicit_val, delim)) {
                 raw_inputs.emplace_back(std::string_view(part));
+            }
         } else {
             // Not array, not multi delimited
             // Only options: Scalar/Multi repeat
@@ -1573,8 +1645,9 @@ bool cl::Parser::acquire_value(cl::detail::Parse_ctx &ctx, detail::Option *opt, 
 
             if (split_needed) {
                 std::string_view delim = (opt->arity > 1) ? opt->list_cfg.delimiter : opt->multi_cfg.delimiter;
-                for (auto &&part : std::views::split(val, delim))
+                for (auto &&part : std::views::split(val, delim)) {
                     raw_inputs.emplace_back(std::string_view(part));
+                }
             } else {
                 // Either scalar or multi repeat
                 raw_inputs.push_back(val);
@@ -1598,9 +1671,9 @@ void cl::Parser::inject_value(cl::detail::Parse_ctx &ctx, detail::Option *opt, s
             using StorageT = std::decay_t<decltype(storage)>;
 
             // 1. Skip Monostate
-            if constexpr (std::is_same_v<StorageT, std::monostate>)
+            if constexpr (std::is_same_v<StorageT, std::monostate>) {
                 return;
-            else {
+            } else {
                 // 2. Safe Type Extraction
                 using ElemT = typename cl::detail::get_inner_type<StorageT>::type;
 
@@ -1622,8 +1695,9 @@ void cl::Parser::inject_value(cl::detail::Parse_ctx &ctx, detail::Option *opt, s
                         if (is_fixed_array) {
                             // Validate Array Size safely here
                             if (i >= storage.size()) {
-                                if (!ctx._cfg.allow_empty_arrays)
+                                if (!ctx._cfg.allow_empty_arrays) {
                                     ctx.error("Internal Error: Target array size {} too small for input index {}.", storage.size(), i);
+                                }
                                 return;
                             }
                             storage[i] = *val_res;
@@ -1684,16 +1758,18 @@ inline auto cl::Parser::add_positional_impl(Opt<T> opt) -> Opt_id
     using CanonElem = typename _opt_type_to_canonical_type_t_<target_enum>::value;
 
     // Safety check against configurers trying to sneak in Multi/Array
-    if ((opt.flags & *Flags::Multi) || (opt.list_cfg.type != List_type::Consecutive))
+    if ((opt.flags & *Flags::Multi) || (opt.list_cfg.type != List_type::Consecutive)) {
         throw std::invalid_argument("Positionals must be scalar (no Multi/Array flags allowed).");
+    }
 
     // 2. Prepare Storage
     Runtime_value val = CanonElem{};
 
     // 3. Create Option
     std::vector<std::string_view> v_helps;
-    for (const auto &v : opt.validators_)
+    for (const auto &v : opt.validators_) {
         v_helps.push_back(this->_schema->arena_.str(v.help));
+    }
 
     detail::Option *o = this->_schema->arena_.make<detail::Option>(detail::Option{
         .id = id,
@@ -1720,9 +1796,11 @@ inline auto cl::Parser::add_positional_impl(Opt<T> opt) -> Opt_id
     if (!opt.validators_.empty()) {
         o->validate = [entries = opt.validators_](const Runtime_value &rv) -> std::expected<void, std::string> {
             auto check_one = [&](const T &val) -> std::expected<void, std::string> {
-                for (const auto &e : entries)
-                    if (auto r = e.func(val); !r)
+                for (const auto &e : entries) {
+                    if (auto r = e.func(val); !r) {
                         return r;
+                    }
+                }
                 return {};
             };
             // It's always scalar per your restriction
@@ -1783,12 +1861,14 @@ inline auto cl::Parser::add_sub_cmd(const std::string &name, const std::string &
     bool is_root = this->_schema->sub_cmds_.empty();
 
     if (!is_root) {
-        if (parent_id >= this->_schema->sub_cmds_.size())
+        if (parent_id >= this->_schema->sub_cmds_.size()) {
             throw std::invalid_argument(std::format("Attempted to add subcommand '{}' to invalid parent ID: {}", name, parent_id));
+        }
 
         Subcommand *parent = this->_schema->sub_cmds_[parent_id];
-        if (parent->child_to_id.contains(name))
+        if (parent->child_to_id.contains(name)) {
             throw std::invalid_argument(std::format("Duplicate subcommand name: '{}' in context '{}'", name, parent->name));
+        }
     }
 
     cl::asrt::t(!name.empty(), "Subcommand name cannot be empty.");
@@ -1832,10 +1912,12 @@ void cl::detail::Parse_ctx::error(std::format_string<Args...> fmt, Args &&...a)
         auto t = _args.peek();
         // Stop if we see something that looks like a flag
         if (t) {
-            if (t->starts_with("--"))
+            if (t->starts_with("--")) {
                 return;
-            if (t->starts_with("-") && t->size() == 2 && std::isalpha((*t)[1]))
+            }
+            if (t->starts_with("-") && t->size() == 2 && std::isalpha((*t)[1])) {
                 return;
+            }
         }
         _args.pop();
     }
@@ -1844,15 +1926,17 @@ void cl::detail::Parse_ctx::error(std::format_string<Args...> fmt, Args &&...a)
 auto cl::Parser::print_help(std::ostream &os, Subcommand_id sub_id, std::optional<Opt_id> opt_id) -> void
 {
     // 1. Validate
-    if (sub_id >= this->_schema->sub_cmds_.size())
+    if (sub_id >= this->_schema->sub_cmds_.size()) {
         return;
+    }
     Subcommand *sub = this->_schema->sub_cmds_[sub_id];
 
     // 2. Option Drill-Down (Detailed Technical View)
     if (opt_id.has_value()) {
         Opt_id oid = *opt_id;
-        if (oid >= this->_schema->options_.size())
+        if (oid >= this->_schema->options_.size()) {
             return;
+        }
         detail::Option *opt = this->_schema->options_[oid];
 
         os << "\nOPTION: " << detail::format_option_flags(opt) << "\n";
@@ -1860,16 +1944,20 @@ auto cl::Parser::print_help(std::ostream &os, Subcommand_id sub_id, std::optiona
         os << " " << (opt->desc.empty() ? "No description." : opt->desc) << "\n\n";
         os << " Type:    " << opt->type << "\n";
         os << " Arity:   " << opt->arity << "\n";
-        if (opt->flags & *Flags::Required)
+        if (opt->flags & *Flags::Required) {
             os << " Status:  Required\n";
-        if (opt->flags & *Flags::Env)
+        }
+        if (opt->flags & *Flags::Env) {
             os << " Env:     " << opt->env << "\n";
-        if (opt->flags & *Flags::Default)
+        }
+        if (opt->flags & *Flags::Default) {
             os << " Default: " << opt->default_hints << "\n";
+        }
         if (!opt->validator_helps.empty()) {
             os << " Checks:\n";
-            for (auto &h : opt->validator_helps)
+            for (auto &h : opt->validator_helps) {
                 os << "   - " << h << "\n";
+            }
         }
         os << "\n";
         return;
@@ -1880,8 +1968,9 @@ auto cl::Parser::print_help(std::ostream &os, Subcommand_id sub_id, std::optiona
     size_t max_left = 0;
 
     auto add_row = [&](std::string l, std::string r) {
-        if (l.size() > max_left)
+        if (l.size() > max_left) {
             max_left = l.size();
+        }
         rows.push_back({l, r, false});
     };
     auto add_header = [&](std::string t) { rows.push_back({t, "", true}); };
@@ -1891,26 +1980,31 @@ auto cl::Parser::print_help(std::ostream &os, Subcommand_id sub_id, std::optiona
     std::vector<std::string_view> path;
     Subcommand *curr = sub;
     while (true) {
-        if (curr->id != global_command)
+        if (curr->id != global_command) {
             path.push_back(curr->name);
-        if (curr->id == curr->parent_id)
+        }
+        if (curr->id == curr->parent_id) {
             break;
+        }
         curr = this->_schema->sub_cmds_[curr->parent_id];
     }
 
     os << "USAGE: " << this->_name;
-    for (auto it = path.rbegin(); it != path.rend(); ++it)
+    for (auto it = path.rbegin(); it != path.rend(); ++it) {
         os << " " << *it;
+    }
 
     // Logic: If children exist -> [COMMAND]. Always show [OPTIONS].
-    if (!sub->child_subcommands.empty())
+    if (!sub->child_subcommands.empty()) {
         os << " [COMMAND]";
+    }
     os << " [OPTIONS]\n";
 
     // --- DESCRIPTION ---
     // Fix: Don't print description if it's the root (Global Context)
-    if (sub_id != global_command && !sub->description.empty())
+    if (sub_id != global_command && !sub->description.empty()) {
         os << "\n" << sub->description << "\n";
+    }
 
     // --- COMMANDS ---
     if (!sub->child_subcommands.empty()) {
@@ -1925,23 +2019,26 @@ auto cl::Parser::print_help(std::ostream &os, Subcommand_id sub_id, std::optiona
             add_row(indent + std::string(s->name), std::string(s->description));
 
             // Recurse
-            for (auto child_id : s->child_subcommands)
+            for (auto child_id : s->child_subcommands) {
                 print_subs(child_id, depth + 1);
+            }
         };
 
-        for (auto child_id : sub->child_subcommands)
+        for (auto child_id : sub->child_subcommands) {
             print_subs(child_id, 0);
+        }
     }
 
     // --- ARGUMENTS (Positionals) ---
     bool has_pos = false;
     for (auto pid : this->_positional_ids) {
         bool belongs = false;
-        for (auto co : sub->child_options)
+        for (auto co : sub->child_options) {
             if (co == pid) {
                 belongs = true;
                 break;
             }
+        }
 
         if (belongs) {
             if (!has_pos) {
@@ -1959,15 +2056,19 @@ auto cl::Parser::print_help(std::ostream &os, Subcommand_id sub_id, std::optiona
     for (auto oid : sub->child_options) {
         // Skip positionals
         bool is_pos = false;
-        for (auto pid : this->_positional_ids)
-            if (pid == oid)
+        for (auto pid : this->_positional_ids) {
+            if (pid == oid) {
                 is_pos = true;
-        if (is_pos)
+            }
+        }
+        if (is_pos) {
             continue;
+        }
 
         detail::Option *opt = this->_schema->options_[oid];
-        if (opt->flags & *Flags::Hidden)
+        if (opt->flags & *Flags::Hidden) {
             continue;
+        }
 
         if (!has_opts) {
             add_header("\nOPTIONS:");
@@ -1976,23 +2077,28 @@ auto cl::Parser::print_help(std::ostream &os, Subcommand_id sub_id, std::optiona
 
         std::string right = std::string(opt->desc);
 
-        if (opt->flags & *Flags::Required)
+        if (opt->flags & *Flags::Required) {
             right += " [Required]";
-        if (opt->flags & *Flags::Env)
+        }
+        if (opt->flags & *Flags::Env) {
             right += " [Env: " + std::string(opt->env) + "]";
-        if ((opt->flags & *Flags::Default) && !opt->default_hints.empty())
+        }
+        if ((opt->flags & *Flags::Default) && !opt->default_hints.empty()) {
             right += " [Def: " + std::string(opt->default_hints) + "]";
+        }
 
         add_row(detail::format_option_flags(opt), right);
     }
 
     // --- RENDER ---
     size_t pad = max_left + 4;
-    for (const auto &r : rows)
-        if (r.is_header)
+    for (const auto &r : rows) {
+        if (r.is_header) {
             os << r.left << "\n";
-        else
+        } else {
             os << "  " << std::left << std::setw(pad) << r.left << r.right << "\n";
+        }
+    }
     os << "\n";
 }
 
@@ -2068,11 +2174,13 @@ auto std::formatter<cl::Parse_err>::format(const cl::Parse_err &pe, FormatContex
 
         out = std::format_to(out, "error: {}", e.message);
 
-        if (!e.option.empty())
+        if (!e.option.empty()) {
             out = std::format_to(out, "\n      option: {}", e.option);
+        }
 
-        if (i + 1 < pe.errors.size())
+        if (i + 1 < pe.errors.size()) {
             out = std::format_to(out, "\n");
+        }
     }
 
     return out;
@@ -2083,11 +2191,13 @@ template <typename T>
 [[nodiscard]]
 auto cl::Parse_res::get(cl::Opt_id id) const -> std::optional<T>
 {
-    if (id >= _runtime->size())
+    if (id >= _runtime->size()) {
         return std::nullopt;
+    }
 
-    if (!(*_runtime)[id].parsed)
+    if (!(*_runtime)[id].parsed) {
         return std::nullopt;
+    }
 
     const auto &val_variant = (*_runtime)[id].runtime_value;
 
@@ -2111,27 +2221,32 @@ template <typename T>
 [[nodiscard]]
 auto cl::Parse_res::get(Opt_id id, T &val) const -> std::expected<void, std::string>
 {
-    if (id >= _runtime->size())
+    if (id >= _runtime->size()) {
         return std::unexpected(std::format("[CL Error] Invalid Option ID: {}", id));
+    }
 
     const auto &rt = (*_runtime)[id];
-    if (!rt.parsed)
+    if (!rt.parsed) {
         return std::unexpected(std::format("Neither was value set now default value provided for: {}", id));
+    }
 
     const auto *info = this->_schema->options_.at(id);
 
     bool is_vector = (info->storage == Storage_kind::Vector);
-    if (!rt.parsed && !is_vector)
+    if (!rt.parsed && !is_vector) {
         return std::unexpected("Option not set");
+    }
 
     const auto &val_variant = rt.runtime_value;
     if constexpr (is_std_array_v<std::decay_t<T>>) {
         using InnerT = typename T::value_type;
-        if (!std::holds_alternative<std::vector<InnerT>>(val_variant))
+        if (!std::holds_alternative<std::vector<InnerT>>(val_variant)) {
             return std::unexpected("Type Mismatch");
+        }
         const auto &vec = std::get<std::vector<InnerT>>(val_variant);
-        if (vec.size() != std::tuple_size_v<T>)
+        if (vec.size() != std::tuple_size_v<T>) {
             return std::unexpected("Array size mismatch");
+        }
         T arr_result;
         std::copy(vec.begin(), vec.end(), arr_result.begin());
         val = std::move(arr_result);
@@ -2163,10 +2278,12 @@ auto cl::Parse_res::get(std::string_view key) const -> std::optional<T>
 
 auto cl::Parse_res::get_subcmd(Subcommand_id id) const -> std::optional<Parse_res>
 {
-    if (id >= this->_schema->sub_cmds_.size())
+    if (id >= this->_schema->sub_cmds_.size()) {
         return std::nullopt;
-    if (!this->_visited_subcommands.contains(id))
+    }
+    if (!this->_visited_subcommands.contains(id)) {
         return std::nullopt;
+    }
     Parse_res out = *this;
     out.curr_subcmd = id;
     return out;
@@ -2175,10 +2292,11 @@ auto cl::Parse_res::get_subcmd(Subcommand_id id) const -> std::optional<Parse_re
 auto cl::Parse_res::get_subcmd(std::string_view key) const -> std::optional<Parse_res>
 {
     auto &_map = this->_schema->sub_cmds_[curr_subcmd]->child_to_id;
-    if (auto it = _map.find(key); it == _map.end())
+    if (auto it = _map.find(key); it == _map.end()) {
         return std::nullopt;
-    else
+    } else {
         return this->get_subcmd(it->second);
+    }
 }
 
 template <typename T, typename... Args>
@@ -2215,14 +2333,16 @@ template <typename T>
 [[nodiscard]]
 auto cl::Parse_res::get(T *val, std::string_view key) const -> std::expected<void, std::string>
 {
-    if (!val)
+    if (!val) {
         return std::unexpected("Output pointer is null");
+    }
 
     // 1. Find the ID in the current scope
     auto opt_id = this->get_id_in_curr_scope(key);
 
-    if (!opt_id)
+    if (!opt_id) {
         return std::unexpected(std::format("Option '{}' not found in the current context.", key));
+    }
 
     // 2. Delegate to the existing ID-based getter (get(id, T&))
     // We dereference the pointer *val to pass it as a reference
@@ -2231,47 +2351,54 @@ auto cl::Parse_res::get(T *val, std::string_view key) const -> std::expected<voi
 
 auto cl::Parse_res::is_seen(Opt_id id) -> bool
 {
-    if (id >= this->_runtime->size())
+    if (id >= this->_runtime->size()) {
         return false;
-    if ((*this->_runtime)[id].parsed || (*this->_runtime)[id].count > 0)
+    }
+    if ((*this->_runtime)[id].parsed || (*this->_runtime)[id].count > 0) {
         return true;
+    }
     return false;
 }
 
 auto cl::Parse_res::is_subcmd_chosen(Subcommand_id id) -> bool
 {
-    if (this->_visited_subcommands.contains(id))
+    if (this->_visited_subcommands.contains(id)) {
         return true;
+    }
     return false;
 }
 
 auto cl::Parse_res::is_seen(std::string_view key) -> bool
 {
-    if (auto id = this->get_id_in_curr_scope(key); id)
+    if (auto id = this->get_id_in_curr_scope(key); id) {
         return (((*this->_runtime)[*id].parsed) || ((*this->_runtime)[*id].count > 0));
-    else
+    } else {
         return false;
+    }
 }
 
 auto cl::Parse_res::get_id_in_curr_scope(std::string_view key) const -> std::optional<Opt_id>
 {
     if (key.length() == 1) {
         auto &_map = this->_schema->sub_cmds_[curr_subcmd]->short_arg_to_id_;
-        if (auto it = _map.find(key); it != _map.end())
+        if (auto it = _map.find(key); it != _map.end()) {
             return it->second;
+        }
         return std::nullopt;
     }
 
     auto &map = this->_schema->sub_cmds_[curr_subcmd]->long_arg_to_id_;
-    if (auto it = map.find(key); it != map.end())
+    if (auto it = map.find(key); it != map.end()) {
         return it->second;
+    }
     return std::nullopt;
 }
 
 inline std::ostream &operator<<(std::ostream &os, const cl::Parse_err &err)
 {
-    for (const auto &e : err.errors)
+    for (const auto &e : err.errors) {
         os << "[Error] Option: " << (e.option.empty() ? "N/A" : e.option) << "\n" << "    | " << e.message << "\n";
+    }
     return os;
 }
 
@@ -2279,15 +2406,17 @@ namespace cl::detail {
 
 [[nodiscard]] std::optional<std::string_view> Arg_stream::peek() const
 {
-    if (empty())
+    if (empty()) {
         return std::nullopt;
+    }
     return args_[cur_];
 }
 
 std::string_view Arg_stream::pop()
 {
-    if (empty())
+    if (empty()) {
         return {};
+    }
     return args_[cur_++];
 }
 
@@ -2298,8 +2427,9 @@ std::size_t Arg_stream::size()
 
 void Arg_stream::rewind()
 {
-    if (cur_ > 1)
+    if (cur_ > 1) {
         cur_--;
+    }
 }
 } // namespace cl::detail
 

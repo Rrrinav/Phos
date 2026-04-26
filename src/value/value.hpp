@@ -1,309 +1,483 @@
 #pragma once
 
-#include <cstddef>
+#include "type.hpp"
+#include "../vm/instruction.hpp"
+#include "../vm/frame.hpp"
+#include "../memory/arena.hpp"
+
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
-#include <type_traits>
-#include <utility>
-#include <variant>
-#include <vector>
-#if __has_include(<stdfloat>)
+#include <string_view>
 #include <stdfloat>
-#endif
-
-#include "../memory/ref_counted.hpp"
-#include "type.hpp"
-
-// --- Forward Declarations ---
-namespace phos::vm {
-struct Chunk;
-class Virtual_machine;
-struct Call_frame;
-} // namespace phos::vm
+#include <cstring>
 
 namespace phos::numeric {
-#if defined(__STDCPP_FLOAT16_T__)
-using float16_t = std::float16_t;
-inline constexpr bool has_native_float16 = true;
-#elif defined(__FLT16_MANT_DIG__)
-using float16_t = _Float16;
-inline constexpr bool has_native_float16 = true;
-#else
-struct float16_t
-{
-    float value = 0.0f;
 
-    constexpr float16_t() = default;
-    constexpr float16_t(float v) : value(v)
-    {}
-    constexpr float16_t(double v) : value(static_cast<float>(v))
-    {}
-    constexpr operator float() const
+#if defined(__STDCPP_FLOAT16_T__)
+    using float16_t = std::float16_t;
+    inline constexpr bool has_native_float16 = true;
+
+#elif defined(__FLT16_MANT_DIG__)
+    using float16_t = _Float16;
+    inline constexpr bool has_native_float16 = true;
+
+#else
+
+    struct float16_t
     {
-        return value;
-    }
-    auto operator<=>(const float16_t &) const = default;
-};
-inline constexpr bool has_native_float16 = false;
+        float value = 0.0f;
+        constexpr float16_t() = default;
+        constexpr float16_t(float v) : value(v)
+        {}
+        constexpr float16_t(double v) : value(static_cast<float>(v))
+        {}
+        constexpr operator float() const
+        {
+            return value;
+        }
+        auto operator<=>(const float16_t &) const = default;
+    };
+    inline constexpr bool has_native_float16 = false;
+
 #endif
 } // namespace phos::numeric
 
 namespace phos {
 
-// Forward declare all our reference-counted objects
-struct Model_value;
-struct Closure_value;
-struct Array_value;
-struct Union_value;
-struct Green_thread_value;
-struct Iterator_value;
+struct Value;
+
+// Raw C-style function pointer for native FFI (VM context passed as void* for now)
+using Native_fn = Value (*)(mem::Arena&, std::span<Value> args);
+
+// 1. THE RAW DATA STRUCTS (Zero OOP, Zero Std Lib, Arena Allocated)
+
+struct String_data
+{
+    uint32_t length;
+    char chars[]; // Flexible Array Member
+};
+
+struct Array_data
+{
+    uint32_t capacity;
+    uint32_t count;
+    struct Value *elements;
+};
+
+struct Model_data
+{
+    types::Model_type signature;
+    uint32_t field_count;
+    struct Value *fields;
+};
+
+struct Union_data
+{
+    String_data *union_name;
+    String_data *variant_name;
+    struct Value *payload;
+};
+
+struct Upvalue_data
+{
+    struct Value* location;
+    Upvalue_data* next;
+};
+
+struct Closure_data
+{
+    String_data *name{};
+    std::size_t arity{};
+    types::Function_type signature{};
+
+    vm::Instruction *code{nullptr};
+    std::size_t code_count{0};
+
+    Value *constants{nullptr};
+    std::size_t constant_count{0};
+
+    std::optional<Native_fn> native_func{std::nullopt};
+
+    std::size_t upvalue_count{0};
+    Upvalue_data **upvalues{nullptr};
+};
+
+struct Green_thread_data
+{
+    // CONTROL FLOW
+    // The history of active function calls (The Call Stack)
+    vm::Call_frame *call_stack;
+    size_t call_stack_capacity;
+    size_t call_stack_count;
+
+    // DATA
+    // The flat array of raw memory where all variables and math live.
+    struct Value *value_stack;
+    size_t value_stack_capacity;
+
+    // LIFECYCLE
+    // Is this thread completely finished executing?
+    bool is_completed;
+
+    // Variables that need to be saved to the heap before a function returns.
+    Upvalue_data* open_upvalues{nullptr};
+    size_t open_upvalue_count;
+};
+
+struct Iterator_data
+{
+    enum class State_type : uint8_t { Empty, Singleton, Interval, Array, String };
+
+    types::Type element_type;
+    State_type state_type;
+    int64_t cursor;
+
+    // Explicit union replaces std::variant
+    union {
+        struct Value *singleton_val;
+        struct
+        {
+            int64_t start;
+            int64_t end;
+            bool inclusive;
+        } interval;
+        Array_data *array;
+        String_data *string;
+    } state;
+};
+
+// 2. THE VALUE API (Strictly 16-Bytes, Safe, Modern C++)
+enum class Value_tag : uint8_t {
+    Nil, Bool,
+    I8, I16, I32, I64,
+    U8, U16, U32, U64,
+    F16, F32, F64,
+    String, Array, Model, Union,
+    Closure, Iterator, Green_thread, Upvalue
+};
 
 struct Value
 {
-    using Payload = std::variant<
-        std::int8_t, std::int16_t, std::int32_t, std::int64_t,
-        std::uint8_t, std::uint16_t, std::uint32_t, std::uint64_t,
-        numeric::float16_t, float, double, bool,
-        std::string,
-        mem::rc_ptr<Model_value>,
-        mem::rc_ptr<Closure_value>,
-        mem::rc_ptr<Array_value>,
-        mem::rc_ptr<Union_value>,
-        mem::rc_ptr<Iterator_value>,
-        mem::rc_ptr<Green_thread_value>,
-        std::nullptr_t, std::monostate
-    >;
+private:
+    // Memory Payload (Exactly 8 bytes)
+    union Payload {
+        bool boolean;
 
-    Payload payload;
-    uint8_t option_depth = 0;
+        // Exact width mappings
+        int8_t i8;
+        int16_t i16;
+        int32_t i32;
+        int64_t i64;
+        uint8_t u8;
+        uint16_t u16;
+        uint32_t u32;
+        uint64_t u64;
+        numeric::float16_t f16;
+        float f32;
+        double f64;
 
-    // Safe Initialization Constructors
-    Value() : payload(std::monostate{}), option_depth(0)
-    {}
-    Value(std::nullptr_t) : payload(nullptr), option_depth(0)
-    {}
-    Value(std::monostate) : payload(std::monostate{}), option_depth(0)
-    {}
+        // Arena Pointers
+        String_data *str;
+        Array_data *arr;
+        Model_data *model;
+        Union_data *un;
+        Closure_data *closure;
+        Iterator_data *iter;
+        Green_thread_data *gt;
+        Upvalue_data *upvalue;
 
-    // Universal Forwarding Constructor
-    // (Excludes itself so copy/move constructors aren't hijacked)
-    template <typename T>
-        requires(!std::is_same_v<std::decay_t<T>, Value>) && std::is_constructible_v<Payload, T>
-    Value(T &&val, uint8_t depth = 0) : payload(std::forward<T>(val)), option_depth(depth)
-    {}
+        Payload() : i64(0)
+        {}
+    } as;
 
-    // Expose the variant index directly for equality checks
-    size_t index() const
+    Value_tag tag_ = Value_tag::Nil;
+    uint8_t option_depth_ = 1;
+
+    // Private raw constructors (Only used by the Arena Factories)
+    Value(String_data *s, uint8_t d)       : tag_(Value_tag::String), option_depth_(d)
     {
-        return payload.index();
+        as.str = s;
+    }
+    Value(Array_data *a, uint8_t d)        : tag_(Value_tag::Array), option_depth_(d)
+    {
+        as.arr = a;
+    }
+    Value(Model_data *m, uint8_t d)        : tag_(Value_tag::Model), option_depth_(d)
+    {
+        as.model = m;
+    }
+    Value(Union_data *u, uint8_t d)        : tag_(Value_tag::Union), option_depth_(d)
+    {
+        as.un = u;
+    }
+    Value(Closure_data *c, uint8_t d)      : tag_(Value_tag::Closure), option_depth_(d)
+    {
+        as.closure = c;
+    }
+    Value(Iterator_data *i, uint8_t d)     : tag_(Value_tag::Iterator), option_depth_(d)
+    {
+        as.iter = i;
+    }
+    Value(Green_thread_data *g, uint8_t d) : tag_(Value_tag::Green_thread), option_depth_(d)
+    {
+        as.gt = g;
+    }
+    Value(Upvalue_data *u, uint8_t d)      : tag_(Value_tag::Upvalue), option_depth_(d)
+    {
+        as.upvalue = u;
+    }
+
+public:
+    static Value make_string(mem::Arena &arena, std::string_view text, uint8_t depth = 0);
+    static Value make_array(mem::Arena &arena, uint32_t capacity, uint8_t depth = 0);
+    static Value make_model(mem::Arena &arena, types::Model_type sig, uint32_t field_count, uint8_t depth = 0);
+    static Value make_union(mem::Arena &arena, String_data *u_name, String_data *v_name, Value payload, uint8_t depth = 0);
+    static Value make_closure(Closure_data *closure, uint8_t depth = 0)
+    {
+        return Value(closure, depth);
+    }
+    static Value make_closure_native(
+        mem::Arena &arena,
+        String_data *name,
+        size_t arity,
+        types::Function_type sig,
+        Native_fn func,
+        uint8_t depth = 0
+    );
+    static Value make_iterator(mem::Arena &arena, uint8_t depth = 0);
+
+    Value() = default;
+    Value(std::nullptr_t)
+    {}
+    Value(bool b, uint8_t d = 0) : tag_(Value_tag::Bool), option_depth_(d)
+    {
+        as.boolean = b;
+    }
+
+    // Integers
+    Value(int8_t v, uint8_t d = 0) : tag_(Value_tag::I8), option_depth_(d)
+    {
+        as.i8 = v;
+    }
+    Value(int16_t v, uint8_t d = 0) : tag_(Value_tag::I16), option_depth_(d)
+    {
+        as.i16 = v;
+    }
+    Value(int32_t v, uint8_t d = 0) : tag_(Value_tag::I32), option_depth_(d)
+    {
+        as.i32 = v;
+    }
+    Value(int64_t v, uint8_t d = 0) : tag_(Value_tag::I64), option_depth_(d)
+    {
+        as.i64 = v;
+    }
+    Value(uint8_t v, uint8_t d = 0) : tag_(Value_tag::U8), option_depth_(d)
+    {
+        as.u8 = v;
+    }
+    Value(uint16_t v, uint8_t d = 0) : tag_(Value_tag::U16), option_depth_(d)
+    {
+        as.u16 = v;
+    }
+    Value(uint32_t v, uint8_t d = 0) : tag_(Value_tag::U32), option_depth_(d)
+    {
+        as.u32 = v;
+    }
+    Value(uint64_t v, uint8_t d = 0) : tag_(Value_tag::U64), option_depth_(d)
+    {
+        as.u64 = v;
+    }
+
+    Value(numeric::float16_t v, uint8_t d = 0) : tag_(Value_tag::F16), option_depth_(d)
+    {
+        as.f16 = v;
+    }
+    Value(float v, uint8_t d = 0) : tag_(Value_tag::F32), option_depth_(d)
+    {
+        as.f32 = v;
+    }
+    Value(double v, uint8_t d = 0) : tag_(Value_tag::F64), option_depth_(d)
+    {
+        as.f64 = v;
+    }
+
+    // --- Type Queries ---
+    Value_tag tag() const
+    {
+        return tag_;
+    }
+    uint8_t depth() const
+    {
+        return option_depth_;
+    }
+
+    bool is_nil() const
+    {
+        return tag_ == Value_tag::Nil || (option_depth_ > 0 && tag_ == Value_tag::Nil);
+    }
+    bool is_bool() const
+    {
+        return tag_ == Value_tag::Bool;
+    }
+
+    bool is_integer() const
+    {
+        return tag_ >= Value_tag::I8 && tag_ <= Value_tag::U64;
+    }
+
+    bool is_u_integer() const
+    {
+        return tag_ >= Value_tag::U8 && tag_ <= Value_tag::U64;
+    }
+
+    bool is_s_integer() const
+    {
+        return tag_ >= Value_tag::I8 && tag_ <= Value_tag::I64;
+    }
+
+    bool is_float() const
+    {
+        return tag_ >= Value_tag::F16 && tag_ <= Value_tag::F64;
+    }
+    bool is_number() const
+    {
+        return tag_ >= Value_tag::I8 && tag_ <= Value_tag::F64;
+    }
+
+    bool is_string() const
+    {
+        return tag_ == Value_tag::String;
+    }
+    bool is_array() const
+    {
+        return tag_ == Value_tag::Array;
+    }
+    bool is_model() const
+    {
+        return tag_ == Value_tag::Model;
+    }
+    bool is_union() const
+    {
+        return tag_ == Value_tag::Union;
+    }
+    bool is_closure() const
+    {
+        return tag_ == Value_tag::Closure;
+    }
+    bool is_iterator() const
+    {
+        return tag_ == Value_tag::Iterator;
+    }
+    bool is_green_thread() const
+    {
+        return tag_ == Value_tag::Green_thread;
+    }
+
+    std::string_view as_string() const
+    {
+        return std::string_view(as.str->chars, as.str->length);
+    }
+
+    inline String_data* as_string_data() const
+    {
+        return as.str;
+    }
+
+    inline Array_data *as_array() const
+    {
+        return as.arr;
+    }
+
+    std::span<Value> as_array_elements() const
+    {
+        return std::span<Value>(as.arr->elements, as.arr->count);
+    }
+    std::span<Value> as_model_fields() const
+    {
+        return std::span<Value>(as.model->fields, as.model->field_count);
+    }
+
+    void push_array_element(Value val)
+    {
+        as.arr->elements[as.arr->count++] = val;
+    }
+
+    bool as_bool() const
+    {
+        return as.boolean;
+    }
+
+    int64_t as_int() const;
+    uint64_t as_uint() const;
+    double as_float() const;
+
+    inline Closure_data *as_closure() const
+    {
+        return as.closure;
+    }
+
+    inline Model_data *as_model() const
+    {
+        return as.model;
+    }
+
+    inline Union_data *as_union() const
+    {
+        return as.un;
+    }
+
+    inline Iterator_data *as_iterator() const
+    {
+        return as.iter;
+    }
+
+    inline Green_thread_data *as_green_thread() const
+    {
+        return as.gt;
+    }
+
+    inline Upvalue_data *as_upvalue() const
+    {
+        return as.upvalue;
+    }
+
+    std::optional<std::int64_t> try_as_i64() const;
+    std::optional<std::uint64_t> try_as_u64() const;
+
+    types::Primitive_kind numeric_type() const;
+    std::optional<Value> cast_numeric(types::Primitive_kind target_type) const;
+    std::optional<Value> coerce_literal(types::Primitive_kind target_type) const;
+
+    std::string to_string() const;
+    std::string to_debug_string(bool is_nested = false) const;
+
+    bool operator==(const Value &other) const;
+    bool operator!=(const Value &other) const
+    {
+        return !(*this == other);
+    }
+    Value wrap_optional(uint8_t added_depth = 1) const
+    {
+
+        Value res = *this;
+        res.option_depth_ += added_depth;
+        return res;
+    }
+    Value unwrap_optional() const
+    {
+        Value res = *this;
+        if (res.option_depth_ > 0) {
+            res.option_depth_ -= 1;
+        }
+        return res;
     }
 };
 
-// ============================================================================
+static_assert(sizeof(Value) == 16, "Value struct must be exactly 16 bytes for L1 Cache alignment.");
 
-struct Enum_variants
-{
-    std::unordered_map<std::string, Value> map;
-};
-
-// Raw C++ Function Pointer for the Zero-Overhead FFI
-using Native_fn = Value (*)(vm::Virtual_machine *vm, uint8_t arg_count);
-
-// Object Definitions
-
-struct Upvalue_value
-{
-    size_t stack_index;           // Where the variable currently lives on the stack
-    bool is_closed = false;       // Has the parent function returned?
-    Value closed_value = nullptr; // The safe heap storage for when it closes
-
-    Upvalue_value(size_t index) : stack_index(index)
-    {}
-};
-
-struct Closure_value
-{
-    std::string name;
-    size_t arity;
-    types::Function_type signature;
-
-    // If it's a Phos script function:
-    mem::rc_ptr<vm::Chunk> chunk = nullptr;
-
-    // If it's a Native C++ function:
-    Native_fn native_func = nullptr;
-
-    size_t upvalue_count = 0;
-    std::vector<mem::rc_ptr<Upvalue_value>> upvalues;
-
-    // Constructor for Bytecode Functions
-    Closure_value(std::string n, size_t a, types::Function_type sig, mem::rc_ptr<vm::Chunk> c)
-        : name(std::move(n)), arity(a), signature(std::move(sig)), chunk(std::move(c)), native_func(nullptr)
-    {}
-
-    // Constructor for Native C++ Functions
-    Closure_value(std::string n, size_t a, types::Function_type sig, Native_fn nf)
-        : name(std::move(n)), arity(a), signature(std::move(sig)), chunk(nullptr), native_func(nf)
-    {}
-};
-
-struct Array_value
-{
-    types::Type type;
-    std::vector<Value> elements;
-
-    Array_value(types::Type t, std::vector<Value> elems) : type(std::move(t)), elements(std::move(elems))
-    {}
-};
-
-struct Model_value
-{
-    types::Model_type signature;
-    std::vector<Value> fields;
-
-    Model_value(types::Model_type sig, std::vector<Value> f) : signature(std::move(sig)), fields(std::move(f))
-    {}
-};
-
-struct Union_value
-{
-    std::string union_name;
-    std::string variant_name;
-    Value payload = nullptr;
-
-    Union_value(std::string u_name, std::string v_name, Value p)
-        : union_name(std::move(u_name)), variant_name(std::move(v_name)), payload(std::move(p))
-    {}
-};
-
-struct Green_thread_value
-{
-    // C++17 allows vectors of incomplete types, so we can use vm::Call_frame here safely
-    std::vector<vm::Call_frame> frames;
-    std::vector<Value> stack;
-    bool is_completed = false;
-    std::vector<mem::rc_ptr<Upvalue_value>> open_upvalues;
-};
-
-struct Iterator_value
-{
-    struct Empty_state
-    {
-        auto operator<=>(const Empty_state &) const = default;
-    };
-
-    struct Singleton_state
-    {
-        Value value;
-    };
-
-    struct Interval_state
-    {
-        int64_t start = 0;
-        int64_t end = 0;
-        bool inclusive = false;
-    };
-
-    struct Array_state
-    {
-        mem::rc_ptr<Array_value> array;
-    };
-
-    struct String_state
-    {
-        std::string source;
-        std::vector<size_t> boundaries;
-    };
-
-    using Source = std::variant<Empty_state, Singleton_state, Interval_state, Array_state, String_state>;
-
-    types::Type element_type;
-    Source source;
-    int64_t cursor = -1; // 0 = first item when available, -1 / size = edge sentinels
-
-    Iterator_value(types::Type elem_type, Source src) : element_type(std::move(elem_type)), source(std::move(src))
-    {}
-};
-
-// ============================================================================
-// Type Checkers & Getters
-// ============================================================================
-
-bool is_nil(const Value &val);
-bool is_bool(const Value &val);
-bool is_integer(const Value &val);
-bool is_signed_integer(const Value &val);
-bool is_unsigned_integer(const Value &val);
-bool is_float(const Value &val);
-bool is_numeric(const Value &val);
-bool is_string(const Value &val);
-bool is_array(const Value &val);
-bool is_model(const Value &val);
-bool is_closure(const Value &val);
-bool is_union(const Value &val);
-bool is_iterator(const Value &val);
-
-bool get_bool(const Value &val);
-std::int64_t get_int(const Value &val);
-std::uint64_t get_uint(const Value &val);
-double get_float(const Value &val);
-std::optional<std::int64_t> try_get_i64(const Value &val);
-std::optional<std::uint64_t> try_get_u64(const Value &val);
-std::string get_string(const Value &val);
-mem::rc_ptr<Array_value> get_array(const Value &val);
-mem::rc_ptr<Model_value> get_model(const Value &val);
-mem::rc_ptr<Closure_value> get_closure(const Value &val);
-mem::rc_ptr<Union_value> get_union(const Value &val);
-mem::rc_ptr<Iterator_value> get_iterator(const Value &val);
-
-types::Primitive_kind numeric_type_of(const Value &val);
-std::optional<Value> cast_numeric_value(const Value &val, types::Primitive_kind target_type);
-std::optional<Value> coerce_numeric_literal(const Value &val, types::Primitive_kind target_type);
-
-template <typename T>
-inline constexpr bool is_numeric_cpp_v = std::is_same_v<T, std::int8_t> || std::is_same_v<T, std::int16_t>
-    || std::is_same_v<T, std::int32_t> || std::is_same_v<T, std::int64_t> || std::is_same_v<T, std::uint8_t>
-    || std::is_same_v<T, std::uint16_t> || std::is_same_v<T, std::uint32_t> || std::is_same_v<T, std::uint64_t>
-    || std::is_same_v<T, numeric::float16_t> || std::is_same_v<T, float> || std::is_same_v<T, double>;
-
-template <typename T>
-inline constexpr bool is_integer_cpp_v = std::is_same_v<T, std::int8_t> || std::is_same_v<T, std::int16_t>
-    || std::is_same_v<T, std::int32_t> || std::is_same_v<T, std::int64_t> || std::is_same_v<T, std::uint8_t>
-    || std::is_same_v<T, std::uint16_t> || std::is_same_v<T, std::uint32_t> || std::is_same_v<T, std::uint64_t>;
-
-template <typename T>
-inline constexpr bool is_signed_integer_cpp_v =
-    std::is_same_v<T, std::int8_t> || std::is_same_v<T, std::int16_t> || std::is_same_v<T, std::int32_t> || std::is_same_v<T, std::int64_t>;
-
-template <typename T>
-inline constexpr bool is_unsigned_integer_cpp_v = std::is_same_v<T, std::uint8_t> || std::is_same_v<T, std::uint16_t>
-    || std::is_same_v<T, std::uint32_t> || std::is_same_v<T, std::uint64_t>;
-
-template <typename T>
-inline constexpr bool is_float_cpp_v = std::is_same_v<T, numeric::float16_t> || std::is_same_v<T, float> || std::is_same_v<T, double>;
-
-template <typename T>
-inline constexpr types::Primitive_kind primitive_kind_for_cpp_numeric_v =
-      std::is_same_v<T, std::int8_t>        ? types::Primitive_kind::I8
-    : std::is_same_v<T, std::int16_t>       ? types::Primitive_kind::I16
-    : std::is_same_v<T, std::int32_t>       ? types::Primitive_kind::I32
-    : std::is_same_v<T, std::int64_t>       ? types::Primitive_kind::I64
-    : std::is_same_v<T, std::uint8_t>       ? types::Primitive_kind::U8
-    : std::is_same_v<T, std::uint16_t>      ? types::Primitive_kind::U16
-    : std::is_same_v<T, std::uint32_t>      ? types::Primitive_kind::U32
-    : std::is_same_v<T, std::uint64_t>      ? types::Primitive_kind::U64
-    : std::is_same_v<T, numeric::float16_t> ? types::Primitive_kind::F16
-    : std::is_same_v<T, float>              ? types::Primitive_kind::F32
-    : std::is_same_v<T, double>             ? types::Primitive_kind::F64
-    : types::Primitive_kind::Any;
-
-// Utility
-
-std::string value_to_string(const Value &val);
-std::string value_to_str_debug(const Value &val);
-
-bool operator==(const Value &a, const Value &b);
-bool operator!=(const Value &a, const Value &b);
+types::Primitive_kind numeric_type_of(const Value& literal);
+std::optional<Value> coerce_numeric_literal(const Value &literal, types::Primitive_kind target_type);
 
 } // namespace phos

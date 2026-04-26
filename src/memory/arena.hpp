@@ -37,14 +37,20 @@ class Arena
 public:
     ~Arena()
     {
-        for (auto &block : blocks_)
+        for (auto &block : blocks_) {
             delete block;
+        }
         blocks_.clear();
     }
 
     Arena()
     {
         add_block(this->DEF_BLOCK_SIZE);
+    }
+
+    explicit Arena(std::size_t initial_size)
+    {
+        add_block(initial_size);
     }
 
     Arena(const Arena &) = delete;
@@ -58,8 +64,9 @@ public:
     Arena &operator=(Arena &&other) noexcept
     {
         if (this != &other) {
-            for (auto *b : blocks_)
+            for (auto *b : blocks_) {
                 delete b;
+            }
             blocks_ = std::move(other.blocks_);
             other.blocks_.clear();
         }
@@ -83,6 +90,21 @@ public:
         return reinterpret_cast<T *>(ptr);
     }
 
+    void *allocate_bytes(std::size_t bytes, std::size_t alignment = 8)
+    {
+        std::size_t aligned = (bytes + alignment - 1) & ~(alignment - 1);
+
+        _block *back = this->blocks_.back();
+        if (back->size + aligned > back->capacity) {
+            add_block(aligned);
+            back = this->blocks_.back();
+        }
+
+        char *ptr = back->data + back->size;
+        back->size += aligned;
+        return ptr;
+    }
+
     template <typename T, typename... Args>
     T *create(Args &&...args)
     {
@@ -92,8 +114,9 @@ public:
 
     void reset()
     {
-        for (auto *b : blocks_)
+        for (auto *b : blocks_) {
             b->size = 0;
+        }
     }
 
     // Static method for creating objects with constructor arguments

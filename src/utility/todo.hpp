@@ -63,8 +63,9 @@ public:
         }
         os << "📋 TODO Report (" << entries.size() << " items)\n";
         os << "---------------------------------\n";
-        for (auto const &e : entries | std::views::transform(&TodoEntry::format))
+        for (auto const &e : entries | std::views::transform(&TodoEntry::format)) {
             os << e;
+        }
     }
 };
 

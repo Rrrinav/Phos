@@ -1,11 +1,14 @@
 #pragma once
 
 #include "./token.hpp"
+#include "../error/err.hpp"
+#include "../memory/arena.hpp"
 
 #include <cctype>
 #include <format>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace phos::lex {
@@ -13,18 +16,30 @@ namespace phos::lex {
 class Lexer
 {
 public:
-    explicit Lexer(std::string_view src) : source(src)
-    {}
-
-    std::vector<Token> tokenize()
+    struct Tokenize_result
     {
         std::vector<Token> tokens;
+        phos::err::Engine diagnostics{"lexing"};
+    };
+
+    explicit Lexer(std::string_view src, phos::mem::Arena &arena, std::string source_name = "<input>")
+        : source(src), arena_(arena), source_name_(std::move(source_name))
+    {}
+
+    Tokenize_result tokenize()
+    {
+        Tokenize_result result;
         while (!is_at_end()) {
-            if (auto tok = scan_token(); tok.has_value())
-                tokens.push_back(std::move(*tok));
+            if (auto tok = scan_token(); tok.has_value()) {
+                if ((*tok).type == TokenType::Invalid) {
+                    result.diagnostics.error(tok->line, tok->column, source_name_, "Invalid token: {}", tok->lexeme);
+                    continue;
+                }
+                result.tokens.push_back(std::move(*tok));
+            }
         }
-        tokens.emplace_back(TokenType::Eof, "", std::monostate{}, line, column);
-        return tokens;
+        result.tokens.emplace_back(TokenType::Eof, "", Value(), line, column);
+        return result;
     }
 
 private:
@@ -33,6 +48,8 @@ private:
     size_t line = 1;
     size_t column = 1;
 
+    phos::mem::Arena& arena_;
+    std::string source_name_;
     const std::unordered_map<std::string_view, TokenType> keywords = token_keywords;
 
     //  primitives
@@ -60,8 +77,9 @@ private:
 
     bool match(char expected)
     {
-        if (is_at_end() || source[current] != expected)
+        if (is_at_end() || source[current] != expected) {
             return false;
+        }
         current++;
         column++;
         return true;
@@ -122,22 +140,25 @@ private:
         // ..=  →  DotDotEq      (inclusive range)
         case '.':
             if (match('.')) {
-                if (match('='))
+                if (match('=')) {
                     return make(TokenType::DotDotEq, "..=", start_col);
+                }
                 return make(TokenType::DotDot, "..", start_col);
             }
             return make(TokenType::Dot, ".", start_col);
 
         //  colon / scope
         case ':':
-            if (match(':'))
+            if (match(':')) {
                 return make(TokenType::ColonColon, "::", start_col);
+            }
             return make(TokenType::Colon, ":", start_col);
 
         //  arrow / minus
         case '-':
-            if (match('>'))
+            if (match('>')) {
                 return make(TokenType::Arrow, "->", start_col);
+            }
             return make(TokenType::Minus, "-", start_col);
 
         //  fat arrow / assign / equal
@@ -145,43 +166,52 @@ private:
         // ==   →  Equal
         // =>   →  FatArrow      (match arm)
         case '=':
-            if (match('='))
+            if (match('=')) {
                 return make(TokenType::Equal, "==", start_col);
-            if (match('>'))
+            }
+            if (match('>')) {
                 return make(TokenType::FatArrow, "=>", start_col);
+            }
             return make(TokenType::Assign, "=", start_col);
 
         //  not / not-equal
         case '!':
-            if (match('='))
+            if (match('=')) {
                 return make(TokenType::NotEqual, "!=", start_col);
+            }
             return make(TokenType::LogicalNot, "!", start_col);
 
         //  relational + bitwise shifts
         case '<':
-            if (match('='))
+            if (match('=')) {
                 return make(TokenType::LessEqual, "<=", start_col);
-            if (match('<'))
+            }
+            if (match('<')) {
                 return make(TokenType::BitLShift, "<<", start_col);
+            }
             return make(TokenType::Less, "<", start_col);
 
         case '>':
-            if (match('='))
+            if (match('=')) {
                 return make(TokenType::GreaterEqual, ">=", start_col);
-            if (match('>'))
+            }
+            if (match('>')) {
                 return make(TokenType::BitRshift, ">>", start_col);
+            }
             return make(TokenType::Greater, ">", start_col);
 
         //  logical / bitwise and
         case '&':
-            if (match('&'))
+            if (match('&')) {
                 return make(TokenType::LogicalAnd, "&&", start_col);
+            }
             return make(TokenType::BitAnd, "&", start_col);
 
         //  logical / bitwise or / pipe
         case '|':
-            if (match('|'))
+            if (match('|')) {
                 return make(TokenType::LogicalOr, "||", start_col);
+            }
             return make(TokenType::Pipe, "|", start_col);
 
         //  strings and f-strings
@@ -192,8 +222,9 @@ private:
         case '/':
             if (match('/')) {
                 // line comment — consume until newline
-                while (!is_at_end() && peek() != '\n')
+                while (!is_at_end() && peek() != '\n') {
                     advance();
+                }
                 return std::nullopt;
             }
             if (match('*')) {
@@ -215,24 +246,19 @@ private:
             return make(TokenType::Slash, "/", start_col);
 
         default:
-            // f-string:  f"..."
-            if (c == 'f' && peek() == '"') {
-                advance(); // consume opening "
-                return scan_fstring(start_col);
+            if (std::isdigit(c)) {
+                return scan_number(start_col);
             }
 
-            if (std::isdigit(c))
-                return scan_number(start_col);
-
-            if (std::isalpha(c) || c == '_')
+            if (std::isalpha(c) || c == '_') {
                 return scan_identifier(start_col);
+            }
 
-            return Token(TokenType::Invalid, std::string(1, c), std::monostate{}, line, start_col);
+            return Token(TokenType::Invalid, std::string(1, c), Value(), line, start_col);
         }
     }
 
     //  string scanner
-
     Token scan_string(size_t start_col)
     {
         std::string value;
@@ -273,90 +299,14 @@ private:
             }
         }
 
-        if (is_at_end())
-            return Token(TokenType::Invalid, "Unterminated string", std::string("Unterminated string"), line, start_col);
-
-        advance(); // closing "
-        return Token(TokenType::String, std::format("\"{}\"", value), std::move(value), line, start_col);
-    }
-
-    //  f-string scanner
-    // Called after the opening " has been consumed (start_col points at the 'f').
-    // Stores the raw template (with braces intact) as the literal value.
-    // The parser will split on {} and build a concat tree from it.
-    Token scan_fstring(size_t start_col)
-    {
-        std::string raw;
-        int depth = 0; // track nested braces inside interpolations
-
-        while (!is_at_end()) {
-            char c = advance();
-
-            if (c == '"' && depth == 0) {
-                // closing " outside an interpolation — done
-                return Token(TokenType::Fstring, std::format("f\"{}\"", raw), std::move(raw), line, start_col);
-            }
-
-            if (c == '\n') {
-                line++;
-                column = 1;
-            }
-
-            // escape sequences inside f-string literal portions
-            if (c == '\\' && depth == 0) {
-                char esc = advance();
-                switch (esc) {
-                case 'n':
-                    raw += '\n';
-                    break;
-                case 't':
-                    raw += '\t';
-                    break;
-                case 'r':
-                    raw += '\r';
-                    break;
-                case '\\':
-                    raw += '\\';
-                    break;
-                case '"':
-                    raw += '"';
-                    break;
-                case '{':
-                    raw += '{';
-                    break; // Backwards compatibility for \{
-                case '}':
-                    raw += '}';
-                    break; // Backwards compatibility for \}
-                default:
-                    raw += '\\';
-                    raw += esc;
-                    break;
-                }
-                continue;
-            }
-
-            // --- NEW: TRACK INTERPOLATION DEPTH WITH ESCAPES ---
-            if (c == '{') {
-                if (depth == 0 && peek() == '{') {
-                    raw += advance(); // It's an escaped '{{', consume the second one!
-                } else {
-                    depth++; // It's a real interpolation, or nested code
-                }
-            } else if (c == '}') {
-                if (depth == 0 && peek() == '}') {
-                    raw += advance(); // It's an escaped '}}', consume the second one!
-                } else if (depth > 0) {
-                    depth--; // Close an interpolation, or nested code
-                }
-            }
-
-            raw += c;
+        if (is_at_end()) {
+            return Token(TokenType::Invalid, std::string("Unterminated string"), Value(), line, start_col);
         }
 
-        return Token(TokenType::Invalid, "Unterminated f-string", std::string("Unterminated f-string"), line, start_col);
+        advance(); // closing "
+        Value str_val = Value::make_string(arena_, value);
+        return Token(TokenType::String, std::format("\"{}\"", value), str_val, line, start_col);
     }
-
-    //  number scanner
 
     Token scan_number(size_t start_col)
     {
@@ -372,51 +322,83 @@ private:
                 return std::nullopt;
             };
 
-            if (auto kind = match("i16", types::Primitive_kind::I16))
+            if (auto kind = match("i16", types::Primitive_kind::I16)) {
                 return kind;
-            if (auto kind = match("i32", types::Primitive_kind::I32))
+            }
+            if (auto kind = match("i32", types::Primitive_kind::I32)) {
                 return kind;
-            if (auto kind = match("i64", types::Primitive_kind::I64))
+            }
+            if (auto kind = match("i64", types::Primitive_kind::I64)) {
                 return kind;
-            if (auto kind = match("i8", types::Primitive_kind::I8))
+            }
+            if (auto kind = match("i8", types::Primitive_kind::I8)) {
                 return kind;
-            if (auto kind = match("u16", types::Primitive_kind::U16))
+            }
+            if (auto kind = match("u16", types::Primitive_kind::U16)) {
                 return kind;
-            if (auto kind = match("u32", types::Primitive_kind::U32))
+            }
+            if (auto kind = match("u32", types::Primitive_kind::U32)) {
                 return kind;
-            if (auto kind = match("u64", types::Primitive_kind::U64))
+            }
+            if (auto kind = match("u64", types::Primitive_kind::U64)) {
                 return kind;
-            if (auto kind = match("u8", types::Primitive_kind::U8))
+            }
+            if (auto kind = match("u8", types::Primitive_kind::U8)) {
                 return kind;
-            if (auto kind = match("f16", types::Primitive_kind::F16))
+            }
+            if (auto kind = match("f16", types::Primitive_kind::F16)) {
                 return kind;
-            if (auto kind = match("f32", types::Primitive_kind::F32))
+            }
+            if (auto kind = match("f32", types::Primitive_kind::F32)) {
                 return kind;
-            if (auto kind = match("f64", types::Primitive_kind::F64))
+            }
+            if (auto kind = match("f64", types::Primitive_kind::F64)) {
                 return kind;
+            }
             return std::nullopt;
         };
 
-        auto finish_numeric_token = [&](Value default_value, TokenType token_type) -> Token {
+        auto finish_numeric_token = [&](Value default_value, TokenType default_token_type) -> Token {
             auto suffix_kind = consume_numeric_suffix();
             std::string lexeme(source.substr(start, current - start));
 
-            if (!suffix_kind)
-                return Token(token_type, lexeme, default_value, line, start_col);
+            if (!suffix_kind) {
+                return Token(default_token_type, lexeme, default_value, line, start_col);
+            }
 
             auto coerced = coerce_numeric_literal(default_value, *suffix_kind);
-            if (!coerced)
-                return Token(TokenType::Invalid, lexeme, std::string("Invalid numeric literal suffix"), line, start_col);
+            if (!coerced) {
+                return Token(TokenType::Invalid, lexeme, Value(), line, start_col);
+            }
 
-            return Token(token_type, lexeme, coerced.value(), line, start_col);
+            TokenType final_type = default_token_type;
+            switch (*suffix_kind) {
+                case types::Primitive_kind::I8:  final_type = TokenType::TInt8; break;
+                case types::Primitive_kind::I16: final_type = TokenType::TInt16; break;
+                case types::Primitive_kind::I32: final_type = TokenType::TInt32; break;
+                case types::Primitive_kind::I64: final_type = TokenType::TInt64; break;
+                case types::Primitive_kind::U8:  final_type = TokenType::TUInt8; break;
+                case types::Primitive_kind::U16: final_type = TokenType::TUInt16; break;
+                case types::Primitive_kind::U32: final_type = TokenType::TUInt32; break;
+                case types::Primitive_kind::U64: final_type = TokenType::TUInt64; break;
+                case types::Primitive_kind::F16: final_type = TokenType::TFloat16; break;
+                case types::Primitive_kind::F32: final_type = TokenType::TFloat32; break;
+                case types::Primitive_kind::F64: final_type = TokenType::TFloat64; break;
+                default:
+                     return Token(TokenType::Invalid, lexeme, Value(), line, start_col);
+            }
+
+            return Token(final_type, lexeme, coerced.value(), line, start_col);
         };
 
         auto strip_underscores = [](std::string_view text) -> std::string {
             std::string cleaned;
             cleaned.reserve(text.size());
-            for (char c : text)
-                if (c != '_')
+            for (char c : text) {
+                if (c != '_') {
                     cleaned += c;
+                }
+            }
             return cleaned;
         };
 
@@ -442,8 +424,9 @@ private:
         // hex literal: 0x...
         if (source[start] == '0' && (peek() == 'x' || peek() == 'X')) {
             advance(); // consume 'x'
-            if (!consume_digits([](char c) { return std::isxdigit(static_cast<unsigned char>(c)); }))
-                return Token(TokenType::Invalid, "Invalid hex literal", std::string("Invalid hex literal"), line, start_col);
+            if (!consume_digits([](char c) { return std::isxdigit(static_cast<unsigned char>(c)); })) {
+                return Token(TokenType::Invalid, std::string("Invalid hex literal"), Value(), line, start_col);
+            }
             std::string cleaned = strip_underscores(source.substr(start, current - start));
             int32_t val = std::stoll(cleaned, nullptr, 16);
             return finish_numeric_token(Value(static_cast<std::int32_t>(val)), TokenType::Integer32);
@@ -452,8 +435,9 @@ private:
         // binary literal: 0b...
         if (source[start] == '0' && (peek() == 'b' || peek() == 'B')) {
             advance(); // consume 'b'
-            if (!consume_digits([](char c) { return c == '0' || c == '1'; }))
-                return Token(TokenType::Invalid, "Invalid binary literal", std::string("Invalid binary literal"), line, start_col);
+            if (!consume_digits([](char c) { return c == '0' || c == '1'; })) {
+                return Token(TokenType::Invalid, std::string("Invalid binary literal"), Value(), line, start_col);
+            }
             std::string cleaned = strip_underscores(source.substr(start, current - start));
             int32_t val = std::stoll(cleaned.substr(2), nullptr, 2);
             return finish_numeric_token(Value(static_cast<std::int32_t>(val)), TokenType::Integer32);
@@ -462,8 +446,9 @@ private:
         // octal literal: 0o...
         if (source[start] == '0' && (peek() == 'o' || peek() == 'O')) {
             advance(); // consume 'o'
-            if (!consume_digits([](char c) { return c >= '0' && c <= '7'; }))
-                return Token(TokenType::Invalid, "Invalid octal literal", std::string("Invalid octal literal"), line, start_col);
+            if (!consume_digits([](char c) { return c >= '0' && c <= '7'; })) {
+                return Token(TokenType::Invalid, std::string("Invalid octal literal"), Value(), line, start_col);
+            }
             std::string cleaned = strip_underscores(source.substr(start, current - start));
             int32_t val = std::stoll(cleaned.substr(2), nullptr, 8);
             return finish_numeric_token(Value(static_cast<std::int32_t>(val)), TokenType::Integer32);
@@ -482,8 +467,9 @@ private:
         if (peek() == 'e' || peek() == 'E') {
             size_t exp_pos = current;
             advance();
-            if (peek() == '+' || peek() == '-')
+            if (peek() == '+' || peek() == '-') {
                 advance();
+            }
             if (!consume_digits([](char c) { return std::isdigit(static_cast<unsigned char>(c)); })) {
                 current = exp_pos;
             } else {
@@ -492,8 +478,9 @@ private:
         }
 
         std::string cleaned = strip_underscores(source.substr(start, current - start));
-        if (is_float)
+        if (is_float) {
             return finish_numeric_token(Value(std::stod(cleaned)), TokenType::Float64);
+        }
 
         return finish_numeric_token(Value(static_cast<std::int32_t>(std::stoll(cleaned))), TokenType::Integer32);
     }
@@ -503,26 +490,28 @@ private:
     Token scan_identifier(size_t start_col)
     {
         size_t start = current - 1;
-        while (std::isalnum(peek()) || peek() == '_')
+        while (std::isalnum(peek()) || peek() == '_') {
             advance();
+        }
 
         std::string_view lexeme = source.substr(start, current - start);
 
         auto it = keywords.find(lexeme);
         TokenType type = (it != keywords.end()) ? it->second : TokenType::Identifier;
 
-        Value literal = std::string(lexeme); // default
-        if (type == TokenType::Bool)
-            literal = (lexeme == "true");
+        Value literal = Value();
+        if (type == TokenType::Bool) {
+            literal = Value(lexeme == "true");
+        }
 
-        return Token(type, std::string(lexeme), std::move(literal), line, start_col);
+        return Token(type, std::string(lexeme), literal, line, start_col);
     }
 
     //  factory
 
     Token make(TokenType type, std::string_view lexeme, size_t start_col) const
     {
-        return Token(type, std::string(lexeme), std::monostate{}, line, start_col);
+        return Token(type, std::string(lexeme), Value(), line, start_col);
     }
 };
 

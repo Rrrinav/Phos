@@ -3,13 +3,12 @@
 #include "../error/err.hpp"
 #include "../error/result.hpp"
 #include "../lexer/token.hpp"
-#include "../memory/arena.hpp"
 #include "ast.hpp"
+#include "../memory/arena.hpp"
 
 #include <optional>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -18,30 +17,41 @@ namespace phos {
 class Parser
 {
 public:
-    explicit Parser(std::vector<lex::Token> tokens, mem::Arena &arena) : arena_(arena), tokens_(std::move(tokens))
+    struct Parse_result
+    {
+        std::vector<ast::Stmt_id> statements;
+        err::Engine diagnostics{"parser"};
+    };
+
+    explicit Parser(
+        std::vector<lex::Token> tokens,
+        phos::types::Type_table &type_table,
+        ast::Ast_tree &tree,
+        phos::mem::Arena &arena,
+        std::string source_name = "<input>")
+        : tree_(tree), type_table_(type_table), tokens_(std::move(tokens)), arena_(arena), source_name_(std::move(source_name))
     {}
 
-    Result<std::vector<ast::Stmt *>> parse();
+    Parse_result parse();
 
 private:
-    mem::Arena &arena_;
+    ast::Ast_tree &tree_;
+    phos::types::Type_table &type_table_;
     std::vector<lex::Token> tokens_;
+    phos::mem::Arena& arena_;
+    std::string source_name_;
     size_t current_ = 0;
     std::string stage_ = "parser";
+    err::Engine diagnostics_{"parser"};
 
     // set while parsing inside a model body so 'this' is valid
     std::string current_model_;
 
-    // populated during parse so parse_type() can resolve union vs model names
-    std::unordered_set<std::string> m_known_model_names;
-    std::unordered_set<std::string> m_known_union_names;
-    std::unordered_set<std::string> m_known_enum_names;
-
     // return types of top-level functions, used downstream by the type checker
-    std::unordered_map<std::string, types::Type> function_types_;
+    std::unordered_map<std::string, types::Type_id> function_types_;
 
-    // Memory of parsed models so the 'bind' block can find them
-    std::unordered_map<std::string, ast::Model_stmt *> parsed_models;
+    // Memory of parsed models so the 'bind' block can find them (Data-Oriented!)
+    std::unordered_map<std::string, ast::Stmt_id> parsed_models;
 
     void skip_newlines();
     const lex::Token &peek() const;
@@ -61,57 +71,57 @@ private:
     err::msg create_error(const lex::Token &token, const std::string &message);
     void synchronize();
 
-    Result<types::Type> parse_type();
+    Result<types::Type_id> parse_type();
     Result<ast::Function_param> parse_function_parameter(bool allow_default_value);
     Result<std::vector<ast::Call_argument>> parse_call_arguments();
 
-    Result<std::optional<ast::Stmt *>> declaration();
-    Result<ast::Stmt *> function_declaration();
-    Result<ast::Stmt *> model_declaration();
-    Result<ast::Stmt *> parse_bind_statement();
-    Result<ast::Stmt *> union_declaration();
-    Result<ast::Stmt *> enum_declaration();
-    Result<ast::Stmt *> var_declaration();
+    Result<std::optional<ast::Stmt_id>> declaration();
+    Result<ast::Stmt_id> function_declaration();
+    Result<ast::Stmt_id> model_declaration();
+    Result<ast::Stmt_id> parse_bind_statement();
+    Result<ast::Stmt_id> union_declaration();
+    Result<ast::Stmt_id> enum_declaration();
+    Result<ast::Stmt_id> var_declaration(bool is_const);
     Result<ast::Typed_member_decl> parse_model_field();
     Result<ast::Function_stmt> parse_model_method();
 
-    Result<ast::Stmt *> statement();
-    Result<ast::Stmt *> print_statement(ast::Print_stream stream = ast::Print_stream::STDOUT);
-    Result<ast::Stmt *> block_statement();
-    Result<ast::Stmt *> if_statement();
-    Result<ast::Stmt *> while_statement();
-    Result<ast::Stmt *> for_statement();
-    Result<ast::Stmt *> for_in_statement();
-    Result<ast::Stmt *> match_statement();
-    Result<ast::Stmt *> return_statement();
-    Result<ast::Stmt *> expression_statement();
+    Result<ast::Stmt_id> statement();
+    Result<ast::Stmt_id> print_statement(ast::Print_stream stream = ast::Print_stream::STDOUT);
+    Result<ast::Stmt_id> block_statement();
+    Result<ast::Stmt_id> if_statement();
+    Result<ast::Stmt_id> while_statement();
+    Result<ast::Stmt_id> for_statement();
+    Result<ast::Stmt_id> for_in_statement();
+    Result<ast::Stmt_id> match_statement();
+    Result<ast::Stmt_id> return_statement();
+    Result<ast::Stmt_id> expression_statement();
 
-    // --- expressions (precedence: low -> high) ---
+    Result<ast::Expr_id> expression();
+    Result<ast::Expr_id> assignment();
+    Result<ast::Expr_id> range_expr();
+    Result<ast::Expr_id> logical_or();
+    Result<ast::Expr_id> logical_and();
+    Result<ast::Expr_id> bitwise_or();
+    Result<ast::Expr_id> bitwise_xor();
+    Result<ast::Expr_id> bitwise_and();
+    Result<ast::Expr_id> equality();
+    Result<ast::Expr_id> comparison();
+    Result<ast::Expr_id> bitwise_shift();
+    Result<ast::Expr_id> term();
+    Result<ast::Expr_id> factor();
+    Result<ast::Expr_id> cast();
+    Result<ast::Expr_id> unary();
+    Result<ast::Expr_id> call();
+    Result<ast::Expr_id> primary();
 
-    Result<ast::Expr *> expression();
-    Result<ast::Expr *> assignment();
-    Result<ast::Expr *> range_expr();
-    Result<ast::Expr *> logical_or();
-    Result<ast::Expr *> logical_and();
-    Result<ast::Expr *> bitwise_or();
-    Result<ast::Expr *> bitwise_xor();
-    Result<ast::Expr *> bitwise_and();
-    Result<ast::Expr *> equality();
-    Result<ast::Expr *> comparison();
-    Result<ast::Expr *> bitwise_shift();
-    Result<ast::Expr *> term();
-    Result<ast::Expr *> factor();
-    Result<ast::Expr *> cast();
-    Result<ast::Expr *> unary();
-    Result<ast::Expr *> call();
-    Result<ast::Expr *> primary();
+    Result<ast::Expr_id> parse_closure_expression();
+    Result<ast::Expr_id> parse_array_literal();
+    Result<ast::Expr_id> parse_model_literal(const std::string &model_name);
 
-    // --- specific sub-parsers ---
-
-    Result<ast::Expr *> parse_closure_expression();
-    Result<ast::Expr *> parse_array_literal();
-    Result<ast::Expr *> parse_model_literal(const std::string &model_name);
-    Result<ast::Expr *> parse_fstring(const lex::Token &tok);
+    void stamp_loc(ast::Source_location &loc);
+    void stamp_expr(ast::Expr_id expr);
+    void stamp_stmt(ast::Stmt_id stmt);
+    void stamp_statement_locations(const std::vector<ast::Stmt_id> &statements);
 };
 
 } // namespace phos

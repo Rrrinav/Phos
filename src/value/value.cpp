@@ -1,498 +1,579 @@
 #include "value.hpp"
 
+#include "../memory/arena.hpp"
+
 #include <charconv>
-#include <format>
+#include <cstring>
 #include <limits>
+#include <format>
 
 namespace phos {
 
-namespace {
-
-template <typename T>
-std::string format_integer(T value)
+// Arena Factories
+Value Value::make_string(mem::Arena &arena, std::string_view text, uint8_t depth)
 {
-    char buf[32];
-    if constexpr (std::is_signed_v<T>) {
-        auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), static_cast<long long>(value));
-        (void)ec;
-        return std::string(buf, ptr);
+    size_t total_size = sizeof(String_data) + text.length() + 1;
+    void *raw_mem = arena.allocate_bytes(total_size, alignof(String_data));
+
+    String_data *str = new (raw_mem) String_data();
+    str->length = static_cast<uint32_t>(text.length());
+    std::memcpy(str->chars, text.data(), text.length());
+    str->chars[text.length()] = '\0';
+
+    return Value(str, depth);
+}
+
+Value Value::make_array(mem::Arena &arena, uint32_t capacity, uint8_t depth)
+{
+    Array_data *arr = arena.allocate<Array_data>();
+    new (arr) Array_data();
+    arr->capacity = capacity;
+    arr->count = 0;
+
+    if (capacity > 0) {
+        arr->elements = arena.allocate<Value>(capacity);
     } else {
-        auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), static_cast<unsigned long long>(value));
-        (void)ec;
-        return std::string(buf, ptr);
+        arr->elements = nullptr;
     }
+
+    return Value(arr, depth);
 }
 
-template <typename T>
-std::string format_float(T value)
+Value Value::make_model(mem::Arena &arena, types::Model_type sig, uint32_t field_count, uint8_t depth)
 {
-    char buf[64];
-    auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), static_cast<double>(value));
-    (void)ec;
-    return std::string(buf, ptr);
-}
+    Model_data *model = arena.allocate<Model_data>();
+    new (model) Model_data();
+    model->signature = std::move(sig);
+    model->field_count = field_count;
 
-template <typename Target, typename Source>
-bool integral_fits(Source value)
-{
-    if constexpr (!std::is_integral_v<Target> || !std::is_integral_v<Source>) {
-        return false;
-    } else if constexpr (std::is_signed_v<Source> == std::is_signed_v<Target>) {
-        return value >= std::numeric_limits<Target>::min() && value <= std::numeric_limits<Target>::max();
-    } else if constexpr (std::is_signed_v<Source>) {
-        if (value < 0)
-            return false;
-        using UnsignedSource = std::make_unsigned_t<Source>;
-        return static_cast<UnsignedSource>(value) <= std::numeric_limits<Target>::max();
+    if (field_count > 0) {
+        model->fields = arena.allocate<Value>(field_count);
     } else {
-        if (value > static_cast<std::make_unsigned_t<Target>>(std::numeric_limits<Target>::max()))
-            return false;
-        return true;
+        model->fields = nullptr;
     }
+
+    return Value(model, depth);
 }
 
-template <typename Target, typename Source>
-Value numeric_cast_value(Source value)
+Value Value::make_union(mem::Arena &arena, String_data *u_name, String_data *v_name, Value payload, uint8_t depth)
 {
-    return Value(static_cast<Target>(value));
+    Union_data *un = arena.allocate<Union_data>();
+    new (un) Union_data();
+    un->union_name = u_name;
+    un->variant_name = v_name;
+
+    un->payload = arena.allocate<Value>();
+    *(un->payload) = payload;
+
+    return Value(un, depth);
 }
 
-template <typename Target, typename Source>
-std::optional<Value> coerce_literal_to(Source value)
+Value Value::make_closure_native(
+    mem::Arena &arena, String_data *name, size_t arity, types::Function_type sig, Native_fn func, uint8_t depth)
 {
-    if constexpr (is_integer_cpp_v<Source> && is_integer_cpp_v<Target>) {
-        if (!integral_fits<Target>(value))
-            return std::nullopt;
-        return Value(static_cast<Target>(value));
-    } else if constexpr (is_integer_cpp_v<Source> && is_float_cpp_v<Target>) {
-        return Value(static_cast<Target>(value));
-    } else if constexpr (is_float_cpp_v<Source> && is_float_cpp_v<Target>) {
-        return Value(static_cast<Target>(value));
-    } else {
-        return std::nullopt;
+    Closure_data *closure = arena.allocate<Closure_data>();
+    new (closure) Closure_data();
+    closure->name = name;
+    closure->arity = arity;
+    closure->signature = std::move(sig);
+    closure->native_func = func;
+    closure->upvalue_count = 0;
+    closure->upvalues = nullptr;
+
+    return Value(closure, depth);
+}
+
+Value Value::make_iterator(mem::Arena &arena, uint8_t depth)
+{
+    Iterator_data *iter = arena.allocate<Iterator_data>();
+    new (iter) Iterator_data();
+
+    // We don't initialize the specific union state here because
+    // the Virtual Machine's Make_iter opcode handles populating it!
+
+    return Value(iter, depth);
+}
+
+// Numeric Getters with Implicit Upcasting
+int64_t Value::as_int() const
+{
+    switch (tag_) {
+    case Value_tag::I8:
+        return as.i8;
+    case Value_tag::I16:
+        return as.i16;
+    case Value_tag::I32:
+        return as.i32;
+    case Value_tag::I64:
+        return as.i64;
+    case Value_tag::U8:
+        return static_cast<int64_t>(as.u8);
+    case Value_tag::U16:
+        return static_cast<int64_t>(as.u16);
+    case Value_tag::U32:
+        return static_cast<int64_t>(as.u32);
+    case Value_tag::U64: {
+        // TODO: Use ffi panic method
+        if (as.u64 > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+            throw std::overflow_error("Phos VM Panic: Unsigned 64-bit integer overflowed when cast to Signed 64-bit.");
+        }
+        return static_cast<int64_t>(as.u64);
     }
-}
-
-template <typename Target, typename Source>
-std::optional<Value> cast_numeric_source(Source value)
-{
-    if constexpr (is_numeric_cpp_v<Source>)
-        return numeric_cast_value<Target>(value);
-    return std::nullopt;
-}
-
-template <typename Source>
-std::optional<Value> cast_numeric_dispatch(Source value, types::Primitive_kind target_type)
-{
-    switch (target_type) {
-    case types::Primitive_kind::I8:
-        return cast_numeric_source<std::int8_t>(value);
-    case types::Primitive_kind::I16:
-        return cast_numeric_source<std::int16_t>(value);
-    case types::Primitive_kind::I32:
-        return cast_numeric_source<std::int32_t>(value);
-    case types::Primitive_kind::I64:
-        return cast_numeric_source<std::int64_t>(value);
-    case types::Primitive_kind::U8:
-        return cast_numeric_source<std::uint8_t>(value);
-    case types::Primitive_kind::U16:
-        return cast_numeric_source<std::uint16_t>(value);
-    case types::Primitive_kind::U32:
-        return cast_numeric_source<std::uint32_t>(value);
-    case types::Primitive_kind::U64:
-        return cast_numeric_source<std::uint64_t>(value);
-    case types::Primitive_kind::F16:
-        return cast_numeric_source<numeric::float16_t>(value);
-    case types::Primitive_kind::F32:
-        return cast_numeric_source<float>(value);
-    case types::Primitive_kind::F64:
-        return cast_numeric_source<double>(value);
     default:
-        return std::nullopt;
+        return 0;
     }
 }
 
-template <typename Target, typename Source>
-std::optional<Value> coerce_literal_source(Source value)
+uint64_t Value::as_uint() const
 {
-    return coerce_literal_to<Target>(value);
-}
-
-template <typename Source>
-std::optional<Value> coerce_literal_dispatch(Source value, types::Primitive_kind target_type)
-{
-    switch (target_type) {
-    case types::Primitive_kind::I8:
-        return coerce_literal_source<std::int8_t>(value);
-    case types::Primitive_kind::I16:
-        return coerce_literal_source<std::int16_t>(value);
-    case types::Primitive_kind::I32:
-        return coerce_literal_source<std::int32_t>(value);
-    case types::Primitive_kind::I64:
-        return coerce_literal_source<std::int64_t>(value);
-    case types::Primitive_kind::U8:
-        return coerce_literal_source<std::uint8_t>(value);
-    case types::Primitive_kind::U16:
-        return coerce_literal_source<std::uint16_t>(value);
-    case types::Primitive_kind::U32:
-        return coerce_literal_source<std::uint32_t>(value);
-    case types::Primitive_kind::U64:
-        return coerce_literal_source<std::uint64_t>(value);
-    case types::Primitive_kind::F16:
-        return coerce_literal_source<numeric::float16_t>(value);
-    case types::Primitive_kind::F32:
-        return coerce_literal_source<float>(value);
-    case types::Primitive_kind::F64:
-        return coerce_literal_source<double>(value);
+    switch (tag_) {
+    case Value_tag::I8:
+        return static_cast<uint64_t>(as.i8);
+    case Value_tag::I16:
+        return static_cast<uint64_t>(as.i16);
+    case Value_tag::I32:
+        return static_cast<uint64_t>(as.i32);
+    case Value_tag::I64:
+        return static_cast<uint64_t>(as.i64);
+    case Value_tag::U8:
+        return as.u8;
+    case Value_tag::U16:
+        return as.u16;
+    case Value_tag::U32:
+        return as.u32;
+    case Value_tag::U64:
+        return as.u64;
     default:
-        return std::nullopt;
+        return 0;
     }
 }
 
-} // namespace
-
-// --- Type Checkers ---
-bool is_nil(const Value &val)
+double Value::as_float() const
 {
-    return std::holds_alternative<std::nullptr_t>(val.payload) || std::holds_alternative<std::monostate>(val.payload);
-}
-bool is_bool(const Value &val)
-{
-    return std::holds_alternative<bool>(val.payload);
-}
-bool is_integer(const Value &val)
-{
-    return std::holds_alternative<std::int8_t>(val.payload) || std::holds_alternative<std::int16_t>(val.payload)
-        || std::holds_alternative<std::int32_t>(val.payload) || std::holds_alternative<std::int64_t>(val.payload)
-        || std::holds_alternative<std::uint8_t>(val.payload) || std::holds_alternative<std::uint16_t>(val.payload)
-        || std::holds_alternative<std::uint32_t>(val.payload) || std::holds_alternative<std::uint64_t>(val.payload);
-}
-bool is_signed_integer(const Value &val)
-{
-    return std::holds_alternative<std::int8_t>(val.payload) || std::holds_alternative<std::int16_t>(val.payload)
-        || std::holds_alternative<std::int32_t>(val.payload) || std::holds_alternative<std::int64_t>(val.payload);
-}
-bool is_unsigned_integer(const Value &val)
-{
-    return std::holds_alternative<std::uint8_t>(val.payload) || std::holds_alternative<std::uint16_t>(val.payload)
-        || std::holds_alternative<std::uint32_t>(val.payload) || std::holds_alternative<std::uint64_t>(val.payload);
-}
-bool is_float(const Value &val)
-{
-    return std::holds_alternative<numeric::float16_t>(val.payload) || std::holds_alternative<float>(val.payload)
-        || std::holds_alternative<double>(val.payload);
-}
-bool is_numeric(const Value &val)
-{
-    return is_integer(val) || is_float(val);
-}
-bool is_string(const Value &val)
-{
-    return std::holds_alternative<std::string>(val.payload);
-}
-bool is_array(const Value &val)
-{
-    return std::holds_alternative<mem::rc_ptr<Array_value>>(val.payload);
-}
-bool is_model(const Value &val)
-{
-    return std::holds_alternative<mem::rc_ptr<Model_value>>(val.payload);
-}
-bool is_union(const Value &val)
-{
-    return std::holds_alternative<mem::rc_ptr<Union_value>>(val.payload);
-}
-bool is_closure(const Value &val)
-{
-    return std::holds_alternative<mem::rc_ptr<Closure_value>>(val.payload);
-}
-bool is_iterator(const Value &val)
-{
-    return std::holds_alternative<mem::rc_ptr<Iterator_value>>(val.payload);
+    switch (tag_) {
+    case Value_tag::F16:
+        return static_cast<double>(as.f16);
+    case Value_tag::F32:
+        return static_cast<double>(as.f32);
+    case Value_tag::F64:
+        return as.f64;
+    default:
+        if (is_integer()) {
+            return static_cast<double>(as_int());
+        }
+        return 0.0;
+    }
 }
 
-// --- Getters ---
-bool get_bool(const Value &val)
+// Safe Conversions & Coercions
+std::optional<std::int64_t> Value::try_as_i64() const
 {
-    return std::get<bool>(val.payload);
-}
-std::int64_t get_int(const Value &val)
-{
-    return std::visit(
-        [](const auto &value) -> std::int64_t {
-            using T = std::decay_t<decltype(value)>;
-            if constexpr (
-                std::is_same_v<T, std::int8_t> || std::is_same_v<T, std::int16_t> || std::is_same_v<T, std::int32_t>
-                || std::is_same_v<T, std::int64_t>) {
-                return static_cast<std::int64_t>(value);
-            } else {
-                throw std::bad_variant_access();
-            }
-        },
-        val.payload);
-}
-std::uint64_t get_uint(const Value &val)
-{
-    return std::visit(
-        [](const auto &value) -> std::uint64_t {
-            using T = std::decay_t<decltype(value)>;
-            if constexpr (
-                std::is_same_v<T, std::uint8_t> || std::is_same_v<T, std::uint16_t> || std::is_same_v<T, std::uint32_t>
-                || std::is_same_v<T, std::uint64_t>) {
-                return static_cast<std::uint64_t>(value);
-            } else {
-                throw std::bad_variant_access();
-            }
-        },
-        val.payload);
-}
-double get_float(const Value &val)
-{
-    return std::visit(
-        [](const auto &value) -> double {
-            using T = std::decay_t<decltype(value)>;
-            if constexpr (std::is_same_v<T, numeric::float16_t> || std::is_same_v<T, float> || std::is_same_v<T, double>)
-                return static_cast<double>(value);
-            throw std::bad_variant_access();
-        },
-        val.payload);
-}
-
-std::optional<std::int64_t> try_get_i64(const Value &val)
-{
-    // These inherently use payload
-    if (is_signed_integer(val))
-        return get_int(val);
-    if (is_unsigned_integer(val)) {
-        auto u = get_uint(val);
-        if (u <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
-            return static_cast<std::int64_t>(u);
+    if (tag_ >= Value_tag::I8 && tag_ <= Value_tag::I64) {
+        return as_int();
+    }
+    if (tag_ >= Value_tag::U8 && tag_ <= Value_tag::U64) {
+        if (as_uint() <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+            return static_cast<std::int64_t>(as_uint());
+        }
     }
     return std::nullopt;
 }
 
-std::optional<std::uint64_t> try_get_u64(const Value &val)
+std::optional<std::uint64_t> Value::try_as_u64() const
 {
-    if (is_unsigned_integer(val))
-        return get_uint(val);
-    if (is_signed_integer(val)) {
-        auto i = get_int(val);
-        if (i >= 0)
-            return static_cast<std::uint64_t>(i);
+    if (tag_ >= Value_tag::U8 && tag_ <= Value_tag::U64) {
+        return as_uint();
+    }
+    if (tag_ >= Value_tag::I8 && tag_ <= Value_tag::I64) {
+        if (as_int() >= 0) {
+            return static_cast<std::uint64_t>(as_int());
+        }
     }
     return std::nullopt;
 }
-std::string get_string(const Value &val)
+
+types::Primitive_kind Value::numeric_type() const
 {
-    return std::get<std::string>(val.payload);
-}
-mem::rc_ptr<Array_value> get_array(const Value &val)
-{
-    return std::get<mem::rc_ptr<Array_value>>(val.payload);
-}
-mem::rc_ptr<Model_value> get_model(const Value &val)
-{
-    return std::get<mem::rc_ptr<Model_value>>(val.payload);
-}
-mem::rc_ptr<Closure_value> get_closure(const Value &val)
-{
-    return std::get<mem::rc_ptr<Closure_value>>(val.payload);
-}
-mem::rc_ptr<Union_value> get_union(const Value &val)
-{
-    return std::get<mem::rc_ptr<Union_value>>(val.payload);
-}
-mem::rc_ptr<Iterator_value> get_iterator(const Value &val)
-{
-    return std::get<mem::rc_ptr<Iterator_value>>(val.payload);
+    switch (tag_) {
+    case Value_tag::I8:
+        return types::Primitive_kind::I8;
+    case Value_tag::I16:
+        return types::Primitive_kind::I16;
+    case Value_tag::I32:
+        return types::Primitive_kind::I32;
+    case Value_tag::I64:
+        return types::Primitive_kind::I64;
+    case Value_tag::U8:
+        return types::Primitive_kind::U8;
+    case Value_tag::U16:
+        return types::Primitive_kind::U16;
+    case Value_tag::U32:
+        return types::Primitive_kind::U32;
+    case Value_tag::U64:
+        return types::Primitive_kind::U64;
+    case Value_tag::F16:
+        return types::Primitive_kind::F16;
+    case Value_tag::F32:
+        return types::Primitive_kind::F32;
+    case Value_tag::F64:
+        return types::Primitive_kind::F64;
+    default:
+        return types::Primitive_kind::Any;
+    }
 }
 
-types::Primitive_kind numeric_type_of(const Value &val)
+std::optional<Value> Value::cast_numeric(types::Primitive_kind target_type) const
 {
-    return std::visit(
-        [](const auto &value) -> types::Primitive_kind {
-            using T = std::decay_t<decltype(value)>;
-            if constexpr (std::is_same_v<T, std::int8_t>)
-                return types::Primitive_kind::I8;
-            else if constexpr (std::is_same_v<T, std::int16_t>)
-                return types::Primitive_kind::I16;
-            else if constexpr (std::is_same_v<T, std::int32_t>)
-                return types::Primitive_kind::I32;
-            else if constexpr (std::is_same_v<T, std::int64_t>)
-                return types::Primitive_kind::I64;
-            else if constexpr (std::is_same_v<T, std::uint8_t>)
-                return types::Primitive_kind::U8;
-            else if constexpr (std::is_same_v<T, std::uint16_t>)
-                return types::Primitive_kind::U16;
-            else if constexpr (std::is_same_v<T, std::uint32_t>)
-                return types::Primitive_kind::U32;
-            else if constexpr (std::is_same_v<T, std::uint64_t>)
-                return types::Primitive_kind::U64;
-            else if constexpr (std::is_same_v<T, numeric::float16_t>)
-                return types::Primitive_kind::F16;
-            else if constexpr (std::is_same_v<T, float>)
-                return types::Primitive_kind::F32;
-            else if constexpr (std::is_same_v<T, double>)
-                return types::Primitive_kind::F64;
-            else
-                return types::Primitive_kind::Any;
-        },
-        val.payload);
-}
-
-std::optional<Value> cast_numeric_value(const Value &val, types::Primitive_kind target_type)
-{
-    if (!is_numeric(val) || !types::is_numeric_primitive(target_type))
+    if ((!is_number() && !is_bool()) || !types::is_numeric_primitive(target_type)) {
         return std::nullopt;
+    }
 
-    return std::visit([&](const auto &value) -> std::optional<Value> { return cast_numeric_dispatch(value, target_type); }, val.payload);
+    if (types::is_float_primitive(target_type)) {
+        double val = is_bool() ? (as_bool() ? 1.0 : 0.0) : as_float();
+        if (target_type == types::Primitive_kind::F32) {
+            return Value(static_cast<float>(val));
+        }
+        if (target_type == types::Primitive_kind::F16) {
+            return Value(static_cast<numeric::float16_t>(val));
+        }
+        return Value(val);
+    }
+
+    if (types::is_unsigned_integer_primitive(target_type)) {
+        uint64_t val = is_bool() ? static_cast<uint64_t>(as_bool()) : ((is_float() && as_float() < 0) ? 0 : as_uint());
+        if (target_type == types::Primitive_kind::U8) {
+            return Value(static_cast<uint8_t>(val));
+        }
+        if (target_type == types::Primitive_kind::U16) {
+            return Value(static_cast<uint16_t>(val));
+        }
+        if (target_type == types::Primitive_kind::U32) {
+            return Value(static_cast<uint32_t>(val));
+        }
+        return Value(val);
+    }
+
+    int64_t val = is_bool() ? static_cast<int64_t>(as_bool()) : as_int();
+    if (target_type == types::Primitive_kind::I8) {
+        return Value(static_cast<int8_t>(val));
+    }
+    if (target_type == types::Primitive_kind::I16) {
+        return Value(static_cast<int16_t>(val));
+    }
+    if (target_type == types::Primitive_kind::I32) {
+        return Value(static_cast<int32_t>(val));
+    }
+    return Value(val);
 }
 
-std::optional<Value> coerce_numeric_literal(const Value &val, types::Primitive_kind target_type)
+std::optional<Value> Value::coerce_literal(types::Primitive_kind target_type) const
 {
-    if (!is_numeric(val) || !types::is_numeric_primitive(target_type))
+    if (!is_number() || !types::is_numeric_primitive(target_type)) {
         return std::nullopt;
+    }
 
-    return std::visit([&](const auto &value) -> std::optional<Value> { return coerce_literal_dispatch(value, target_type); }, val.payload);
+    if (types::is_float_primitive(target_type)) {
+        return cast_numeric(target_type);
+    }
+
+    if (is_integer()) {
+        int64_t v = as_int();
+        if (target_type == types::Primitive_kind::I8 && v >= -128 && v <= 127) {
+            return Value(static_cast<int8_t>(v));
+        }
+        if (target_type == types::Primitive_kind::I16 && v >= -32768 && v <= 32767) {
+            return Value(static_cast<int16_t>(v));
+        }
+        if (target_type == types::Primitive_kind::I32 && v >= -2147483648LL && v <= 2147483647LL) {
+            return Value(static_cast<int32_t>(v));
+        }
+        if (target_type == types::Primitive_kind::I64) {
+            return Value(v);
+        }
+
+        if (types::is_unsigned_integer_primitive(target_type) && v >= 0) {
+            uint64_t u = static_cast<uint64_t>(v);
+            if (target_type == types::Primitive_kind::U8 && u <= 255) {
+                return Value(static_cast<uint8_t>(u));
+            }
+            if (target_type == types::Primitive_kind::U16 && u <= 65535) {
+                return Value(static_cast<uint16_t>(u));
+            }
+            if (target_type == types::Primitive_kind::U32 && u <= 4294967295ULL) {
+                return Value(static_cast<uint32_t>(u));
+            }
+            if (target_type == types::Primitive_kind::U64) {
+                return Value(u);
+            }
+        }
+    }
+    return std::nullopt;
 }
 
-// --- Utility ---
-std::string value_to_string(const Value &val)
+std::string Value::to_string() const
 {
-    if (is_nil(val))
+    if (is_nil()) {
         return "nil";
-    if (is_bool(val))
-        return get_bool(val) ? "true" : "false";
-
-    if (is_numeric(val))
-        return std::visit(
-            [](const auto &value) -> std::string {
-                using T = std::decay_t<decltype(value)>;
-                if constexpr (is_signed_integer_cpp_v<T> || is_unsigned_integer_cpp_v<T>)
-                    return format_integer(value);
-                else if constexpr (is_float_cpp_v<T>)
-                    return format_float(value);
-                else
-                    return "";
-            },
-            val.payload);
-    if (is_string(val))
-        return get_string(val); // No quotes internally
-
-    if (is_closure(val)) {
-        auto closure = get_closure(val);
-        return closure->native_func ? std::format("<native fn {}>", closure->name) : std::format("<fn {}>", closure->name);
     }
-    if (is_array(val))
-        return std::format("<array len {}>", get_array(val)->elements.size());
-    if (is_model(val))
-        return std::format("<model {}>", get_model(val)->signature.name);
-    if (is_iterator(val))
-        return std::format("<iter {}>", types::type_to_string(get_iterator(val)->element_type));
-
-    if (std::holds_alternative<mem::rc_ptr<Union_value>>(val.payload)) {
-        auto u = std::get<mem::rc_ptr<Union_value>>(val.payload);
-        return std::format("<{}::{}>", u->union_name, u->variant_name);
+    if (tag_ == Value_tag::Bool) {
+        return as.boolean ? "true" : "false";
     }
-    if (std::holds_alternative<mem::rc_ptr<Green_thread_value>>(val.payload))
+
+    if (is_integer()) {
+        char buffer[64];
+        auto res = std::to_chars(buffer, buffer + sizeof(buffer), as_int());
+
+        if (res.ec == std::errc()) {
+            return std::string(buffer, res.ptr);
+        }
+        return "<conversion_error>";
+    }
+
+    if (is_float()) {
+        return std::format("{}", as_float());
+    }
+
+    switch (tag_) {
+    case Value_tag::String:
+        return std::string(as_string());
+    case Value_tag::Array:
+        return std::format("<array len {}>", as.arr->count);
+    case Value_tag::Model:
+        return std::format("<model {}>", as.model->signature.name);
+    case Value_tag::Union:
+        return std::format(
+            "<{}::{}>",
+            std::string_view(as.un->union_name->chars, as.un->union_name->length),
+            std::string_view(as.un->variant_name->chars, as.un->variant_name->length));
+    case Value_tag::Closure:
+        return "<closure>";
+    case Value_tag::Iterator:
+        return "<iterator>";
+    case Value_tag::Green_thread:
         return "<green thread>";
+    default:
+        break;
+    }
 
     return "<unknown>";
 }
 
-std::string value_to_str_debug(const Value &val)
+std::string Value::to_debug_string(bool is_nested) const
 {
     std::string res;
 
-    if (is_nil(val))
+    if (is_nil()) {
         res = "nil";
-    else if (is_bool(val))
-        res = get_bool(val) ? "true" : "false";
-    else if (is_numeric(val))
-        res = value_to_string(val);
-    else if (is_string(val))
-        res = std::format("\"{}\"", get_string(val));
-    else if (is_closure(val))
-        res = value_to_string(val);
-    else if (is_array(val)) {
-        auto arr = get_array(val);
+    } else if (tag_ == Value_tag::Bool) {
+        res = as.boolean ? "true" : "false";
+    } else if (is_integer()) {
+        res = std::to_string(as_int());
+    } else if (is_float()) {
+        res = std::format("{}", as_float());
+    } else if (tag_ == Value_tag::String) {
+        res = is_nested ? std::format("\"{}\"", as_string()) : std::string(as_string());
+    } else if (tag_ == Value_tag::Array) {
         res = "[";
-        for (size_t i = 0; i < arr->elements.size(); ++i) {
-            res += value_to_str_debug(arr->elements[i]);
-            if (i != arr->elements.size() - 1)
+        auto elements = as_array_elements();
+        for (size_t i = 0; i < elements.size(); ++i) {
+            // Pass true to indicate children are nested
+            res += elements[i].to_debug_string(true);
+            if (i != elements.size() - 1) {
                 res += ", ";
+            }
         }
         res += "]";
-    } else if (is_model(val)) {
-        auto model = get_model(val);
-        res = model->signature.name + " { ";
-        for (size_t i = 0; i < model->fields.size(); ++i) {
-            res += value_to_str_debug(model->fields[i]);
-            if (i != model->fields.size() - 1)
-                res += ", ";
+    } else if (tag_ == Value_tag::Model) {
+        std::string m_name = as.model->signature.name;
+
+        if (m_name.empty()) {
+            res = "{";
+        } else {
+            res = std::format("{} {{", m_name);
         }
-        res += " }";
-    } else if (std::holds_alternative<mem::rc_ptr<Union_value>>(val.payload)) {
-        auto u = std::get<mem::rc_ptr<Union_value>>(val.payload);
-        res = std::format("{}{{ {}: {} }}", u->union_name, u->variant_name, value_to_str_debug(u->payload));
+
+        for (uint32_t i = 0; i < as.model->field_count; ++i) {
+            // Grab the field name from the type signature if it exists
+            if (i < as.model->signature.fields.size()) {
+                std::string f_name = as.model->signature.fields[i].first;
+                // If it's a positional anonymous field, f_name will be empty, so we skip the label
+                if (!f_name.empty()) {
+                    res += f_name + ": ";
+                }
+            }
+
+            // Recursively print the nested value
+            res += as.model->fields[i].to_debug_string(true);
+
+            if (i != as.model->field_count - 1) {
+                res += ", ";
+            }
+        }
+        res += "}";
+    } else if (tag_ == Value_tag::Union) {
+        std::string_view u_name(as.un->union_name->chars, as.un->union_name->length);
+        std::string_view v_name(as.un->variant_name->chars, as.un->variant_name->length);
+
+        res = std::format("{}::{}", u_name, v_name);
+
+        // If the union has a valid payload (not a void/nil variant), print it
+        if (as.un->payload && !as.un->payload->is_nil()) {
+            res += std::format("({})", as.un->payload->to_debug_string(true));
+        }
     } else {
-        res = value_to_string(val); // Fallback to internal
+        // Fallback for iterators/closures/green threads
+        res = to_string();
     }
 
-    // Unobtrusively indicate depth for debug strings!
-    for (uint8_t i = 0; i < val.option_depth; ++i) {
+    uint8_t visual_depth = option_depth_;
+    if (is_nil() && visual_depth > 0) {
+        visual_depth -= 1;
+    }
+
+    for (uint8_t i = 0; i < visual_depth; ++i) {
         res += "?";
     }
 
     return res;
 }
 
-// --- Equality Operators ---
-bool operator==(const Value &a, const Value &b)
+bool Value::operator==(const Value &other) const
 {
-    // Option depth must match strictly
-    if (a.option_depth != b.option_depth)
+    if (option_depth_ != other.option_depth_) {
         return false;
-
-    // If they aren't even the same variant type, they are definitely not equal
-    if (a.index() != b.index())
+    }
+    if (tag_ != other.tag_) {
         return false;
+    }
 
-    if (is_nil(a))
+    switch (tag_) {
+    case Value_tag::Nil:
         return true;
-    if (is_bool(a))
-        return get_bool(a) == get_bool(b);
-    if (is_signed_integer(a))
-        return get_int(a) == get_int(b);
-    if (is_unsigned_integer(a))
-        return get_uint(a) == get_uint(b);
-    if (is_float(a))
-        return get_float(a) == get_float(b);
-    if (is_string(a))
-        return get_string(a) == get_string(b);
+    case Value_tag::Bool:
+        return as.boolean == other.as.boolean;
 
-    // For Reference Counted objects, we do fast pointer equality
-    // (If you want deep-equality later for Arrays, you would loop through elements here)
-    if (is_closure(a))
-        return get_closure(a) == get_closure(b);
-    if (is_array(a))
-        return get_array(a) == get_array(b);
-    if (is_model(a))
-        return get_model(a) == get_model(b);
+    case Value_tag::I8:
+        return as.i8 == other.as.i8;
+    case Value_tag::I16:
+        return as.i16 == other.as.i16;
+    case Value_tag::I32:
+        return as.i32 == other.as.i32;
+    case Value_tag::I64:
+        return as.i64 == other.as.i64;
+    case Value_tag::U8:
+        return as.u8 == other.as.u8;
+    case Value_tag::U16:
+        return as.u16 == other.as.u16;
+    case Value_tag::U32:
+        return as.u32 == other.as.u32;
+    case Value_tag::U64:
+        return as.u64 == other.as.u64;
+    case Value_tag::F16:
+        return as.f16 == other.as.f16;
+    case Value_tag::F32:
+        return as.f32 == other.as.f32;
+    case Value_tag::F64:
+        return as.f64 == other.as.f64;
 
-    if (std::holds_alternative<mem::rc_ptr<Union_value>>(a.payload))
-        return std::get<mem::rc_ptr<Union_value>>(a.payload) == std::get<mem::rc_ptr<Union_value>>(b.payload);
-    if (std::holds_alternative<mem::rc_ptr<Iterator_value>>(a.payload))
-        return std::get<mem::rc_ptr<Iterator_value>>(a.payload) == std::get<mem::rc_ptr<Iterator_value>>(b.payload);
-    if (std::holds_alternative<mem::rc_ptr<Green_thread_value>>(a.payload))
-        return std::get<mem::rc_ptr<Green_thread_value>>(a.payload) == std::get<mem::rc_ptr<Green_thread_value>>(b.payload);
+    case Value_tag::String:
+        return as_string() == other.as_string();
 
+    // Fast Pointer Equality for heap structures
+    case Value_tag::Array:
+        return as.arr == other.as.arr;
+    case Value_tag::Model:
+        return as.model == other.as.model;
+    case Value_tag::Union:
+        return as.un == other.as.un;
+    case Value_tag::Closure:
+        return as.closure == other.as.closure;
+    case Value_tag::Iterator:
+        return as.iter == other.as.iter;
+    case Value_tag::Green_thread:
+        return as.gt == other.as.gt;
+    case Value_tag::Upvalue:
+        return as.upvalue == other.as.upvalue;
+    }
     return false;
 }
 
-bool operator!=(const Value &a, const Value &b)
+
+types::Primitive_kind numeric_type_of(const Value& literal) {
+    if (literal.is_float()) {
+        return types::Primitive_kind::F64;
+    }
+    return types::Primitive_kind::I32;
+}
+
+std::optional<Value> coerce_numeric_literal(const Value &literal, types::Primitive_kind target_type)
 {
-    return !(a == b);
+    if (literal.is_float()) {
+        switch (target_type) {
+        case types::Primitive_kind::F16:
+        case types::Primitive_kind::F32:
+        case types::Primitive_kind::F64:
+            return literal.cast_numeric(target_type);
+        default:
+            // Reject implicit float-to-int narrowing (e.g., 10.5i32 is banned)
+            return std::nullopt;
+        }
+    }
+
+    if (literal.is_integer()) {
+        int64_t raw_val = literal.as_int();
+
+        switch (target_type) {
+        // Integer-to-Integer bounds checking
+        case types::Primitive_kind::I8:
+            if (raw_val >= std::numeric_limits<int8_t>::min() && raw_val <= std::numeric_limits<int8_t>::max()) {
+                return Value(static_cast<int8_t>(raw_val));
+            }
+            break;
+        case types::Primitive_kind::I16:
+            if (raw_val >= std::numeric_limits<int16_t>::min() && raw_val <= std::numeric_limits<int16_t>::max()) {
+                return Value(static_cast<int16_t>(raw_val));
+            }
+            break;
+        case types::Primitive_kind::I32:
+            if (raw_val >= std::numeric_limits<int32_t>::min() && raw_val <= std::numeric_limits<int32_t>::max()) {
+                return Value(static_cast<int32_t>(raw_val));
+            }
+            break;
+        case types::Primitive_kind::I64:
+            return Value(static_cast<int64_t>(raw_val));
+
+        case types::Primitive_kind::U8:
+            if (raw_val >= 0 && raw_val <= std::numeric_limits<uint8_t>::max()) {
+                return Value(static_cast<uint8_t>(raw_val));
+            }
+            break;
+        case types::Primitive_kind::U16:
+            if (raw_val >= 0 && raw_val <= std::numeric_limits<uint16_t>::max()) {
+                return Value(static_cast<uint16_t>(raw_val));
+            }
+            break;
+        case types::Primitive_kind::U32:
+            if (raw_val >= 0 && raw_val <= std::numeric_limits<uint32_t>::max()) {
+                return Value(static_cast<uint32_t>(raw_val));
+            }
+            break;
+        case types::Primitive_kind::U64:
+            if (raw_val >= 0) {
+                return Value(static_cast<uint64_t>(raw_val));
+            }
+            break;
+
+        case types::Primitive_kind::F16:
+        case types::Primitive_kind::F32:
+        case types::Primitive_kind::F64:
+            return std::nullopt;
+
+        default:
+            return std::nullopt;
+        }
+    }
+
+    return std::nullopt;
 }
 
 } // namespace phos

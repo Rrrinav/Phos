@@ -46,10 +46,11 @@ private:
             }
 
             if (!in_string) {
-                if (c == '{')
+                if (c == '{') {
                     brace_count++;
-                else if (c == '}')
+                } else if (c == '}') {
                     brace_count--;
+                }
             }
         }
 
@@ -131,16 +132,19 @@ private:
             auto new_statements = std::move(*parse_result);
 
             std::vector<std::unique_ptr<phos::ast::Stmt>> combined;
-            for (auto &stmt : global_statements)
+            for (auto &stmt : global_statements) {
                 combined.push_back(std::make_unique<phos::ast::Stmt>(std::move(*stmt)));
-            for (auto &stmt : new_statements)
+            }
+            for (auto &stmt : new_statements) {
                 combined.push_back(std::make_unique<phos::ast::Stmt>(std::move(*stmt)));
+            }
 
             // Type check in full context
             auto checked = type_checker.check(combined);
             if (!checked.empty()) {
-                for (auto e : checked)
+                for (auto e : checked) {
                     std::println(stderr, "{}:{}", filename, e.format());
+                }
                 return false;
             }
 
@@ -152,8 +156,9 @@ private:
             }
 
             // Add new to globals
-            for (auto &stmt : new_statements)
+            for (auto &stmt : new_statements) {
                 global_statements.push_back(std::move(stmt));
+            }
 
             return true;
         } catch (const std::exception &e) {
@@ -172,10 +177,11 @@ public:
 
         while (true) {
             // Show appropriate prompt
-            if (input.empty())
+            if (input.empty()) {
                 std::print(" phos > ");
-            else
+            } else {
                 std::print("  ... ");
+            }
 
             if (!std::getline(std::cin, line)) {
                 // EOF (Ctrl+D)
@@ -211,8 +217,9 @@ public:
             }
 
             // Accumulate input
-            if (!input.empty())
+            if (!input.empty()) {
                 input += "\n";
+            }
             input += line;
 
             // Check if input is complete

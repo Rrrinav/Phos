@@ -1,367 +1,658 @@
 #include "assembler.hpp"
 
-#include "chunk.hpp"
-
 #include <algorithm>
 #include <cctype>
 #include <format>
-#include <iostream>
-#include <map>
 #include <sstream>
+#include <unordered_map>
+#include <vector>
 
 namespace phos::vm {
 
-std::unordered_map<std::string, Op_code> Assembler::get_opcode_map()
+static std::string primitive_to_string(types::Primitive_kind kind)
 {
-    std::unordered_map<std::string, Op_code> map;
-    for (int i = 0; i <= static_cast<int>(Op_code::Halt); ++i) {
-        Op_code op = static_cast<Op_code>(i);
-        std::string mnemonic = op_code_to_string(op);
-        std::transform(mnemonic.begin(), mnemonic.end(), mnemonic.begin(), ::toupper);
-        map[mnemonic] = op;
+    switch (kind) {
+    case types::Primitive_kind::I8:
+        return "i8";
+    case types::Primitive_kind::I16:
+        return "i16";
+    case types::Primitive_kind::I32:
+        return "i32";
+    case types::Primitive_kind::I64:
+        return "i64";
+    case types::Primitive_kind::U8:
+        return "u8";
+    case types::Primitive_kind::U16:
+        return "u16";
+    case types::Primitive_kind::U32:
+        return "u32";
+    case types::Primitive_kind::U64:
+        return "u64";
+    case types::Primitive_kind::F16:
+        return "f16";
+    case types::Primitive_kind::F32:
+        return "f32";
+    case types::Primitive_kind::F64:
+        return "f64";
+    case types::Primitive_kind::Bool:
+        return "bool";
+    default:
+        return "unknown";
     }
-    return map;
 }
 
-std::unordered_map<Op_code, std::string> Assembler::get_mnemonic_map()
+static std::string trim(std::string s)
 {
-    std::unordered_map<Op_code, std::string> map;
-    for (int i = 0; i <= static_cast<int>(Op_code::Halt); ++i) {
-        Op_code op = static_cast<Op_code>(i);
-        std::string mnemonic = op_code_to_string(op);
-        std::transform(mnemonic.begin(), mnemonic.end(), mnemonic.begin(), ::toupper);
-        map[op] = mnemonic;
-    }
-    return map;
+    s.erase(s.begin(), std::find_if(s.begin(), s.end(), [](unsigned char ch) { return !std::isspace(ch); }));
+    s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) { return !std::isspace(ch); }).base(), s.end());
+    return s;
 }
 
-// =========================================================================
-// SERIALIZER (Bytecode -> PhosAsm)
-// =========================================================================
-std::string Assembler::serialize(mem::rc_ptr<Closure_value> main_closure)
+static std::string escape_string(std::string_view input)
+{
+    std::string out;
+    out.reserve(input.length() + 2);
+    for (char c : input) {
+        switch (c) {
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
+        case '\\':
+            out += "\\\\";
+            break;
+        case '\"':
+            out += "\\\"";
+            break;
+        default:
+            out += c;
+            break;
+        }
+    }
+    return out;
+}
+
+static std::string unescape_string(std::string_view input)
+{
+    std::string out;
+    out.reserve(input.length());
+    for (size_t i = 0; i < input.length(); ++i) {
+        if (input[i] == '\\' && i + 1 < input.length()) {
+            char next = input[++i];
+            switch (next) {
+            case 'n':
+                out += '\n';
+                break;
+            case 'r':
+                out += '\r';
+                break;
+            case 't':
+                out += '\t';
+                break;
+            case '\\':
+                out += '\\';
+                break;
+            case '"':
+                out += '"';
+                break;
+            default:
+                out += '\\';
+                out += next;
+                break;
+            }
+        } else {
+            out += input[i];
+        }
+    }
+    return out;
+}
+
+std::string Assembler::disassemble_instruction(Instruction inst, const Closure_data *closure)
+{
+    Opcode op = inst.rrr.op;
+    std::string name = opcode_to_string(op);
+
+    std::string asm_str;
+    std::string comment;
+
+    switch (op) {
+    case Opcode::Load_const:
+        asm_str = std::format("{:<14} %r{}, $K{:03}", name, inst.ri.dst, inst.ri.imm);
+        if (closure && inst.ri.imm < closure->constant_count) {
+            Value val = closure->constants[inst.ri.imm];
+            if (val.is_integer()) {
+                comment = std::format("%r{} = {}", inst.ri.dst, val.as_int());
+            } else if (val.is_float()) {
+                comment = std::format("%r{} = {}", inst.ri.dst, val.as_float());
+            } else if (val.is_string()) {
+                comment = std::format("%r{} = \"{}\"", inst.ri.dst, escape_string(val.as_string()));
+            } else if (val.is_closure()) {
+                std::string cname = "anon";
+                if (val.as_closure() && val.as_closure()->name && val.as_closure()->name->length > 0) {
+                    cname = std::string(val.as_closure()->name->chars, val.as_closure()->name->length);
+                }
+                comment = std::format("%r{} = <closure: {}>", inst.ri.dst, cname);
+            }
+        }
+        break;
+
+    case Opcode::Jump:
+        asm_str = std::format("{:<14} .L{:04}", name, static_cast<uint32_t>(inst.i.imm));
+        break;
+
+    case Opcode::Jump_if_false:
+        asm_str = std::format("{:<14} %r{}, .L{:04}", name, inst.ri.dst, inst.ri.imm);
+        break;
+
+    case Opcode::Load_nil:
+    case Opcode::Load_true:
+    case Opcode::Load_false:
+    case Opcode::Print:
+    case Opcode::Return:
+        asm_str = std::format("{:<14} %r{}", name, inst.rrr.dst);
+        break;
+
+    case Opcode::Move:
+        asm_str = std::format("{:<14} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
+        comment = std::format("%r{} = %r{}", inst.rrr.dst, inst.rrr.src_a);
+        break;
+
+    case Opcode::Get_upvalue:
+    case Opcode::Set_upvalue:
+        asm_str = std::format("{:<14} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
+        comment = std::format("upval[{}]", inst.rrr.src_a);
+        break;
+
+    case Opcode::Make_closure:
+        asm_str = std::format("{:<14} %r{}, $K{:03}", name, inst.ri.dst, inst.ri.imm);
+        if (closure && inst.ri.imm < closure->constant_count) {
+            Value val = closure->constants[inst.ri.imm];
+            if (val.is_closure()) {
+                std::string cname = "anon";
+                if (val.as_closure() && val.as_closure()->name && val.as_closure()->name->length > 0) {
+                    cname = std::string(val.as_closure()->name->chars, val.as_closure()->name->length);
+                }
+                comment = std::format("blueprint: <closure: {}>", cname);
+            }
+        }
+        break;
+
+    case Opcode::Call:
+        asm_str = std::format("{:<14} %r{}, %r{}, argc: {}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        break;
+
+    case Opcode::Make_array:
+        asm_str = std::format("{:<14} %r{}, %r{}, count: {}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        comment = std::format("%r{} = [%r{} ... %r{}]", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_a + inst.rrr.src_b - 1);
+        break;
+
+    case Opcode::Load_index:
+        asm_str = std::format("{:<14} %r{}, %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        comment = std::format("%r{} = %r{}[%r{}]", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        break;
+
+    case Opcode::Store_index:
+        asm_str = std::format("{:<14} %r{}, %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        comment = std::format("%r{}[%r{}] = %r{}", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        break;
+
+    case Opcode::Make_model:
+        asm_str = std::format("{:<14} %r{}, %r{}, fields: {}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        comment = std::format("%r{} = Model(%r{} ... %r{})", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_a + inst.rrr.src_b - 1);
+        break;
+
+    case Opcode::Load_field:
+        asm_str = std::format("{:<14} %r{}, %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        comment = std::format("%r{} = %r{}.field[%r{}]", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        break;
+
+    case Opcode::Store_field:
+        asm_str = std::format("{:<14} %r{}, %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        comment = std::format("%r{}.field[%r{}] = %r{}", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        break;
+    case Opcode::Wrap_option:
+        asm_str = std::format("{:<14} %r{}, %r{}, wraps: {}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        break;
+
+    case Opcode::Unwrap_option:
+        asm_str = std::format("{:<14} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
+        break;
+
+    case Opcode::Test_nil:
+        asm_str = std::format("{:<14} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
+        break;
+
+    case Opcode::Test_val:
+        asm_str = std::format("{:<14} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
+        break;
+
+    case Opcode::Make_iter:
+        asm_str = std::format("{:<14} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
+        break;
+
+    case Opcode::Iter_next:
+        asm_str = std::format("{:<14} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
+        break;
+
+    case Opcode::Iter_prev:
+        asm_str = std::format("{:<14} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
+        break;
+
+    case Opcode::Panic:
+        asm_str = std::format("{:<14} %r{}", name, inst.rrr.src_a);
+        break;
+
+    case Opcode::Add_i64:
+    case Opcode::Add_u64:
+    case Opcode::Add_f64:
+    case Opcode::Sub_i64:
+    case Opcode::Sub_u64:
+    case Opcode::Sub_f64:
+    case Opcode::Mul_i64:
+    case Opcode::Mul_u64:
+    case Opcode::Mul_f64:
+    case Opcode::Div_i64:
+    case Opcode::Div_u64:
+    case Opcode::Div_f64:
+    case Opcode::Mod_i64:
+    case Opcode::Mod_u64:
+    case Opcode::Mod_f64:
+    case Opcode::Eq_i64:
+    case Opcode::Neq_i64:
+    case Opcode::Lt_i64:
+    case Opcode::Lte_i64:
+    case Opcode::Gt_i64:
+    case Opcode::Gte_i64:
+    case Opcode::Eq_u64:
+    case Opcode::Neq_u64:
+    case Opcode::Lt_u64:
+    case Opcode::Lte_u64:
+    case Opcode::Gt_u64:
+    case Opcode::Gte_u64:
+    case Opcode::Eq_f64:
+    case Opcode::Neq_f64:
+    case Opcode::Lt_f64:
+    case Opcode::Lte_f64:
+    case Opcode::Gt_f64:
+    case Opcode::Gte_f64:
+        asm_str = std::format("{:<14} %r{}, %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
+        break;
+    case Opcode::Neg_i64:
+    case Opcode::Neg_f64:
+    case Opcode::Not:
+    case Opcode::BitNot_i64:
+    case Opcode::BitNot_u64:
+        asm_str = std::format("{:<14} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
+        break;
+    case Opcode::Cast_i8:
+    case Opcode::Cast_i16:
+    case Opcode::Cast_i32:
+    case Opcode::Cast_i64:
+    case Opcode::Cast_u8:
+    case Opcode::Cast_u16:
+    case Opcode::Cast_u32:
+    case Opcode::Cast_u64:
+    case Opcode::Cast_f16:
+    case Opcode::Cast_f32:
+    case Opcode::Cast_f64:
+        asm_str = std::format("{:<14} %r{}", name, inst.rrr.dst);
+        break;
+
+    default:
+        asm_str = std::format("{:<14} ???", name);
+        break;
+    }
+
+    if (!comment.empty()) {
+        return std::format("{:<32} ; {}", asm_str, comment);
+    }
+    return asm_str;
+}
+
+std::string Assembler::serialize(const Closure_data &closure)
 {
     std::stringstream ss;
-    auto mnemonics = get_mnemonic_map();
-    std::unordered_map<Closure_value *, int> closure_ids;
-    std::vector<mem::rc_ptr<Closure_value>> closures;
 
-    closures.push_back(main_closure);
-    closure_ids[main_closure.get()] = 0;
-
-    for (size_t i = 0; i < closures.size(); ++i) {
-        auto closure = closures[i];
-        int id = closure_ids[closure.get()];
-        std::string name = closure->name.empty() ? "anon" : closure->name;
-
-        ss << "; ==========================================================\n";
-        ss << "; Function: " << name << "\n";
-        ss << "; ID: " << id << " | Arity: " << closure->arity << " | Upvalues: " << closure->upvalue_count << "\n";
-        ss << "; ==========================================================\n";
-        ss << ".fn " << id << " " << name << " " << closure->arity << " " << closure->upvalue_count << "\n\n";
-
-        auto chunk = closure->chunk;
-
-        ss << "  .constants:\n";
-        for (size_t j = 0; j < chunk->constants.size(); ++j) {
-            const auto &val = chunk->constants[j];
-            ss << "      @" << j << " = ";
-            if (is_signed_integer(val))
-                ss << "int " << get_int(val) << "\n";
-            else if (is_unsigned_integer(val))
-                ss << "uint " << get_uint(val) << "\n";
-            else if (is_float(val))
-                ss << "float " << get_float(val) << "\n";
-            else if (is_bool(val))
-                ss << "bool " << (get_bool(val) ? "true" : "false") << "\n";
-            else if (is_string(val))
-                ss << "string \"" << get_string(val) << "\"\n";
-            else if (is_closure(val)) {
-                auto child = get_closure(val);
-                if (!closure_ids.count(child.get())) {
-                    closure_ids[child.get()] = closures.size();
-                    closures.push_back(child);
+    // 1. Recursively find and print nested closures FIRST
+    if (closure.constants != nullptr) {
+        for (size_t i = 0; i < closure.constant_count; ++i) {
+            if (closure.constants[i].is_closure() && closure.constants[i].as_closure() != nullptr) {
+                Closure_data *nested = closure.constants[i].as_closure();
+                // Skip native functions! They don't have bytecode to serialize.
+                if (!nested->native_func.has_value()) {
+                    ss << serialize(*nested);
                 }
-                ss << "fn " << closure_ids[child.get()] << "\n";
             }
         }
-
-        // PRE-PASS: Find all jump targets and assign labels
-        std::map<size_t, std::string> labels;
-        int label_counter = 0;
-        for (size_t offset = 0; offset < chunk->code.size();) {
-            Op_code op = static_cast<Op_code>(chunk->code[offset]);
-            if (op == Op_code::Jump || op == Op_code::Jump_if_false || op == Op_code::Jump_if_true || op == Op_code::Loop) {
-                uint16_t jump = static_cast<uint16_t>(chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
-                size_t target = (op == Op_code::Loop) ? (offset + 3 - jump) : (offset + 3 + jump);
-                if (!labels.count(target))
-                    labels[target] = ".L" + std::to_string(label_counter++);
-                offset += 3;
-            } else if (
-                op == Op_code::Constant || op == Op_code::Define_global || op == Op_code::Get_global || op == Op_code::Set_global
-                || op == Op_code::Match_variant || op == Op_code::Get_local || op == Op_code::Set_local || op == Op_code::Get_upvalue
-                || op == Op_code::Set_upvalue || op == Op_code::Call || op == Op_code::Create_array || op == Op_code::Get_field
-                || op == Op_code::Set_field || op == Op_code::Cast) {
-                offset += 2;
-            } else if (op == Op_code::Construct_union || op == Op_code::Construct_model) {
-                offset += 3;
-            } else if (op == Op_code::Make_closure) {
-                uint8_t const_idx = chunk->code[offset + 1];
-                auto child = get_closure(chunk->constants[const_idx]);
-                offset += 2 + (child->upvalue_count * 2);
-            } else {
-                offset += 1;
-            }
-        }
-
-        // MAIN PASS: Generate Code
-        ss << "\n  .code:\n";
-        for (size_t offset = 0; offset < chunk->code.size();) {
-            if (labels.count(offset))
-                ss << "    " << labels[offset] << ":\n";
-
-            Op_code op = static_cast<Op_code>(chunk->code[offset]);
-            std::string mnemonic = mnemonics[op];
-            std::string args = "";
-            std::string comment = "";
-
-            switch (op) {
-            case Op_code::Constant:
-            case Op_code::Define_global:
-            case Op_code::Get_global:
-            case Op_code::Set_global:
-            case Op_code::Match_variant: {
-                uint8_t idx = chunk->code[offset + 1];
-                args = "@" + std::to_string(idx);
-                comment = value_to_string(chunk->constants[idx]);
-                offset += 2;
-                break;
-            }
-            case Op_code::Get_local:
-            case Op_code::Set_local:
-            case Op_code::Get_field:
-            case Op_code::Set_field: {
-                args = "%" + std::to_string(chunk->code[offset + 1]);
-                offset += 2;
-                break;
-            }
-            case Op_code::Get_upvalue:
-            case Op_code::Set_upvalue: {
-                args = "^" + std::to_string(chunk->code[offset + 1]);
-                offset += 2;
-                break;
-            }
-            case Op_code::Call:
-            case Op_code::Create_array: {
-                args = "#" + std::to_string(chunk->code[offset + 1]);
-                offset += 2;
-                break;
-            }
-            case Op_code::Jump:
-            case Op_code::Jump_if_false:
-            case Op_code::Jump_if_true:
-            case Op_code::Loop: {
-                uint16_t jump = static_cast<uint16_t>(chunk->code[offset + 1] << 8) | chunk->code[offset + 2];
-                size_t target = (op == Op_code::Loop) ? (offset + 3 - jump) : (offset + 3 + jump);
-                args = labels[target];
-                offset += 3;
-                break;
-            }
-            case Op_code::Construct_model:
-            case Op_code::Construct_union: {
-                uint8_t arg1 = chunk->code[offset + 1];
-                uint8_t arg2 = chunk->code[offset + 2];
-                args = "@" + std::to_string(arg1) + " @" + std::to_string(arg2);
-                comment = value_to_string(chunk->constants[arg1]) + "::" + value_to_string(chunk->constants[arg2]);
-                offset += 3;
-                break;
-            }
-            case Op_code::Make_closure: {
-                uint8_t const_idx = chunk->code[offset + 1];
-                args = "@" + std::to_string(const_idx);
-                auto child_closure = get_closure(chunk->constants[const_idx]);
-                comment = child_closure->name;
-                offset += 2;
-                ss << std::format("      {:<20} {:<15} ; {}\n", mnemonic, args, comment);
-                for (size_t j = 0; j < child_closure->upvalue_count; j++) {
-                    uint8_t is_local = chunk->code[offset];
-                    uint8_t idx = chunk->code[offset + 1];
-                    std::string route_arg = (is_local ? "%" : "^") + std::to_string(idx);
-                    ss << std::format("        {:<18} {:<15} ; {}\n", ".route", route_arg, is_local ? "capture local" : "pass upvalue");
-                    offset += 2;
-                }
-                continue;
-            }
-            default:
-                offset += 1;
-                break;
-            }
-
-            // Zero-Cost Formatting (No trailing whitespaces on 1-byte instructions)
-            if (comment.empty() && args.empty())
-                ss << "      " << mnemonic << "\n";
-            else if (comment.empty())
-                ss << std::format("      {:<20} {}\n", mnemonic, args);
-            else if (args.empty())
-                ss << std::format("      {:<36} ; {}\n", mnemonic, comment);
-            else
-                ss << std::format("      {:<20} {:<15} ; {}\n", mnemonic, args, comment);
-        }
-
-        if (labels.count(chunk->code.size()))
-            ss << "    " << labels[chunk->code.size()] << ":\n";
-        ss << ".endfn\n\n";
     }
+
+    // 2. Print current closure
+    std::string func_name = "main";
+    if (closure.name && closure.name->length > 0) {
+        func_name = std::string(closure.name->chars, closure.name->length);
+    }
+
+    ss << std::format("@fn {}(arity: {}) {{\n", func_name, closure.arity);
+
+    ss << "  .constants:\n";
+    for (size_t i = 0; i < closure.constant_count; i++) {
+        Value val = closure.constants[i];
+        if (val.is_bool()) {
+            ss << std::format("    $K{:03} = bool {}\n", i, val.as_bool() ? "true" : "false");
+        } else if (val.is_float()) {
+            ss << std::format("    $K{:03} = {} {}\n", i, primitive_to_string(val.numeric_type()), val.to_string());
+        } else if (val.is_integer()) {
+            if (val.is_u_integer()) {
+                ss << std::format("    $K{:03} = {} {}\n", i, primitive_to_string(val.numeric_type()), val.as_uint());
+            } else {
+                ss << std::format("    $K{:03} = {} {}\n", i, primitive_to_string(val.numeric_type()), val.as_int());
+            }
+        } else if (val.is_string()) {
+            ss << std::format("    $K{:03} = str \"{}\"\n", i, escape_string(val.as_string()));
+        } else if (val.is_nil()) {
+            ss << std::format("    $K{:03} = nil\n", i);
+        } else if (val.is_closure()) {
+            std::string cname = "anon";
+            if (val.as_closure() && val.as_closure()->name && val.as_closure()->name->length > 0) {
+                cname = std::string(val.as_closure()->name->chars, val.as_closure()->name->length);
+            }
+            ss << std::format("    $K{:03} = <closure: {}>\n", i, cname);
+        } else {
+            ss << std::format("    $K{:03} = unknown\n", i);
+        }
+    }
+
+    if (closure.constant_count > 0) {
+        ss << "\n";
+    }
+
+    ss << "  .code:\n";
+
+    // First pass: find all instructions that are targets of a jump
+    std::vector<bool> is_target(closure.code_count, false);
+    for (size_t i = 0; i < closure.code_count; i++) {
+        Opcode op = closure.code[i].rrr.op;
+        if (op == Opcode::Jump) {
+            is_target[closure.code[i].i.imm] = true;
+        } else if (op == Opcode::Jump_if_false) {
+            is_target[closure.code[i].ri.imm] = true;
+        }
+    }
+
+    // Second pass: write the instructions, injecting labels where needed
+    for (size_t i = 0; i < closure.code_count; i++) {
+        if (is_target[i]) {
+            ss << std::format("  .L{:04}:\n", i);
+        }
+        Instruction inst = closure.code[i];
+        std::string inst_str = disassemble_instruction(inst, &closure);
+        ss << std::format("    {}\n", inst_str);
+
+        // Extract and format routing bytes instead of treating them as instructions
+        if (inst.rrr.op == Opcode::Make_closure) {
+            uint16_t const_idx = inst.ri.imm;
+            if (const_idx < closure.constant_count && closure.constants[const_idx].is_closure()) {
+                Closure_data *blueprint = closure.constants[const_idx].as_closure();
+                for (size_t u = 0; u < blueprint->upvalue_count; u++) {
+                    i++; // Consume the routing byte
+                    if (i < closure.code_count) {
+                        Instruction route = closure.code[i];
+                        bool is_local = (route.rrr.src_a == 1);
+                        uint8_t index = route.rrr.src_b;
+                        ss << std::format("      .route is_local: {}, index: {}\n", is_local ? "true" : "false", index);
+                    }
+                }
+            }
+        }
+    }
+
+    ss << "}\n\n";
+
     return ss.str();
 }
 
-// =========================================================================
-// ASSEMBLER (PhosAsm -> Bytecode)
-// =========================================================================
-mem::rc_ptr<Closure_value> Assembler::assemble(const std::string &ir_source)
+Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &arena)
 {
-    std::unordered_map<int, mem::rc_ptr<Closure_value>> closures;
-    std::stringstream ss(ir_source);
+    std::istringstream ss(ir_source);
     std::string line;
-    auto op_map = get_opcode_map();
 
-    mem::rc_ptr<Closure_value> current_closure = nullptr;
+    bool in_constants = false;
     bool in_code = false;
 
-    // Backpatching state
-    struct UnresolvedJump
+    // We hold all parsed closures until the end to resolve them.
+    std::unordered_map<std::string, Closure_data *> parsed_closures;
+    Closure_data *main_closure = nullptr;
+
+    Closure_data *current_closure = nullptr;
+    std::vector<Value> temp_constants;
+    std::vector<Instruction> temp_code;
+
+    // Deferred linking for hoisted closures in constants.
+    struct DeferredLink
     {
-        size_t patch_offset;
-        size_t instruction_offset;
-        std::string label;
-        bool is_loop;
+        Closure_data *owner;
+        size_t const_index;
+        std::string target_name;
     };
-    std::unordered_map<std::string, size_t> current_labels;
-    std::vector<UnresolvedJump> current_jumps;
+    std::vector<DeferredLink> deferred_links;
 
-    // Pass 1: Allocate closures
     while (std::getline(ss, line)) {
-        std::stringstream ls(line);
-        std::string tok;
-        ls >> tok;
-        if (tok == ".fn") {
-            int id, arity, upvals;
-            std::string name;
-            ls >> id >> name >> arity >> upvals;
-            types::Function_type dummy_sig;
-            auto chunk = mem::make_rc<Chunk>();
-            auto closure = mem::make_rc<Closure_value>(name, arity, dummy_sig, chunk);
-            closure->upvalue_count = upvals;
-            closures[id] = closure;
+        size_t comment_pos = line.find(';');
+        if (comment_pos != std::string::npos) {
+            line = line.substr(0, comment_pos);
         }
-    }
 
-    // Pass 2: Populate chunks
-    ss.clear();
-    ss.seekg(0);
-    while (std::getline(ss, line)) {
-        line.erase(0, line.find_first_not_of(" \t"));
-        if (line.empty() || line[0] == ';')
+        line = trim(line);
+        if (line.empty()) {
             continue;
+        }
 
-        std::stringstream ls(line);
-        std::string tok;
-        ls >> tok;
+        if (line.starts_with("@fn")) {
+            current_closure = arena.allocate<Closure_data>();
+            new (current_closure) Closure_data();
 
-        if (tok == ".fn") {
-            int id;
-            ls >> id;
-            current_closure = closures[id];
+            temp_constants.clear();
+            temp_code.clear();
+
+            size_t name_start = 4;
+            size_t name_end = line.find('(');
+            std::string name = line.substr(name_start, name_end - name_start);
+            current_closure->name = static_cast<String_data *>(arena.allocate_bytes(sizeof(String_data) + name.length() + 1));
+            current_closure->name->length = name.length();
+            std::copy(name.begin(), name.end(), current_closure->name->chars);
+            current_closure->name->chars[name.length()] = '\0';
+
+            size_t arity_pos = line.find("arity:");
+            current_closure->arity = std::stoi(line.substr(arity_pos + 6));
+
+            in_constants = false;
             in_code = false;
-        } else if (tok == ".constants:")
-            continue;
-        else if (tok == ".code:")
+        } else if (line == ".constants:") {
+            in_constants = true;
+            in_code = false;
+        } else if (line == ".code:") {
+            in_constants = false;
             in_code = true;
-        else if (tok == ".endfn") {
-            // Resolve all Jumps for this closure perfectly!
-            for (const auto &jump : current_jumps) {
-                if (!current_labels.count(jump.label)) {
-                    std::cerr << "Assembler Error: Undefined label '" << jump.label << "'\n";
-                    exit(1);
+        } else if (line == "}") {
+            // Finalize the current closure
+            if (current_closure) {
+                current_closure->constant_count = temp_constants.size();
+                if (current_closure->constant_count > 0) {
+                    current_closure->constants = arena.allocate<Value>(current_closure->constant_count);
+                    std::copy(temp_constants.begin(), temp_constants.end(), current_closure->constants);
                 }
-                size_t target = current_labels[jump.label];
-                size_t distance;
-                if (jump.is_loop)
-                    distance = (jump.instruction_offset + 3) - target;
-                else
-                    distance = target - (jump.instruction_offset + 3);
 
-                current_closure->chunk->code[jump.patch_offset] = (distance >> 8) & 0xff;
-                current_closure->chunk->code[jump.patch_offset + 1] = distance & 0xff;
-            }
-            current_labels.clear();
-            current_jumps.clear();
-            current_closure = nullptr;
-        } else if (tok.starts_with("@") && tok.find('=') == std::string::npos) {
-            std::string eq, type, val;
-            ls >> eq >> type;
-            std::getline(ls, val);
-            val.erase(0, val.find_first_not_of(" \t"));
+                current_closure->code_count = temp_code.size();
+                if (current_closure->code_count > 0) {
+                    current_closure->code = arena.allocate<Instruction>(current_closure->code_count);
+                    std::copy(temp_code.begin(), temp_code.end(), current_closure->code);
+                }
 
-            if (type == "int")
-                current_closure->chunk->add_constant(Value(static_cast<std::int64_t>(std::stoll(val))));
-            else if (type == "uint")
-                current_closure->chunk->add_constant(Value(static_cast<std::uint64_t>(std::stoull(val))));
-            else if (type == "float")
-                current_closure->chunk->add_constant(Value(std::stod(val)));
-            else if (type == "bool")
-                current_closure->chunk->add_constant(Value(val == "true"));
-            else if (type == "fn")
-                current_closure->chunk->add_constant(Value(closures[std::stoi(val)]));
-            else if (type == "string") {
-                val = val.substr(1, val.length() - 2);
-                current_closure->chunk->add_constant(Value(val));
+                std::string c_name(current_closure->name->chars, current_closure->name->length);
+                parsed_closures[c_name] = current_closure;
+
+                if (c_name == "main") {
+                    main_closure = current_closure;
+                }
+
+                current_closure = nullptr;
             }
-        } else if (in_code) {
-            if (tok.ends_with(":")) {
-                std::string label_name = tok.substr(0, tok.length() - 1);
-                current_labels[label_name] = current_closure->chunk->code.size();
+            in_constants = false;
+            in_code = false;
+        } else if (in_constants && current_closure) {
+            size_t eq_pos = line.find('=');
+            if (eq_pos == std::string::npos) {
                 continue;
             }
 
-            if (tok == ".route") {
-                std::string arg;
-                ls >> arg;
-                bool is_local = arg.starts_with("%");
-                uint8_t idx = static_cast<uint8_t>(std::stoi(arg.substr(1)));
-                current_closure->chunk->write(static_cast<uint8_t>(is_local), {0, 0}); // 0 cost location tracking
-                current_closure->chunk->write(idx, {0, 0});
+            std::string type_val = trim(line.substr(eq_pos + 1));
+
+            if (type_val.starts_with("i8")) {
+                temp_constants.push_back(Value(static_cast<int8_t>(std::stoi(type_val.substr(3)))));
+            } else if (type_val.starts_with("i16")) {
+                temp_constants.push_back(Value(static_cast<int16_t>(std::stoi(type_val.substr(4)))));
+            } else if (type_val.starts_with("i32")) {
+                temp_constants.push_back(Value(static_cast<int32_t>(std::stol(type_val.substr(4)))));
+            } else if (type_val.starts_with("i64")) {
+                temp_constants.push_back(Value(static_cast<int64_t>(std::stoll(type_val.substr(4)))));
+            } else if (type_val.starts_with("u8")) {
+                temp_constants.push_back(Value(static_cast<uint8_t>(std::stoul(type_val.substr(3)))));
+            } else if (type_val.starts_with("u16")) {
+                temp_constants.push_back(Value(static_cast<uint16_t>(std::stoul(type_val.substr(4)))));
+            } else if (type_val.starts_with("u32")) {
+                temp_constants.push_back(Value(static_cast<uint32_t>(std::stoul(type_val.substr(4)))));
+            } else if (type_val.starts_with("u64")) {
+                temp_constants.push_back(Value(static_cast<uint64_t>(std::stoull(type_val.substr(4)))));
+            } else if (type_val.starts_with("f16")) {
+                temp_constants.push_back(Value(static_cast<numeric::float16_t>(std::stof(type_val.substr(4)))));
+            } else if (type_val.starts_with("f32")) {
+                temp_constants.push_back(Value(static_cast<float>(std::stof(type_val.substr(4)))));
+            } else if (type_val.starts_with("f64")) {
+                temp_constants.push_back(Value(static_cast<double>(std::stod(type_val.substr(4)))));
+            } else if (type_val.starts_with("bool")) {
+                temp_constants.push_back(Value(trim(type_val.substr(5)) == "true"));
+            } else if (type_val.starts_with("nil")) {
+                temp_constants.push_back(Value(nullptr));
+            } else if (type_val.starts_with("str")) {
+                size_t first_quote = type_val.find('"');
+                if (first_quote != std::string::npos) {
+                    std::string escaped_content;
+                    bool in_escape = false;
+
+                    for (size_t i = first_quote + 1; i < type_val.length(); ++i) {
+                        char c = type_val[i];
+                        if (in_escape) {
+                            escaped_content += c;
+                            in_escape = false;
+                        } else if (c == '\\') {
+                            escaped_content += c;
+                            in_escape = true;
+                        } else if (c == '"') {
+                            break;
+                        } else {
+                            escaped_content += c;
+                        }
+                    }
+                    temp_constants.push_back(Value::make_string(arena, unescape_string(escaped_content)));
+                }
+            } else if (type_val.starts_with("<closure:")) {
+                std::string target = type_val.substr(10, type_val.length() - 11);
+                temp_constants.push_back(Value(nullptr)); // Put a placeholder, we link it later.
+                deferred_links.push_back({current_closure, temp_constants.size() - 1, target});
+            } else {
+                temp_constants.push_back(Value(nullptr));
+            }
+        } else if (in_code && current_closure) {
+            // Ignore label definitions completely during deserialization
+            if (line.starts_with(".L") && line.ends_with(":")) {
                 continue;
             }
 
-            if (!op_map.count(tok))
-                continue;
+            std::istringstream token_stream(line);
+            std::string op_str;
+            token_stream >> op_str;
 
-            Op_code op = op_map[tok];
-            current_closure->chunk->write(op, {0, 0});
+            Opcode op = string_to_opcode(op_str);
 
-            std::string arg1, arg2;
-            if (op == Op_code::Constant || op == Op_code::Define_global || op == Op_code::Get_global || op == Op_code::Match_variant
-                || op == Op_code::Get_local || op == Op_code::Set_local || op == Op_code::Get_upvalue || op == Op_code::Set_upvalue
-                || op == Op_code::Call || op == Op_code::Make_closure || op == Op_code::Get_field || op == Op_code::Set_field
-                || op == Op_code::Create_array || op == Op_code::Cast) {
-                ls >> arg1;
-                current_closure->chunk->write(static_cast<uint8_t>(std::stoi(arg1.substr(1))), {0, 0});
-            } else if (op == Op_code::Construct_union || op == Op_code::Construct_model) {
-                ls >> arg1 >> arg2;
-                current_closure->chunk->write(static_cast<uint8_t>(std::stoi(arg1.substr(1))), {0, 0});
-                current_closure->chunk->write(static_cast<uint8_t>(std::stoi(arg2.substr(1))), {0, 0});
-            } else if (op == Op_code::Jump || op == Op_code::Jump_if_false || op == Op_code::Loop || op == Op_code::Jump_if_true) {
-                ls >> arg1;
-                size_t inst_offset = current_closure->chunk->code.size() - 1;
-                size_t patch_offset = current_closure->chunk->code.size();
-                current_closure->chunk->write(0, {0, 0});
-                current_closure->chunk->write(0, {0, 0});
-                current_jumps.push_back({patch_offset, inst_offset, arg1, op == Op_code::Loop});
+            std::string args_str;
+            std::getline(token_stream, args_str);
+
+            std::vector<std::string> args;
+            std::stringstream arg_ss(args_str);
+            std::string item;
+            while (std::getline(arg_ss, item, ',')) {
+                args.push_back(trim(item));
+            }
+
+            // SAFE vector access fix: Check array length before access!
+            auto get_arg = [&](size_t idx) -> uint16_t {
+                if (idx < args.size()) {
+                    std::string s = args[idx];
+                    if (s.empty()) {
+                        return 0;
+                    }
+                    if (s.starts_with("argc:")) {
+                        return static_cast<uint16_t>(std::stoi(trim(s.substr(5))));
+                    }
+                    if (s.starts_with("%r") || s.starts_with("$K")) {
+                        return static_cast<uint16_t>(std::stoi(s.substr(2)));
+                    }
+                    return static_cast<uint16_t>(std::stoi(s));
+                }
+                return 0; // Return 0 if the argument was omitted (like for Return or Load_nil)
+            };
+
+            auto get_jump = [&](size_t idx) -> uint32_t {
+                if (idx < args.size()) {
+                    std::string s = args[idx];
+                    if (s.empty()) {
+                        return 0;
+                    }
+                    if (s.starts_with(".L")) {
+                        return static_cast<uint32_t>(std::stoul(s.substr(2)));
+                    }
+                    if (s.starts_with("@")) {
+                        return static_cast<uint32_t>(std::stoul(s.substr(1)));
+                    }
+                }
+                return 0;
+            };
+
+            if (op == Opcode::Load_const) {
+                temp_code.push_back(Instruction::make_ri(op, get_arg(0), get_arg(1)));
+            } else if (op == Opcode::Jump) {
+                temp_code.push_back(Instruction::make_i(op, get_jump(0)));
+            } else if (op == Opcode::Jump_if_false) {
+                temp_code.push_back(Instruction::make_ri(op, get_arg(0), get_jump(1)));
+            } else {
+                // Safely grabs up to 3 arguments. Missing args perfectly default to 0.
+                temp_code.push_back(Instruction::make_rrr(op, get_arg(0), get_arg(1), get_arg(2)));
             }
         }
     }
 
-    return closures[0];
-}
+    // Map deferred closure pointers
+    for (const auto &link : deferred_links) {
+        if (parsed_closures.contains(link.target_name)) {
+            link.owner->constants[link.const_index] = Value::make_closure(parsed_closures[link.target_name]);
+        }
+    }
 
+    // Return the 'main' block
+    if (main_closure) {
+        return *main_closure;
+    }
+
+    // Fallback: If no "main" was explicitly found, just return whatever the last parsed block was.
+    if (!parsed_closures.empty()) {
+        return *parsed_closures.begin()->second;
+    }
+
+    return Closure_data{};
+}
 } // namespace phos::vm
