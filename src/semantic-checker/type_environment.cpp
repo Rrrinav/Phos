@@ -5,7 +5,9 @@
 namespace phos {
 
 Type_environment::Type_environment(types::Type_table &tt) : tt(tt)
-{}
+{
+    registry.create_module("<global>", "global");
+}
 
 void Type_environment::define_native(
     const std::string &name, const std::vector<std::string> &params, const std::string &ret, Native_fn func)
@@ -14,24 +16,84 @@ void Type_environment::define_native(
     native_params.reserve(params.size());
 
     for (const auto &param : params) {
-        native_params.push_back(types::Native_param{
-            .name = "",
-            .type_str = param,
-            .default_value = std::nullopt
-        });
+        native_params.push_back(types::Native_param{.name = "", .type_str = param, .default_value = std::nullopt});
     }
 
     native_signatures[name].push_back(types::Native_sig{.params = std::move(native_params), .ret_type_str = ret, .func = func});
+
+    Symbol sym{
+        .id = Symbol_id{0},
+        .name = name,
+        .kind = Symbol_kind::Native_func,
+        .type = tt.get_unknown(),
+        .owner_module = Module_id{0},
+        .is_public = true,
+        .const_value = std::nullopt,
+        .stack_offset = std::nullopt,
+        .ffi_index = native_signatures[name].size() - 1
+    };
+    Symbol_id id = registry.create_symbol(std::move(sym));
+    registry.export_symbol(Module_id{0}, name, id);
 }
 
 void Type_environment::define_native(
     const std::string &name, const std::vector<types::Native_param> &params, const std::string &ret, Native_fn func)
 {
-    native_signatures[name].push_back(types::Native_sig{
-        .params = params,
-        .ret_type_str = ret,
-        .func = func
-    });
+    native_signatures[name].push_back(types::Native_sig{.params = params, .ret_type_str = ret, .func = func});
+
+    Symbol sym{
+        .id = Symbol_id{0},
+        .name = name,
+        .kind = Symbol_kind::Native_func,
+        .type = tt.get_unknown(),
+        .owner_module = Module_id{0},
+        .is_public = true,
+        .const_value = std::nullopt,
+        .stack_offset = std::nullopt,
+        .ffi_index = native_signatures[name].size() - 1
+    };
+    Symbol_id id = registry.create_symbol(std::move(sym));
+    registry.export_symbol(Module_id{0}, name, id);
+}
+
+void Type_environment::define_native_const(const std::string &name, Value val)
+{
+    native_constants[name] = val;
+
+    types::Type_id type_id = tt.get_unknown();
+    if (val.is_float()) {
+        type_id = tt.get_f64();
+    } else if (val.is_integer()) {
+        type_id = tt.get_i64();
+    } else if (val.is_bool()) {
+        type_id = tt.get_bool();
+    } else if (val.is_string()) {
+        type_id = tt.get_string();
+    }
+
+    Symbol sym{
+        .id = Symbol_id{0},
+        .name = name,
+        .kind = Symbol_kind::Native_const,
+        .type = type_id,
+        .owner_module = Module_id{0},
+        .is_public = true,
+        .const_value = val,
+        .stack_offset = std::nullopt,
+        .ffi_index = std::nullopt
+    };
+
+    Symbol_id id = registry.create_symbol(std::move(sym));
+    registry.export_symbol(Module_id{0}, name, id);
+}
+
+std::optional<Value> Type_environment::get_native_const(const std::string &name) const
+{
+    auto it = native_constants.find(name);
+    if (it != native_constants.end()) {
+        return it->second;
+    }
+    return std::nullopt;
 }
 
 // Query API: Global Types
@@ -219,7 +281,7 @@ const std::vector<types::Native_sig> *Type_environment::get_native_signatures(co
 // Core Registration
 void Type_environment::register_core_methods()
 {
-    static auto numericals = [] () { return std::string{"i8 | i16 | i32 | i64 | f16 | f32 | f64"}; };
+    static auto numericals = []() { return std::string{"i8 | i16 | i32 | i64 | f16 | f32 | f64"}; };
     this->define_native("clock", std::vector<std::string>{}, "f64", vm::core::native_clock);
     this->define_native("is_same", std::vector<std::string>{"T", "T"}, "bool", vm::core::native_clock);
     this->define_native("exit", std::vector<std::string>{"T"}, "void", vm::core::exit);

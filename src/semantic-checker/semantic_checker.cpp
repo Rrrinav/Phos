@@ -1,9 +1,15 @@
 #include "semantic_checker.hpp"
 
+#include "../lexer/lexer.hpp"
+#include "../parser/parser.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <format>
 #include <sstream>
+#include <fstream>
+#include <filesystem>
+#include <print>
 
 namespace phos {
 
@@ -346,7 +352,22 @@ err::Engine Semantic_checker::check(const std::vector<ast::Stmt_id> &statements)
  */
 void Semantic_checker::declare(const std::string &name, types::Type_id type, bool is_mut, const ast::Source_location &loc)
 {
-    if (!variables.declare(name, type, is_mut)) {
+    // 1. Mint the new local symbol in the master registry!
+    Symbol sym{
+        .id = Symbol_id{0},
+        .name = name,
+        .kind = Symbol_kind::Local_var,
+        .type = type,
+        .owner_module = Module_id{0},
+        .is_public = false,
+        .const_value = std::nullopt,
+        .stack_offset = std::nullopt,
+        .ffi_index = std::nullopt
+    };
+
+    Symbol_id sym_id = this->env.registry.create_symbol(std::move(sym));
+
+    if (!variables.declare(name, type, is_mut, sym_id)) {
         type_error(loc, std::format("Variable '{}' is already declared in this scope.", name));
     }
 }
@@ -363,19 +384,25 @@ std::optional<Scope_symbol> Semantic_checker::lookup(const std::string &name, co
         return *var_opt;
     }
 
+    // Notice the injected Symbol_id{0} below for legacy function handling!
     if (env.is_native_defined(name)) {
         types::Type_id dummy = env.tt.function({}, env.tt.get_any());
-        return Scope_symbol{dummy, false, 0};
+        return Scope_symbol{dummy, Symbol_id{0}, false, 0};
     }
 
     if (auto func_data = env.get_function(name)) {
         const auto *decl = std::get_if<ast::Function_stmt>(&tree.get(func_data->declaration).node);
         std::vector<types::Type_id> params;
-        for (const auto &p : decl->parameters) {
-            params.push_back(p.type);
-        }
+        for (const auto &p : decl->parameters) { params.push_back(p.type); }
         types::Type_id func_id = env.tt.function(params, decl->return_type);
-        return Scope_symbol{func_id, false, 0};
+        return Scope_symbol{func_id, Symbol_id{0}, false, 0};
+    }
+    if (env.module_aliases.contains(name)) {
+        return Scope_symbol{
+            env.tt.get_any(),
+            Symbol_id{0},
+            false,
+            0};
     }
 
     type_error(loc, std::format("Undefined variable, function, or type '{}'", name));
@@ -1202,6 +1229,8 @@ void Semantic_checker::check_stmt(ast::Stmt_id stmt_id)
                 check_for_in_stmt(stmt_id);
             } else if constexpr (std::is_same_v<T, ast::Match_stmt>) {
                 check_match_stmt(stmt_id);
+            } else if constexpr (std::is_same_v<T, ast::Import_stmt>) {
+                //check_import_stmt(stmt_id);
             }
         },
         tree.get(stmt_id).node);
@@ -1898,6 +1927,136 @@ void Semantic_checker::check_match_stmt(ast::Stmt_id stmt_id)
     type_error(loc, "Non-exhaustive match. Add a wildcard '_' arm.");
 }
 
+/*
+ * [import_stmt]
+ * |-- resolve physical file path
+ * |-- cycle detection
+ * |-- recursive parse & check
+ * `-- bind exported symbols to current scope
+ */
+void Semantic_checker::check_import_stmt(ast::Stmt_id stmt_id)
+{
+    auto join_path = [](const std::vector<std::string> &path, std::string_view delim) {
+        std::string res;
+        for (size_t i = 0; i < path.size(); ++i) {
+            res += path[i];
+            if (i < path.size() - 1) {
+                res += delim;
+            }
+        }
+        return res;
+    };
+
+    auto &import_stmt = get_stmt<ast::Import_stmt>(tree, stmt_id);
+    auto loc = import_stmt.loc;
+    std::string logical_name;
+
+    for (size_t i = 0; i < import_stmt.path.size(); ++i) {
+        logical_name += import_stmt.path[i];
+        if (i < import_stmt.path.size() - 1) {
+            logical_name += "::";
+        }
+    }
+
+    // This allows 'math::pi' to resolve even if the file is still loading
+    std::string alias = import_stmt.local_alias.empty() ? import_stmt.path.back() : import_stmt.local_alias;
+    env.module_aliases[alias] = logical_name;
+
+    // Make sure your Type_environment has a set named 'native_modules'
+    if (env.native_module_names.contains(logical_name)) {
+        std::string alias = import_stmt.local_alias.empty() ? import_stmt.path.back() : import_stmt.local_alias;
+        env.module_aliases[alias] = logical_name;
+        return;
+    }
+
+    // 2. Resolve Physical Path
+    std::filesystem::path target_path;
+    for (const auto &part : import_stmt.path) target_path /= part;
+    target_path += ".phos";
+
+    // IMPORTANT: Ensure loc.file isn't empty so parent_path() works
+    std::filesystem::path current_dir = std::filesystem::path(loc.file).parent_path();
+    std::filesystem::path full_path = current_dir / target_path;
+
+    std::string canonical_path;
+    try {
+        canonical_path = std::filesystem::canonical(full_path).string();
+    } catch (...) {
+        type_error(loc, std::format("Could not find module file: {}", full_path.string()));
+        return;
+    }
+
+    // 3. Cache & Cycle Guard
+    if (env.modules_in_progress.contains(canonical_path)) {
+        // We allow circular imports but don't re-process them!
+        return; 
+    }
+
+    if (env.loaded_modules.contains(canonical_path)) {
+        bind_import_alias(import_stmt, env.loaded_modules[canonical_path]);
+        return;
+    }
+
+    // 4. Recursive Physical Load
+    env.modules_in_progress.insert(canonical_path);
+
+    std::ifstream file(canonical_path);
+    if (!file.is_open()) {
+        type_error(loc, std::format("Failed to open file: {}", canonical_path));
+        env.modules_in_progress.erase(canonical_path);
+        return;
+    }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string content = buffer.str();
+
+    // 5. Lex & Parse (Into SHARED Tree)
+    lex::Lexer sub_lexer(content, arena_, canonical_path);
+    auto lex_res = sub_lexer.tokenize();
+    diagnostics_.append(lex_res.diagnostics);
+    if (lex_res.diagnostics.has_errors()) return;
+
+    Parser sub_parser(lex_res.tokens, env.tt, tree, arena_, canonical_path);
+    auto parse_res = sub_parser.parse();
+    diagnostics_.append(parse_res.diagnostics);
+    if (parse_res.diagnostics.has_errors()) return;
+
+    // 6. Registry Setup
+    Module_id mod_id = env.registry.create_module(canonical_path, logical_name);
+    env.loaded_modules[canonical_path] = mod_id;
+
+    // 7. Hoist Sub-Module (But don't full-check yet!)
+    // We only hoist so the current file can see the sub-module's types/functions
+    // The master loop in main.cpp will do the detailed body checks later.
+    hoist_globals(parse_res.statements);
+
+    // 8. Recursive Import Resolution
+    // This handles nested imports (A imports B imports C)
+    for (auto sub_stmt : parse_res.statements) {
+        if (std::holds_alternative<ast::Import_stmt>(tree.get(sub_stmt).node)) {
+            check_import_stmt(sub_stmt);
+        }
+    }
+
+    // 9. Add to Global Pool
+    env.program_statements.insert(
+        env.program_statements.end(), 
+        parse_res.statements.begin(), 
+        parse_res.statements.end()
+    );
+
+    env.modules_in_progress.erase(canonical_path);
+    bind_import_alias(import_stmt, mod_id);
+}
+
+void Semantic_checker::bind_import_alias(const ast::Import_stmt &stmt, Module_id mod_id)
+{
+    std::string logical_name = env.registry.get_module(mod_id).logical_name;
+    std::string alias = stmt.local_alias.empty() ? stmt.path.back() : stmt.local_alias;
+    env.module_aliases[alias] = logical_name;
+}
+
 // EXPRESSION VISITORS
 
 /*
@@ -2203,28 +2362,57 @@ types::Type_id Semantic_checker::check_assignment_expr(ast::Expr_id expr_id, std
 /*
  * [variable_expr] -> Type
  * |-- replace self ref
- * `-- lookup bindings
+ * `-- lookup bindings & stamp AST with Symbol_id
  */
 types::Type_id Semantic_checker::check_variable_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
-    auto name = get_node<ast::Variable_expr>(tree, expr_id).name;
-    auto loc = get_node<ast::Variable_expr>(tree, expr_id).loc;
 
+    // Grab a mutable reference to the AST node
+    auto &expr = get_node<ast::Variable_expr>(tree, expr_id);
+    auto name = expr.name;
+    auto loc = expr.loc;
+
+    // 1. Standard Object 'this' Lookup
     if (name == "this") {
         if (!current_model_type) {
             type_error(loc, "Cannot use 'this' outside of a model method");
-            return get_node<ast::Variable_expr>(tree, expr_id).type = env.tt.get_unknown();
+            return expr.type = env.tt.get_unknown();
         }
-        return get_node<ast::Variable_expr>(tree, expr_id).type = *current_model_type;
+        return expr.type = *current_model_type;
     }
 
+    // 2. Lexical Variable Lookup (Local Scope)
+    if (auto local_sym = variables.lookup(name)) {
+        expr.resolved_symbol = local_sym->id; // <-- STAMP THE AST WITH THE LOCAL ID!
+        return expr.type = local_sym->type;
+    }
+
+    // 3. Module Alias & Global Registry Lookup
+    std::string lookup_name = name;
+    if (env.module_aliases.contains(name)) {
+        lookup_name = env.module_aliases.at(name);
+    }
+
+    if (auto global_sym_id = env.registry.lookup_export(Module_id{0}, lookup_name)) {
+        auto &sym = env.registry.get_symbol(*global_sym_id);
+
+        expr.resolved_symbol = *global_sym_id;
+
+        // TEMPORARY BRIDGE: Keep rewriting the AST name so the Bytecode Compiler
+        // doesn't break until we rewrite the VM to read IDs instead of strings.
+        expr.name = lookup_name;
+
+        return expr.type = sym.type;
+    }
+
+    // 4. Legacy Fallback (Until we move standard functions into the registry)
     auto type_res = lookup(name, loc);
     if (!type_res) {
-        return get_node<ast::Variable_expr>(tree, expr_id).type = env.tt.get_unknown();
+        return expr.type = env.tt.get_unknown();
     }
 
-    return get_node<ast::Variable_expr>(tree, expr_id).type = type_res->type;
+    return expr.type = type_res->type;
 }
 
 /*
@@ -2486,6 +2674,16 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
             if (bound.ok) {
                 get_node<ast::Call_expr>(tree, expr_id).arguments = std::move(bound.ordered_arguments);
                 get_node<ast::Call_expr>(tree, expr_id).native_signature_index = static_cast<int>(sig_index);
+
+                // Stamp the resolved_symbol onto the Static_path_expr callee so the
+                // compiler's Phase 1 handler fires correctly instead of falling through.
+                if (std::holds_alternative<ast::Static_path_expr>(tree.get(callee_id).node)) {
+                    auto &sp = get_node<ast::Static_path_expr>(tree, callee_id);
+                    if (auto global_sym_id = env.registry.lookup_export(Module_id{0}, ffi_callee_name)) {
+                        sp.resolved_symbol = *global_sym_id;
+                    }
+                }
+
                 auto ret = parse_type_string(signatures[sig_index].ret_type_str, bound.generics);
                 return get_node<ast::Call_expr>(tree, expr_id).type = ret;
             }
@@ -2497,10 +2695,8 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
             loc.c,
             loc.file,
             "Arguments do not match any native signature for function '{}'.",
-            ffi_callee_name
-        );
+            ffi_callee_name);
 
-        // 1. Build string of ACTUAL argument types provided
         std::string actual_str = "";
         for (size_t i = 0; i < arguments_copy.size(); ++i) {
             actual_str += env.tt.to_string(check_expr(arguments_copy[i].value));
@@ -2512,7 +2708,6 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
             actual_str = "void";
         }
 
-        // 2. Build string of EXPECTED argument types
         std::string expected_str = "";
         if (signatures.size() == 1) {
             for (size_t i = 0; i < signatures[0].params.size(); ++i) {
@@ -2525,7 +2720,6 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
                 expected_str = "void";
             }
         } else {
-            // Format overloaded signatures like: (i32, i32) OR (f64, f64)
             for (size_t s = 0; s < signatures.size(); ++s) {
                 expected_str += "(";
                 for (size_t i = 0; i < signatures[s].params.size(); ++i) {
@@ -2541,7 +2735,6 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
             }
         }
 
-        // Output the beautiful error block
         diagnostic.expected_got(expected_str, actual_str);
         diagnostics_.push(std::move(diagnostic));
 
@@ -2885,6 +3078,7 @@ types::Type_id Semantic_checker::check_field_access_expr(ast::Expr_id expr_id, s
 /*
  * [static_path_expr] -> Type
  * |-- assert static receiver context
+ * |-- bind FFI modules via Registry
  * `-- bind variants or static methods
  */
 types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
@@ -2894,6 +3088,47 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
     auto member_lexeme = get_node<ast::Static_path_expr>(tree, expr_id).member.lexeme;
     auto loc = get_node<ast::Static_path_expr>(tree, expr_id).loc;
 
+    auto &expr = std::get<ast::Static_path_expr>(tree.get(expr_id).node);
+    auto &type = get_node<ast::Static_path_expr>(tree, expr_id).type;
+
+    // 1. Check for Module Aliases and Global FFI Symbols
+    if (auto *base_var = std::get_if<ast::Variable_expr>(&tree.get(expr.base).node)) {
+        std::string alias = base_var->name;
+        if (env.module_aliases.contains(alias)) {
+            std::string mod_name = env.module_aliases[alias];
+            std::string full_name = mod_name + "::" + expr.member.lexeme;
+
+            auto sym_id = env.registry.lookup_symbol_by_path(full_name);
+            if (sym_id) {
+                expr.resolved_symbol = sym_id;
+                types::Type_id sym_type = env.registry.get_symbol(*sym_id).type;
+
+                // If it's a source function, its type is unknown until evaluated.
+                // We construct the function signature dynamically here.
+                if (env.tt.is_unknown(sym_type)) {
+                    if (auto func_data = env.get_function(full_name)) {
+                        auto decl = std::get_if<ast::Function_stmt>(&tree.get(func_data->declaration).node);
+                        if (decl) {
+                            std::vector<types::Type_id> p_types;
+                            for (auto &p : decl->parameters) {
+                                p_types.push_back(p.type);
+                            }
+                            sym_type = env.tt.function(p_types, decl->return_type);
+
+                            // Cache it back into the registry!
+                            env.registry.symbols_[sym_id->value].type = sym_type;
+                        }
+                    }
+                }
+                return expr.type = sym_type;
+            }
+
+            type_error(expr.loc, std::format("Module '{}' does not export symbol '{}'", mod_name, expr.member.lexeme));
+            return expr.type = env.tt.get_unknown();
+        }
+    }
+
+    // 2. Standard Type Resolution (Models, Unions, Enums)
     types::Type_id base_type = env.tt.get_unknown();
 
     if (std::holds_alternative<ast::Variable_expr>(tree.get(base_id).node)) {

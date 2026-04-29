@@ -5,6 +5,7 @@
 #include "../lexer/token.hpp"
 #include "../utility/try_res.hpp"
 #include "../value/type.hpp"
+#include "ast.hpp"
 
 #include <cstddef>
 #include <expected>
@@ -398,7 +399,7 @@ Result<std::vector<ast::Call_argument>> Parser::parse_call_arguments()
     return arguments;
 }
 
-// declaration -> fn_decl | model_decl | union_decl | enum_decl | var_decl | statement
+// declaration -> fn_decl | model_decl | union_decl | enum_decl | var_decl | statement | import_stmt
 Result<std::optional<ast::Stmt_id>> Parser::declaration()
 {
     skip_newlines();
@@ -427,6 +428,9 @@ Result<std::optional<ast::Stmt_id>> Parser::declaration()
     }
     if (match({lex::TokenType::Const})) {
         return std::optional<ast::Stmt_id>{__Try(var_declaration(true))};
+    }
+    if (match({lex::TokenType::Import})) {
+        return std::optional<ast::Stmt_id>{__Try(import_statement())};
     }
 
     return std::optional<ast::Stmt_id>{__Try(statement())};
@@ -770,9 +774,69 @@ Result<ast::Stmt_id> Parser::var_declaration(bool is_const)
     }});
 }
 
-// =============================================================================
+// import_stmt       ::= "import" module_path ( "::" symbol_extraction )? ";"
+// module_path       ::= IDENTIFIER ( "." IDENTIFIER )*
+// symbol_extraction ::= IDENTIFIER | "{" IDENTIFIER ( "," IDENTIFIER )* "}"
+Result<ast::Stmt_id> Parser::import_statement()
+{
+    // Use the location of the "import" keyword we just passed
+    size_t start_line = previous().line;
+    size_t start_column = previous().column;
+    ast::Source_location loc{start_line, start_column, source_name_};
+
+    ast::Import_stmt stmt;
+    stmt.loc = loc;
+
+    // 1. Parse the path segments (e.g. std :: math)
+    do {
+        auto path_res = consume(lex::TokenType::Identifier, "Expected module path identifier.");
+        if (!path_res) {
+            return std::unexpected(path_res.error());
+        }
+        stmt.path.push_back(path_res.value().lexeme);
+    } while (match({lex::TokenType::ColonColon}));
+
+    // 2. Parse selective imports (e.g. ::{sin, cos})
+    if (match({lex::TokenType::ColonColon})) {
+        auto brace_res = consume(lex::TokenType::LeftBrace, "Expected '{' for selective imports.");
+        if (!brace_res) {
+            return std::unexpected(brace_res.error());
+        }
+
+        if (!check(lex::TokenType::RightBrace)) {
+            do {
+                auto sym_res = consume(lex::TokenType::Identifier, "Expected symbol name.");
+                if (!sym_res) {
+                    return std::unexpected(sym_res.error());
+                }
+                stmt.selectives.push_back(sym_res.value().lexeme);
+            } while (match({lex::TokenType::Comma}));
+        }
+
+        auto rbrace_res = consume(lex::TokenType::RightBrace, "Expected '}' after selectives.");
+        if (!rbrace_res) {
+            return std::unexpected(rbrace_res.error());
+        }
+    }
+
+    // 3. Parse local alias (e.g. as m)
+    if (match({lex::TokenType::As})) {
+        auto alias_res = consume(lex::TokenType::Identifier, "Expected alias identifier.");
+        if (!alias_res) {
+            return std::unexpected(alias_res.error());
+        }
+        stmt.local_alias = alias_res.value().lexeme;
+    }
+
+    auto semi_res = consume(lex::TokenType::Semicolon, "Expected ';' after import statement.");
+    if (!semi_res) {
+        return std::unexpected(semi_res.error());
+    }
+
+    return tree_.add_stmt(ast::Stmt(std::move(stmt)));
+}
+
 // Statements
-// =============================================================================
 
 // statement -> print_stmt | block | if_stmt | while_stmt | for_stmt
 //            | match_stmt | return_stmt | expr_stmt
@@ -1662,21 +1726,13 @@ Result<ast::Expr_id> Parser::primary()
     }
 
     // identifier, primitive type namespaces (like string::), scope resolution, model literal
-    if (match(
-            {lex::TokenType::Identifier,
-             lex::TokenType::TString,
-             lex::TokenType::TInt8,
-             lex::TokenType::TInt16,
-             lex::TokenType::TInt32,
-             lex::TokenType::TInt64,
-             lex::TokenType::TUInt8,
-             lex::TokenType::TUInt16,
-             lex::TokenType::TUInt32,
-             lex::TokenType::TUInt64,
-             lex::TokenType::TFloat16,
-             lex::TokenType::TFloat32,
-             lex::TokenType::TFloat64,
-             lex::TokenType::TBool})) {
+    if (match({
+        lex::TokenType::Identifier, lex::TokenType::TString , lex::TokenType::TInt8   ,
+        lex::TokenType::TInt16    , lex::TokenType::TInt32  , lex::TokenType::TInt64  ,
+        lex::TokenType::TUInt8    , lex::TokenType::TUInt16 , lex::TokenType::TUInt32 ,
+        lex::TokenType::TUInt64   , lex::TokenType::TFloat16, lex::TokenType::TFloat32,
+        lex::TokenType::TFloat64  , lex::TokenType::TBool
+    })) {
         lex::Token id = previous();
 
         if (match({lex::TokenType::ColonColon})) {

@@ -3,6 +3,7 @@
 #include "../lexer/token.hpp"
 #include "../value/type.hpp"
 #include "../value/value.hpp"
+#include "../semantic-checker/symbol.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -10,6 +11,7 @@
 #include <string>
 #include <variant>
 #include <vector>
+#include <deque>
 
 namespace phos::ast {
 
@@ -101,6 +103,8 @@ struct Variable_expr
     std::string name;
     types::Type_id type;
     Source_location loc;
+
+    std::optional<Symbol_id> resolved_symbol = std::nullopt;
 };
 
 struct Binary_expr
@@ -219,6 +223,8 @@ struct Static_path_expr
     lex::Token member;
     types::Type_id type;
     Source_location loc;
+
+    std::optional<Symbol_id> resolved_symbol = std::nullopt;
 };
 
 struct Range_expr
@@ -415,6 +421,16 @@ struct Enum_stmt
     Source_location loc;
 };
 
+struct Import_stmt
+{
+    std::vector<std::string> path{};
+    std::vector<std::string> selectives{};
+    std::string local_alias{};
+    bool is_first_class{};
+
+    Source_location loc{};
+};
+
 struct Stmt
 {
     using Node = std::variant<
@@ -428,10 +444,12 @@ struct Stmt
         If_stmt,
         While_stmt,
         For_stmt,
-        For_in_stmt, //
+        For_in_stmt,
         Union_stmt,
-        Match_stmt, //
-        Enum_stmt>;
+        Match_stmt,
+        Enum_stmt,
+        Import_stmt
+    >;
 
     Node node;
 };

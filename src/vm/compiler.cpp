@@ -10,10 +10,7 @@ namespace phos::vm {
 Compiler::Compiler(const ast::Ast_tree &tree, const Type_environment &env, mem::Arena &arena_) : tree(tree), env(env), arena(arena_)
 {}
 
-// =============================================================================
 // CONTEXT & LEXICAL SCOPING ENGINE
-// =============================================================================
-
 void Compiler::push_context(Compiler_context *ctx)
 {
     ctx->enclosing = current_ctx_;
@@ -404,6 +401,9 @@ void Compiler::compile_stmt(ast::Stmt_id stmt_id)
                 compile_stmt_node(s);
             } else if constexpr (std::is_same_v<T, ast::For_in_stmt>) {
                 compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Import_stmt>) {
+                // Imports are a compile-time construct. No bytecode to emit!
+                // ----------------------
             } else {
                 auto l = ast::get_loc(s);
                 std::println(std::cerr, "{}:{} Unimplemented stmt node", l.l, l.c);
@@ -940,26 +940,41 @@ uint8_t Compiler::compile_expr(ast::Expr_id expr_id)
 }
 
 /*
-    Search backwards in locals (supports shadowing).
-    If found: return physical register assigned.
-    If not local: Check upvalues (captured variables).
-    If upvalue:
-        %dest = allocate_register()
-        get_upvalue %dest, index
-    If not upvalue: Check hoisted global functions.
-    If hoisted function:
-        %dest = allocate_register()
-        load_const %dest, $K_function_ptr
+    Variable Dispatcher (Symbol-Aware)
+    Reads the resolved Symbol_id from the AST node.
 */
 uint8_t Compiler::compile_expr_node(const ast::Variable_expr &expr)
 {
-    // 1. Is it a local variable?
+    if (expr.resolved_symbol) {
+        const auto &sym = env.registry.get_symbol(*expr.resolved_symbol);
+
+        // 1. Is it a compile-time Native Constant? (e.g., math::pi)
+        if (sym.kind == Symbol_kind::Native_const) {
+            uint8_t target_reg = allocate_register();
+            // Native_consts always hold their value directly
+            uint16_t const_idx = add_constant(*sym.const_value);
+            emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
+            return target_reg;
+        }
+
+        // 2. Is it an FFI Native Function? (e.g., math::sin)
+        // For now, we load it from function_locations_ using the legacy name bridge.
+        if (sym.kind == Symbol_kind::Native_func) {
+            uint8_t target_reg = allocate_register();
+            // expr.name still holds the fully qualified "math::sin" string from the semantic checker bridge
+            uint16_t const_idx = function_locations_[expr.name];
+            emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
+            return target_reg;
+        }
+    }
+
+    // 3. Is it a local variable?
     int local_arg = resolve_local(current_ctx_, expr.name);
     if (local_arg != -1) {
         return static_cast<uint8_t>(local_arg);
     }
 
-    // 2. Is it a captured upvalue?
+    // 4. Is it a captured upvalue?
     int upval_arg = resolve_upvalue(current_ctx_, expr.name);
     if (upval_arg != -1) {
         uint8_t target_reg = allocate_register();
@@ -967,7 +982,7 @@ uint8_t Compiler::compile_expr_node(const ast::Variable_expr &expr)
         return target_reg;
     }
 
-    // 3. Is it a global/hoisted function?
+    // 5. Is it a global/hoisted Phos function?
     if (function_locations_.contains(expr.name)) {
         uint8_t target_reg = allocate_register();
         uint16_t const_idx = function_locations_[expr.name];
@@ -975,8 +990,8 @@ uint8_t Compiler::compile_expr_node(const ast::Variable_expr &expr)
         return target_reg;
     }
 
-    std::println(std::cerr, "Compiler Bug: Unresolved variable '{}' escaped semantic checker.", expr.name);
-    std::exit(1);
+    std::println(std::cerr, "Compiler Bug: Variable '{}' resolved to unknown state.", expr.name);
+    std::exit(EXIT_FAILURE);
     return 0;
 }
 
@@ -1059,9 +1074,41 @@ uint8_t Compiler::compile_expr_node(const ast::Enum_member_expr &expr)
     return target_reg;
 }
 
+/*
+    Static Path Dispatcher (Symbol-Aware)
+    Handles Module aliases (math::sin), Model static fields/methods, and Enums.
+*/
 uint8_t Compiler::compile_expr_node(const ast::Static_path_expr &expr)
 {
-    // Resolve from the receiver expression itself; the final static-path type may already be a function.
+    // --- Phase 1: Module Aliases & Global Registry Hits ---
+    if (expr.resolved_symbol) {
+        const auto &sym = env.registry.get_symbol(*expr.resolved_symbol);
+
+        if (sym.kind == Symbol_kind::Native_const) {
+            uint8_t target_reg = allocate_register();
+            uint16_t const_idx = add_constant(*sym.const_value);
+            emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
+            return target_reg;
+        }
+
+        // Handle BOTH Native C++ functions and Phos source functions!
+        if (sym.kind == Symbol_kind::Native_func || sym.kind == Symbol_kind::Phos_func) {
+            // The Symbol already holds the exact canonical name the Compiler uses
+            std::string global_name = sym.name; 
+
+            if (function_locations_.contains(global_name)) {
+                uint8_t target_reg = allocate_register();
+                uint16_t const_idx = function_locations_[global_name];
+                emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
+                return target_reg;
+            } else {
+                std::println(std::cerr, "Compiler Bug: Function '{}' not found in function_locations_", global_name);
+                std::exit(EXIT_FAILURE);
+            }
+        }
+    }
+
+    // --- Phase 2: Standard Resolves (Models & Enums) ---
     types::Type_id base_type = ast::get_type(tree.get(expr.base).node);
     while (env.tt.is_optional(base_type)) {
         base_type = env.tt.get_optional_base(base_type);
@@ -1102,7 +1149,9 @@ uint8_t Compiler::compile_expr_node(const ast::Static_path_expr &expr)
         }
     }
 
-    std::println(std::cerr, "Compiler Bug: Static path expressions are currently only implemented for Enums and Model Static Methods.");
+    std::println(
+        std::cerr,
+        "Compiler Bug: Static path expressions are currently only implemented for Enums, FFI, and Model Static Methods.");
     std::exit(EXIT_FAILURE);
     return 0;
 }
@@ -1989,8 +2038,7 @@ void Compiler::compile_stmt_node(const ast::For_in_stmt &stmt)
     // CUSTOM MODEL ITERATORS
     // ============================================================
     if (is_custom_model) {
-        auto &model_name =
-            std::get<types::Model_type>(env.tt.get(iterable_type).data).name;
+        auto &model_name = std::get<types::Model_type>(env.tt.get(iterable_type).data).name;
 
         auto model_data_ptr = env.get_model(model_name);
 
@@ -2002,152 +2050,81 @@ void Compiler::compile_stmt_node(const ast::For_in_stmt &stmt)
             uint8_t func_reg = allocate_register();
             uint16_t const_idx = function_locations_[model_name + "::iter"];
 
-            emit(vm::Instruction::make_ri(
-                vm::Opcode::Load_const,
-                func_reg,
-                const_idx));
+            emit(vm::Instruction::make_ri(vm::Opcode::Load_const, func_reg, const_idx));
 
             uint8_t call_base = allocate_register();
-            emit(vm::Instruction::make_rrr(
-                vm::Opcode::Move,
-                call_base,
-                func_reg,
-                0));
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base, func_reg, 0));
 
             uint8_t arg_this = allocate_register();
-            emit(vm::Instruction::make_rrr(
-                vm::Opcode::Move,
-                arg_this,
-                iterable_reg,
-                0));
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_this, iterable_reg, 0));
 
-            emit(vm::Instruction::make_rrr(
-                vm::Opcode::Call,
-                iter_reg,
-                call_base,
-                1));
+            emit(vm::Instruction::make_rrr(vm::Opcode::Call, iter_reg, call_base, 1));
 
-            auto iter_decl_id =
-                model_data_ptr->methods.at("iter").declaration;
+            auto iter_decl_id = model_data_ptr->methods.at("iter").declaration;
 
-            auto iter_decl =
-                std::get_if<ast::Function_stmt>(
-                    &tree.get(iter_decl_id).node);
+            auto iter_decl = std::get_if<ast::Function_stmt>(&tree.get(iter_decl_id).node);
 
-            iter_model_name =
-                std::get<types::Model_type>(
-                    env.tt.get(iter_decl->return_type).data).name;
+            iter_model_name = std::get<types::Model_type>(env.tt.get(iter_decl->return_type).data).name;
         } else {
-            emit(vm::Instruction::make_rrr(
-                vm::Opcode::Move,
-                iter_reg,
-                iterable_reg,
-                0));
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, iter_reg, iterable_reg, 0));
         }
 
         // Optional step=1 support for next(this, step)
         uint8_t step_reg = allocate_register();
         uint16_t one_idx = add_constant(Value(static_cast<int64_t>(1)));
-        emit(vm::Instruction::make_ri(
-            vm::Opcode::Load_const,
-            step_reg,
-            one_idx));
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, step_reg, one_idx));
 
         // ---------------- LOOP START ----------------
-        uint32_t loop_start =
-            static_cast<uint32_t>(current_block().instructions.size());
+        uint32_t loop_start = static_cast<uint32_t>(current_block().instructions.size());
 
-        auto next_decl_id =
-            env.get_model(iter_model_name)->methods.at("next").declaration;
+        auto next_decl_id = env.get_model(iter_model_name)->methods.at("next").declaration;
 
-        auto next_decl =
-            std::get_if<ast::Function_stmt>(
-                &tree.get(next_decl_id).node);
+        auto next_decl = std::get_if<ast::Function_stmt>(&tree.get(next_decl_id).node);
 
-        uint8_t argc =
-            static_cast<uint8_t>(next_decl->parameters.size());
+        uint8_t argc = static_cast<uint8_t>(next_decl->parameters.size());
 
         uint8_t next_func = allocate_register();
-        uint16_t next_idx =
-            function_locations_[iter_model_name + "::next"];
+        uint16_t next_idx = function_locations_[iter_model_name + "::next"];
 
-        emit(vm::Instruction::make_ri(
-            vm::Opcode::Load_const,
-            next_func,
-            next_idx));
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, next_func, next_idx));
 
         uint8_t call_base = allocate_register();
-        emit(vm::Instruction::make_rrr(
-            vm::Opcode::Move,
-            call_base,
-            next_func,
-            0));
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base, next_func, 0));
 
         uint8_t arg_this = allocate_register();
-        emit(vm::Instruction::make_rrr(
-            vm::Opcode::Move,
-            arg_this,
-            iter_reg,
-            0));
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_this, iter_reg, 0));
 
         if (argc == 2) {
             uint8_t arg_step = allocate_register();
-            emit(vm::Instruction::make_rrr(
-                vm::Opcode::Move,
-                arg_step,
-                step_reg,
-                0));
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_step, step_reg, 0));
         }
 
         uint8_t opt_val_reg = allocate_register();
 
-        emit(vm::Instruction::make_rrr(
-            vm::Opcode::Call,
-            opt_val_reg,
-            call_base,
-            argc));
+        emit(vm::Instruction::make_rrr(vm::Opcode::Call, opt_val_reg, call_base, argc));
 
         // Correct sentinel logic:
         // nil(depth=0) => stop
         // Some(nil) / Some(x) => continue
         uint8_t end_reg = allocate_register();
-        emit(vm::Instruction::make_rrr(
-            vm::Opcode::Test_nil,
-            end_reg,
-            opt_val_reg,
-            0));
+        emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, end_reg, opt_val_reg, 0));
 
-        size_t jump_body =
-            emit(vm::Instruction::make_ri(
-                vm::Opcode::Jump_if_false,
-                end_reg,
-                0));
+        size_t jump_body = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, end_reg, 0));
 
-        size_t jump_exit =
-            emit(vm::Instruction::make_i(
-                vm::Opcode::Jump,
-                0));
+        size_t jump_exit = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
 
         // body target
-        uint16_t body_target =
-            static_cast<uint16_t>(current_block().instructions.size());
+        uint16_t body_target = static_cast<uint16_t>(current_block().instructions.size());
 
         current_block().instructions[jump_body].ri.imm = body_target;
 
-        emit(vm::Instruction::make_rrr(
-            vm::Opcode::Unwrap_option,
-            loop_var_reg,
-            opt_val_reg,
-            0));
+        emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, loop_var_reg, opt_val_reg, 0));
 
         compile_stmt(stmt.body);
 
-        emit(vm::Instruction::make_i(
-            vm::Opcode::Jump,
-            loop_start));
+        emit(vm::Instruction::make_i(vm::Opcode::Jump, loop_start));
 
-        uint32_t exit_target =
-            static_cast<uint32_t>(current_block().instructions.size());
+        uint32_t exit_target = static_cast<uint32_t>(current_block().instructions.size());
 
         current_block().instructions[jump_exit].i.imm = exit_target;
     }
@@ -2158,62 +2135,34 @@ void Compiler::compile_stmt_node(const ast::For_in_stmt &stmt)
     else {
         uint8_t iter_reg = allocate_register();
 
-        emit(vm::Instruction::make_rrr(
-            vm::Opcode::Make_iter,
-            iter_reg,
-            iterable_reg,
-            0));
+        emit(vm::Instruction::make_rrr(vm::Opcode::Make_iter, iter_reg, iterable_reg, 0));
 
         uint8_t opt_val_reg = allocate_register();
 
         // ---------------- LOOP START ----------------
-        uint32_t loop_start =
-            static_cast<uint32_t>(current_block().instructions.size());
+        uint32_t loop_start = static_cast<uint32_t>(current_block().instructions.size());
 
-        emit(vm::Instruction::make_rrr(
-            vm::Opcode::Iter_next,
-            opt_val_reg,
-            iter_reg,
-            0));
+        emit(vm::Instruction::make_rrr(vm::Opcode::Iter_next, opt_val_reg, iter_reg, 0));
 
         uint8_t end_reg = allocate_register();
 
-        emit(vm::Instruction::make_rrr(
-            vm::Opcode::Test_nil,
-            end_reg,
-            opt_val_reg,
-            0));
+        emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, end_reg, opt_val_reg, 0));
 
-        size_t jump_body =
-            emit(vm::Instruction::make_ri(
-                vm::Opcode::Jump_if_false,
-                end_reg,
-                0));
+        size_t jump_body = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, end_reg, 0));
 
-        size_t jump_exit =
-            emit(vm::Instruction::make_i(
-                vm::Opcode::Jump,
-                0));
+        size_t jump_exit = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
 
-        uint16_t body_target =
-            static_cast<uint16_t>(current_block().instructions.size());
+        uint16_t body_target = static_cast<uint16_t>(current_block().instructions.size());
 
         current_block().instructions[jump_body].ri.imm = body_target;
 
-        emit(vm::Instruction::make_rrr(
-            vm::Opcode::Unwrap_option,
-            loop_var_reg,
-            opt_val_reg,
-            0));
+        emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, loop_var_reg, opt_val_reg, 0));
 
         compile_stmt(stmt.body);
 
-        emit(vm::Instruction::make_i(
-            vm::Opcode::Jump,
-            loop_start));
+        emit(vm::Instruction::make_i(vm::Opcode::Jump, loop_start));
 
-        uint32_t exit_target =
-            static_cast<uint32_t>(current_block().instructions.size());
+        uint32_t exit_target = static_cast<uint32_t>(current_block().instructions.size());
 
         current_block().instructions[jump_exit].i.imm = exit_target;
     }

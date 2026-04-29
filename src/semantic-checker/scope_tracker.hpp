@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../value/type.hpp"
+#include "symbol.hpp" // Brings in Symbol_id
 
 #include <optional>
 #include <string>
@@ -12,6 +13,7 @@ namespace phos {
 struct Scope_symbol
 {
     types::Type_id type;
+    Symbol_id id; // --- NEW: The semantic anchor ---
     bool is_mut;
     int depth;
 };
@@ -47,7 +49,7 @@ public:
         current_depth_--;
     }
 
-    bool declare(const std::string &name, types::Type_id type, bool is_mut)
+    bool declare(const std::string &name, types::Type_id type, bool is_mut, Symbol_id id)
     {
         auto it = symbols_.find(name);
 
@@ -56,7 +58,7 @@ public:
             return false;
         }
 
-        symbols_[name].push_back({type, is_mut, current_depth_});
+        symbols_[name].push_back({type, id, is_mut, current_depth_});
         locals_.push_back(name);
         return true;
     }

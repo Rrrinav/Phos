@@ -70,6 +70,7 @@ private:
     void print_node(const For_in_stmt &node);
     void print_node(const Match_stmt &node);
     void print_node(const Enum_stmt &node);
+    void print_node(const Import_stmt &node);
 
     // --- Helper Methods ---
     std::string branch_sym(bool has_next) const;
@@ -141,6 +142,7 @@ private:
     std::string print_node(const For_in_stmt &node);
     std::string print_node(const Match_stmt &node);
     std::string print_node(const Enum_stmt &node);
+    std::string print_node(const Import_stmt &node);
 };
 
 } // namespace phos::ast

@@ -810,6 +810,44 @@ void Tree_printer::print_node(const Match_stmt &node)
     });
 }
 
+void Tree_printer::print_node(const Import_stmt &node)
+{
+    indent();
+    print_str("Import");
+    if (!node.local_alias.empty()) {
+        with_child(true, [&] {
+            indent();
+            print_str("alias");
+            with_child( false, [&] {
+                indent();
+                print_str(std::format("{}", node.local_alias));
+            });
+        });
+    }
+    with_child(true, [&] {
+        indent();
+        print_str("path");
+        with_child(
+            false,
+            [&] {
+                indent();
+                print_str(std::format("{}", node.path));
+            }
+        );
+    });
+    with_child(false, [&] {
+        indent();
+        print_str("selectives");
+        with_child(
+            false,
+            [&] {
+                indent();
+                print_str(std::format("{}", node.selectives));
+            }
+        );
+    });
+}
+
 // =============================================================================
 // Sexpr_printer Implementation (Lisp-like syntax)
 // =============================================================================
@@ -1122,6 +1160,11 @@ std::string Sexpr_printer::print_node(const Enum_stmt &node)
         res += " " + var.first;
     }
     return res + ")";
+}
+
+std::string Sexpr_printer::print_node(const Import_stmt &node)
+{
+    return std::format("(import {} (selectives {}))", node.path, node.selectives);
 }
 
 } // namespace phos::ast

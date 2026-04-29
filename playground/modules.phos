@@ -1,5 +1,5 @@
 import math; // loads math file / folder
-import { sin, cos, pow } from math; // loads these functions from math folder
+import math::{ sin, cos, pow }; // loads these functions from math folder
 import math::sin;  // loads math::sin function as sin
 const my_math := import math;
 const mth_sin := import math::sin;

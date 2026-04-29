@@ -166,6 +166,8 @@ public:
     bool
     match_ffi_type(std::string expected_str, types::Type_id actual_type, std::unordered_map<std::string, types::Type_id> &generics) const;
 
+    void bind_import_alias(const ast::Import_stmt &stmt, Module_id mod_id);
+
     /*
      * [iterator protocol]
      * sequence boundary extraction
@@ -200,6 +202,7 @@ public:
     void check_for_stmt(ast::Stmt_id stmt_id);
     void check_for_in_stmt(ast::Stmt_id stmt_id);
     void check_match_stmt(ast::Stmt_id stmt_id);
+    void check_import_stmt(ast::Stmt_id stmt_id);
 
     /*
      * [expression evaluation rules]

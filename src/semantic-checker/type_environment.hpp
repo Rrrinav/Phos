@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../parser/ast.hpp"
+#include "../semantic-checker/symbol_registry.hpp"
 #include "../value/type.hpp"
 #include "../value/value.hpp"
 
@@ -8,6 +9,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <unordered_set>
 
 namespace phos {
 
@@ -62,6 +64,15 @@ public:
 
     types::Type_table &tt;
 
+    Symbol_registry registry;
+
+    // Maps absolute/resolved file paths to their loaded Module_id
+    std::unordered_map<std::string, Module_id> loaded_modules;
+    // Tracks files currently being parsed to prevent infinite circular imports!
+    std::unordered_set<std::string> modules_in_progress;
+
+    std::vector<ast::Stmt_id> program_statements;
+
     // Resolved AST Data
     std::unordered_map<std::string, types::Type_id> global_types;
     std::unordered_map<std::string, types::Function_type_data> functions;
@@ -69,12 +80,19 @@ public:
     std::unordered_map<std::string, types::Union_type_data> union_data;
     std::unordered_map<std::string, types::Enum_type_data> enum_data;
 
-    // Native FFI Signatures
+    // --- LEGACY MAPS (To be deleted after Semantic_checker refactor) ---
     std::unordered_map<std::string, std::vector<types::Native_sig>> native_signatures;
+    std::unordered_map<std::string, Value> native_constants;
+    std::unordered_set<std::string> native_module_names;
+
+    std::unordered_map<std::string, std::string> module_aliases;
 
     // Add native function
     void define_native(const std::string &name, const std::vector<std::string> &params, const std::string &ret, Native_fn func = nullptr);
     void define_native(const std::string &name, const std::vector<types::Native_param> &params, const std::string &ret, Native_fn func = nullptr);
+
+    void define_native_const(const std::string &name, Value val);
+    std::optional<Value> get_native_const(const std::string &name) const;
 
     // Query API: Global Types
     bool is_type_defined(const std::string &name) const;
