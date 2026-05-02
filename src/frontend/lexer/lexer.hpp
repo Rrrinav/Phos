@@ -1,0 +1,518 @@
+#pragma once
+
+#include "token.hpp"
+#include "core/error/err.hpp"
+#include "core/arena.hpp"
+
+#include <cctype>
+#include <format>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace phos::lex {
+
+class Lexer
+{
+public:
+    struct Tokenize_result
+    {
+        std::vector<Token> tokens;
+        phos::err::Engine diagnostics{"lexing"};
+    };
+
+    explicit Lexer(std::string_view src, phos::mem::Arena &arena, std::string source_name = "<input>")
+        : source(src), arena_(arena), source_name_(std::move(source_name))
+    {}
+
+    Tokenize_result tokenize()
+    {
+        Tokenize_result result;
+        while (!is_at_end()) {
+            if (auto tok = scan_token(); tok.has_value()) {
+                if ((*tok).type == TokenType::Invalid) {
+                    result.diagnostics.error(tok->line, tok->column, source_name_, "Invalid token: {}", tok->lexeme);
+                    continue;
+                }
+                result.tokens.push_back(std::move(*tok));
+            }
+        }
+        result.tokens.emplace_back(TokenType::Eof, "", Value(), line, column);
+        return result;
+    }
+
+private:
+    std::string_view source;
+    size_t current = 0;
+    size_t line = 1;
+    size_t column = 1;
+
+    phos::mem::Arena& arena_;
+    std::string source_name_;
+    const std::unordered_map<std::string_view, TokenType> keywords = token_keywords;
+
+    //  primitives
+
+    bool is_at_end() const
+    {
+        return current >= source.size();
+    }
+
+    char peek() const
+    {
+        return is_at_end() ? '\0' : source[current];
+    }
+    char peek_next() const
+    {
+        return current + 1 >= source.size() ? '\0' : source[current + 1];
+    }
+
+    char advance()
+    {
+        char c = source[current++];
+        column++;
+        return c;
+    }
+
+    bool match(char expected)
+    {
+        if (is_at_end() || source[current] != expected) {
+            return false;
+        }
+        current++;
+        column++;
+        return true;
+    }
+
+    //  main dispatch
+
+    std::optional<Token> scan_token()
+    {
+        size_t start_col = column;
+        char c = advance();
+
+        switch (c) {
+        //  whitespace
+        case ' ':
+        case '\r':
+        case '\t':
+            return std::nullopt;
+
+        case '\n':
+            line++;
+            column = 1;
+            return std::nullopt; // newlines are invisible (parser skips them already)
+
+        //  unambiguous single-char
+        case '(':
+            return make(TokenType::LeftParen, "(", start_col);
+        case ')':
+            return make(TokenType::RightParen, ")", start_col);
+        case '{':
+            return make(TokenType::LeftBrace, "{", start_col);
+        case '}':
+            return make(TokenType::RightBrace, "}", start_col);
+        case '[':
+            return make(TokenType::LeftBracket, "[", start_col);
+        case ']':
+            return make(TokenType::RightBracket, "]", start_col);
+        case ';':
+            return make(TokenType::Semicolon, ";", start_col);
+        case ',':
+            return make(TokenType::Comma, ",", start_col);
+        case '+':
+            return make(TokenType::Plus, "+", start_col);
+        case '*':
+            return make(TokenType::Star, "*", start_col);
+        case '%':
+            return make(TokenType::Percent, "%", start_col);
+        case '^':
+            return make(TokenType::BitXor, "^", start_col);
+        case '~':
+            return make(TokenType::BitNot, "~", start_col);
+        case '?':
+            return make(TokenType::Question, "?", start_col);
+
+        //  dot / range
+        // .    →  Dot
+        // ..   →  DotDot        (exclusive range)
+        // ..=  →  DotDotEq      (inclusive range)
+        case '.':
+            if (match('.')) {
+                if (match('=')) {
+                    return make(TokenType::DotDotEq, "..=", start_col);
+                }
+                return make(TokenType::DotDot, "..", start_col);
+            }
+            return make(TokenType::Dot, ".", start_col);
+
+        //  colon / scope
+        case ':':
+            if (match(':')) {
+                return make(TokenType::ColonColon, "::", start_col);
+            }
+            return make(TokenType::Colon, ":", start_col);
+
+        //  arrow / minus
+        case '-':
+            if (match('>')) {
+                return make(TokenType::Arrow, "->", start_col);
+            }
+            return make(TokenType::Minus, "-", start_col);
+
+        //  fat arrow / assign / equal
+        // =    →  Assign
+        // ==   →  Equal
+        // =>   →  FatArrow      (match arm)
+        case '=':
+            if (match('=')) {
+                return make(TokenType::Equal, "==", start_col);
+            }
+            if (match('>')) {
+                return make(TokenType::FatArrow, "=>", start_col);
+            }
+            return make(TokenType::Assign, "=", start_col);
+
+        //  not / not-equal
+        case '!':
+            if (match('=')) {
+                return make(TokenType::NotEqual, "!=", start_col);
+            }
+            return make(TokenType::LogicalNot, "!", start_col);
+
+        //  relational + bitwise shifts
+        case '<':
+            if (match('=')) {
+                return make(TokenType::LessEqual, "<=", start_col);
+            }
+            if (match('<')) {
+                return make(TokenType::BitLShift, "<<", start_col);
+            }
+            return make(TokenType::Less, "<", start_col);
+
+        case '>':
+            if (match('=')) {
+                return make(TokenType::GreaterEqual, ">=", start_col);
+            }
+            if (match('>')) {
+                return make(TokenType::BitRshift, ">>", start_col);
+            }
+            return make(TokenType::Greater, ">", start_col);
+
+        //  logical / bitwise and
+        case '&':
+            if (match('&')) {
+                return make(TokenType::LogicalAnd, "&&", start_col);
+            }
+            return make(TokenType::BitAnd, "&", start_col);
+
+        //  logical / bitwise or / pipe
+        case '|':
+            if (match('|')) {
+                return make(TokenType::LogicalOr, "||", start_col);
+            }
+            return make(TokenType::Pipe, "|", start_col);
+
+        //  strings and f-strings
+        case '"':
+            return scan_string(start_col);
+
+        //  comments and division
+        case '/':
+            if (match('/')) {
+                // line comment — consume until newline
+                while (!is_at_end() && peek() != '\n') {
+                    advance();
+                }
+                return std::nullopt;
+            }
+            if (match('*')) {
+                // block comment — consume until */
+                while (!is_at_end()) {
+                    if (peek() == '\n') {
+                        line++;
+                        column = 1;
+                    }
+                    if (peek() == '*' && peek_next() == '/') {
+                        advance();
+                        advance(); // consume '*' '/'
+                        break;
+                    }
+                    advance();
+                }
+                return std::nullopt;
+            }
+            return make(TokenType::Slash, "/", start_col);
+
+        default:
+            if (std::isdigit(c)) {
+                return scan_number(start_col);
+            }
+
+            if (std::isalpha(c) || c == '_') {
+                return scan_identifier(start_col);
+            }
+
+            return Token(TokenType::Invalid, std::string(1, c), Value(), line, start_col);
+        }
+    }
+
+    //  string scanner
+    Token scan_string(size_t start_col)
+    {
+        std::string value;
+        while (!is_at_end() && peek() != '"') {
+            char c = advance();
+            if (c == '\n') {
+                line++;
+                column = 1;
+            } else if (c == '\\') {
+                // basic escape sequences
+                char esc = advance();
+                switch (esc) {
+                case 'n':
+                    value += '\n';
+                    break;
+                case 't':
+                    value += '\t';
+                    break;
+                case 'r':
+                    value += '\r';
+                    break;
+                case '\\':
+                    value += '\\';
+                    break;
+                case '"':
+                    value += '"';
+                    break;
+                case '0':
+                    value += '\0';
+                    break;
+                default:
+                    value += '\\';
+                    value += esc;
+                    break;
+                }
+            } else {
+                value += c;
+            }
+        }
+
+        if (is_at_end()) {
+            return Token(TokenType::Invalid, std::string("Unterminated string"), Value(), line, start_col);
+        }
+
+        advance(); // closing "
+        Value str_val = Value::make_string(arena_, value);
+        return Token(TokenType::String, std::format("\"{}\"", value), str_val, line, start_col);
+    }
+
+    Token scan_number(size_t start_col)
+    {
+        size_t start = current - 1;
+
+        auto consume_numeric_suffix = [&]() -> std::optional<types::Primitive_kind> {
+            std::string_view rest = source.substr(current);
+            auto match = [&](std::string_view suffix, types::Primitive_kind kind) -> std::optional<types::Primitive_kind> {
+                if (rest.starts_with(suffix)) {
+                    current += suffix.size();
+                    return kind;
+                }
+                return std::nullopt;
+            };
+
+            if (auto kind = match("i16", types::Primitive_kind::I16)) {
+                return kind;
+            }
+            if (auto kind = match("i32", types::Primitive_kind::I32)) {
+                return kind;
+            }
+            if (auto kind = match("i64", types::Primitive_kind::I64)) {
+                return kind;
+            }
+            if (auto kind = match("i8", types::Primitive_kind::I8)) {
+                return kind;
+            }
+            if (auto kind = match("u16", types::Primitive_kind::U16)) {
+                return kind;
+            }
+            if (auto kind = match("u32", types::Primitive_kind::U32)) {
+                return kind;
+            }
+            if (auto kind = match("u64", types::Primitive_kind::U64)) {
+                return kind;
+            }
+            if (auto kind = match("u8", types::Primitive_kind::U8)) {
+                return kind;
+            }
+            if (auto kind = match("f16", types::Primitive_kind::F16)) {
+                return kind;
+            }
+            if (auto kind = match("f32", types::Primitive_kind::F32)) {
+                return kind;
+            }
+            if (auto kind = match("f64", types::Primitive_kind::F64)) {
+                return kind;
+            }
+            return std::nullopt;
+        };
+
+        auto finish_numeric_token = [&](Value default_value, TokenType default_token_type) -> Token {
+            auto suffix_kind = consume_numeric_suffix();
+            std::string lexeme(source.substr(start, current - start));
+
+            if (!suffix_kind) {
+                return Token(default_token_type, lexeme, default_value, line, start_col);
+            }
+
+            auto coerced = coerce_numeric_literal(default_value, *suffix_kind);
+            if (!coerced) {
+                return Token(TokenType::Invalid, lexeme, Value(), line, start_col);
+            }
+
+            TokenType final_type = default_token_type;
+            switch (*suffix_kind) {
+                case types::Primitive_kind::I8:  final_type = TokenType::TInt8; break;
+                case types::Primitive_kind::I16: final_type = TokenType::TInt16; break;
+                case types::Primitive_kind::I32: final_type = TokenType::TInt32; break;
+                case types::Primitive_kind::I64: final_type = TokenType::TInt64; break;
+                case types::Primitive_kind::U8:  final_type = TokenType::TUInt8; break;
+                case types::Primitive_kind::U16: final_type = TokenType::TUInt16; break;
+                case types::Primitive_kind::U32: final_type = TokenType::TUInt32; break;
+                case types::Primitive_kind::U64: final_type = TokenType::TUInt64; break;
+                case types::Primitive_kind::F16: final_type = TokenType::TFloat16; break;
+                case types::Primitive_kind::F32: final_type = TokenType::TFloat32; break;
+                case types::Primitive_kind::F64: final_type = TokenType::TFloat64; break;
+                default:
+                     return Token(TokenType::Invalid, lexeme, Value(), line, start_col);
+            }
+
+            return Token(final_type, lexeme, coerced.value(), line, start_col);
+        };
+
+        auto strip_underscores = [](std::string_view text) -> std::string {
+            std::string cleaned;
+            cleaned.reserve(text.size());
+            for (char c : text) {
+                if (c != '_') {
+                    cleaned += c;
+                }
+            }
+            return cleaned;
+        };
+
+        auto consume_digits = [&](auto is_valid_digit, bool saw_digit = false) -> bool {
+            while (true) {
+                char c = peek();
+                if (is_valid_digit(c)) {
+                    saw_digit = true;
+                    advance();
+                    continue;
+                }
+
+                if (c == '_' && saw_digit && is_valid_digit(peek_next())) {
+                    advance();
+                    continue;
+                }
+
+                break;
+            }
+            return saw_digit;
+        };
+
+        // hex literal: 0x...
+        if (source[start] == '0' && (peek() == 'x' || peek() == 'X')) {
+            advance(); // consume 'x'
+            if (!consume_digits([](char c) { return std::isxdigit(static_cast<unsigned char>(c)); })) {
+                return Token(TokenType::Invalid, std::string("Invalid hex literal"), Value(), line, start_col);
+            }
+            std::string cleaned = strip_underscores(source.substr(start, current - start));
+            int32_t val = std::stoll(cleaned, nullptr, 16);
+            return finish_numeric_token(Value(static_cast<std::int32_t>(val)), TokenType::Integer32);
+        }
+
+        // binary literal: 0b...
+        if (source[start] == '0' && (peek() == 'b' || peek() == 'B')) {
+            advance(); // consume 'b'
+            if (!consume_digits([](char c) { return c == '0' || c == '1'; })) {
+                return Token(TokenType::Invalid, std::string("Invalid binary literal"), Value(), line, start_col);
+            }
+            std::string cleaned = strip_underscores(source.substr(start, current - start));
+            int32_t val = std::stoll(cleaned.substr(2), nullptr, 2);
+            return finish_numeric_token(Value(static_cast<std::int32_t>(val)), TokenType::Integer32);
+        }
+
+        // octal literal: 0o...
+        if (source[start] == '0' && (peek() == 'o' || peek() == 'O')) {
+            advance(); // consume 'o'
+            if (!consume_digits([](char c) { return c >= '0' && c <= '7'; })) {
+                return Token(TokenType::Invalid, std::string("Invalid octal literal"), Value(), line, start_col);
+            }
+            std::string cleaned = strip_underscores(source.substr(start, current - start));
+            int32_t val = std::stoll(cleaned.substr(2), nullptr, 8);
+            return finish_numeric_token(Value(static_cast<std::int32_t>(val)), TokenType::Integer32);
+        }
+
+        consume_digits([](char c) { return std::isdigit(static_cast<unsigned char>(c)); }, true);
+        bool is_float = false;
+
+        // float: digits '.' digits  (but NOT '..' which is a range token)
+        if (peek() == '.' && peek_next() != '.' && std::isdigit(peek_next())) {
+            is_float = true;
+            advance(); // consume '.'
+            consume_digits([](char c) { return std::isdigit(static_cast<unsigned char>(c)); });
+        }
+
+        if (peek() == 'e' || peek() == 'E') {
+            size_t exp_pos = current;
+            advance();
+            if (peek() == '+' || peek() == '-') {
+                advance();
+            }
+            if (!consume_digits([](char c) { return std::isdigit(static_cast<unsigned char>(c)); })) {
+                current = exp_pos;
+            } else {
+                is_float = true;
+            }
+        }
+
+        std::string cleaned = strip_underscores(source.substr(start, current - start));
+        if (is_float) {
+            return finish_numeric_token(Value(std::stod(cleaned)), TokenType::Float64);
+        }
+
+        return finish_numeric_token(Value(static_cast<std::int32_t>(std::stoll(cleaned))), TokenType::Integer32);
+    }
+
+    //  identifier / keyword scanner
+
+    Token scan_identifier(size_t start_col)
+    {
+        size_t start = current - 1;
+        while (std::isalnum(peek()) || peek() == '_') {
+            advance();
+        }
+
+        std::string_view lexeme = source.substr(start, current - start);
+
+        auto it = keywords.find(lexeme);
+        TokenType type = (it != keywords.end()) ? it->second : TokenType::Identifier;
+
+        Value literal = Value();
+        if (type == TokenType::Bool) {
+            literal = Value(lexeme == "true");
+        }
+
+        return Token(type, std::string(lexeme), literal, line, start_col);
+    }
+
+    //  factory
+
+    Token make(TokenType type, std::string_view lexeme, size_t start_col) const
+    {
+        return Token(type, std::string(lexeme), Value(), line, start_col);
+    }
+};
+
+} // namespace phos::lex

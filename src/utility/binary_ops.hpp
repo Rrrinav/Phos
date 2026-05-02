@@ -1,8 +1,8 @@
 #pragma once
 
-#include "../error/result.hpp"
-#include "../parser/ast.hpp"
-#include "../value/value.hpp"
+#include "core/error/result.hpp"
+#include "frontend/parser/ast.hpp"
+#include "core/value/value.hpp"
 
 namespace phos::util {
 
