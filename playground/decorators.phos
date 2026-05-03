@@ -1,0 +1,3 @@
+@n_muts(1)
+@mut_before(use_x)
+static x := 10;

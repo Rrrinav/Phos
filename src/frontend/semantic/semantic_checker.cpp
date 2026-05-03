@@ -21,6 +21,7 @@ T &get_stmt(ast::Ast_tree &tree, ast::Stmt_id id)
     return std::get<T>(tree.get(id).node);
 }
 
+[[maybe_unused]]
 std::string function_like_type_name(const std::vector<types::Type_id> &params, types::Type_id ret, types::Type_table &tt)
 {
     return tt.to_string(tt.function(params, ret));
@@ -67,6 +68,7 @@ types::Type_id resolve_symbol_type(Compiler_context &ctx, Symbol_id sym_id, Sema
     return sym.type;
 }
 
+[[maybe_unused]]
 std::optional<Module_id> resolve_module_context(Compiler_context &ctx, Module_id current_module_id, ast::Expr_id expr_id)
 {
     const auto &node = ctx.tree.get(expr_id).node;
@@ -267,26 +269,56 @@ types::Type_id Semantic_checker::to_iterator_type(types::Type_id type) const
  * |-- register unions
  * `-- register enums
  */
-void Semantic_checker::hoist_globals(const std::vector<ast::Stmt_id> &statements)
+void Semantic_checker::hoist_globals(Module_id mod_id)
 {
-    for (auto stmt_id : statements) {
+    auto &module = ctx.workspace.get_module(mod_id);
+
+    for (auto stmt_id : module.ast_roots) {
         if (stmt_id.is_null()) {
             continue;
         }
 
         if (std::holds_alternative<ast::Function_stmt>(ctx.tree.get(stmt_id).node)) {
             auto &fn = get_stmt<ast::Function_stmt>(ctx.tree, stmt_id);
-            ctx.type_env.functions[fn.name] = Function_type_data{stmt_id};
+
+            std::string canonical_name =
+                (module.logical_namespace == "main" || module.logical_namespace.empty()) ? fn.name : module.logical_namespace + "::" + fn.name;
+
+            // 1. Create the globally unique Symbol
+            Symbol sym{
+                .id = Symbol_id{0},
+                .name = canonical_name,
+                .kind = Symbol_kind::Phos_func,
+                .type = ctx.tt.get_unknown(), // Resolved safely in Pass 2
+                .owner_module = mod_id,
+                .is_public = true,
+                .const_value = std::nullopt,
+                .stack_offset = std::nullopt,
+                .ffi_index = std::nullopt,
+                .declaration = stmt_id};
+
+            Symbol_id sym_id = ctx.registry.create_symbol(std::move(sym));
+
+            // 2. Export it to the module using the raw AST name
+            module.add_public_symbol(fn.name, sym_id);
+
+            // 3. Register it in the legacy Type Environment
+            ctx.type_env.functions[canonical_name] = Function_type_data{stmt_id};
 
         } else if (std::holds_alternative<ast::Model_stmt>(ctx.tree.get(stmt_id).node)) {
             auto &model = get_stmt<ast::Model_stmt>(ctx.tree, stmt_id);
+
+            std::string canonical_name =
+                (module.logical_namespace == "main" || module.logical_namespace.empty()) ? model.name : module.logical_namespace + "::" + model.name;
+
             std::vector<std::pair<std::string, types::Type_id>> tt_fields;
             for (const auto &field : model.fields) {
                 if (!field.is_static) {
                     tt_fields.push_back({field.name, resolve_type_recursively(field.type, field.loc)});
                 }
             }
-            ctx.type_env.global_types[model.name] = ctx.tt.model(model.name, tt_fields);
+
+            ctx.type_env.global_types[canonical_name] = ctx.tt.model(canonical_name, tt_fields);
 
             Model_type_data m_data;
             for (const auto &field : model.fields) {
@@ -301,7 +333,22 @@ void Semantic_checker::hoist_globals(const std::vector<ast::Stmt_id> &statements
                     m_data.field_defaults[field.name] = field.default_value;
                 }
             }
-            ctx.type_env.model_data[model.name] = std::move(m_data);
+            ctx.type_env.model_data[canonical_name] = std::move(m_data);
+
+            // Export Model Symbol
+            Symbol sym{
+                .id = Symbol_id{0},
+                .name = canonical_name,
+                .kind = Symbol_kind::Model_def,
+                .type = ctx.type_env.global_types[canonical_name],
+                .owner_module = mod_id,
+                .is_public = true,
+                .const_value = std::nullopt,
+                .stack_offset = std::nullopt,
+                .ffi_index = std::nullopt,
+                .declaration = stmt_id};
+            Symbol_id sym_id = ctx.registry.create_symbol(std::move(sym));
+            module.add_public_symbol(model.name, sym_id);
 
             for (auto method_id : model.methods) {
                 if (method_id.is_null()) {
@@ -313,19 +360,19 @@ void Semantic_checker::hoist_globals(const std::vector<ast::Stmt_id> &statements
                     if (!m_fn.is_static) {
                         ast::Function_param this_param;
                         this_param.name = "this";
-                        this_param.type = ctx.type_env.global_types[model.name];
+                        this_param.type = ctx.type_env.global_types[canonical_name];
                         this_param.is_mut = true;
                         this_param.loc = m_fn.loc;
                         m_fn.parameters.insert(m_fn.parameters.begin(), this_param);
                     }
 
                     auto original_name = m_fn.name;
-                    m_fn.name = model.name + "::" + m_fn.name;
+                    m_fn.name = canonical_name + "::" + m_fn.name;
 
                     if (m_fn.is_static) {
-                        ctx.type_env.model_data[model.name].static_methods[original_name] = Function_type_data{method_id};
+                        ctx.type_env.model_data[canonical_name].static_methods[original_name] = Function_type_data{method_id};
                     } else {
-                        ctx.type_env.model_data[model.name].methods[original_name] = Function_type_data{method_id};
+                        ctx.type_env.model_data[canonical_name].methods[original_name] = Function_type_data{method_id};
                     }
 
                     ctx.type_env.functions[m_fn.name] = Function_type_data{method_id};
@@ -333,11 +380,15 @@ void Semantic_checker::hoist_globals(const std::vector<ast::Stmt_id> &statements
             }
         } else if (std::holds_alternative<ast::Union_stmt>(ctx.tree.get(stmt_id).node)) {
             auto &un = get_stmt<ast::Union_stmt>(ctx.tree, stmt_id);
+
+            std::string canonical_name =
+                (module.logical_namespace == "main" || module.logical_namespace.empty()) ? un.name : module.logical_namespace + "::" + un.name;
+
             std::vector<std::pair<std::string, types::Type_id>> tt_variants;
             for (const auto &variant : un.variants) {
                 tt_variants.push_back({variant.name, variant.type});
             }
-            ctx.type_env.global_types[un.name] = ctx.tt.union_(un.name, tt_variants);
+            ctx.type_env.global_types[canonical_name] = ctx.tt.union_(canonical_name, tt_variants);
 
             Union_type_data u_data;
             for (const auto &variant : un.variants) {
@@ -345,11 +396,30 @@ void Semantic_checker::hoist_globals(const std::vector<ast::Stmt_id> &statements
                     u_data.variant_defaults[variant.name] = variant.default_value;
                 }
             }
-            ctx.type_env.union_data[un.name] = std::move(u_data);
+            ctx.type_env.union_data[canonical_name] = std::move(u_data);
+
+            // Export Union Symbol
+            Symbol sym{
+                .id = Symbol_id{0},
+                .name = canonical_name,
+                .kind = Symbol_kind::Union_def,
+                .type = ctx.type_env.global_types[canonical_name],
+                .owner_module = mod_id,
+                .is_public = true,
+                .const_value = std::nullopt,
+                .stack_offset = std::nullopt,
+                .ffi_index = std::nullopt,
+                .declaration = stmt_id};
+            Symbol_id sym_id = ctx.registry.create_symbol(std::move(sym));
+            module.add_public_symbol(un.name, sym_id);
 
         } else if (std::holds_alternative<ast::Enum_stmt>(ctx.tree.get(stmt_id).node)) {
             auto &en = get_stmt<ast::Enum_stmt>(ctx.tree, stmt_id);
-            ctx.type_env.global_types[en.name] = ctx.tt.enum_(en.name, en.base_type);
+
+            std::string canonical_name =
+                (module.logical_namespace == "main" || module.logical_namespace.empty()) ? en.name : module.logical_namespace + "::" + en.name;
+
+            ctx.type_env.global_types[canonical_name] = ctx.tt.enum_(canonical_name, en.base_type);
 
             Enum_type_data e_data;
 
@@ -375,9 +445,83 @@ void Semantic_checker::hoist_globals(const std::vector<ast::Stmt_id> &statements
                 }
             }
 
-            ctx.type_env.enum_data[en.name] = std::move(e_data);
+            ctx.type_env.enum_data[canonical_name] = std::move(e_data);
+
+            // Export Enum Symbol
+            Symbol sym{
+                .id = Symbol_id{0},
+                .name = canonical_name,
+                .kind = Symbol_kind::Enum_def,
+                .type = ctx.type_env.global_types[canonical_name],
+                .owner_module = mod_id,
+                .is_public = true,
+                .const_value = std::nullopt,
+                .stack_offset = std::nullopt,
+                .ffi_index = std::nullopt,
+                .declaration = stmt_id};
+            Symbol_id sym_id = ctx.registry.create_symbol(std::move(sym));
+            module.add_public_symbol(en.name, sym_id);
         }
     }
+}
+
+err::Engine Semantic_checker::check_workspace()
+{
+    // PASS 1: Unified Symbol Hoisting
+    for (const auto &module : ctx.workspace.modules) {
+        if (hoisted_modules.contains(module.id)) {
+            continue;
+        }
+        hoisted_modules.insert(module.id);
+
+        // Pass the Module ID so it can export symbols properly!
+        hoist_globals(module.id);
+    }
+
+    // PASS 2: Unified Semantic Checking
+    for (const auto &module : ctx.workspace.modules) {
+        if (checked_modules.contains(module.id)) {
+            continue;
+        }
+        checked_modules.insert(module.id);
+
+        // Pass the Module ID so it can set up the correct file scope!
+        check_module(module.id);
+    }
+
+    return diagnostics_;
+}
+
+
+/*
+ * [check_module]
+ * |-- set current module context
+ * |-- open file-level scope
+ * |-- verify all statements in THIS file
+ * `-- clean up scope
+ */
+void Semantic_checker::check_module(Module_id mod_id)
+{
+    auto &module = ctx.workspace.get_module(mod_id);
+
+    // 1. Lock the checker into this specific file's context
+    current_module_id = mod_id;
+
+    // 2. Open the file-level variable scope
+    variables.begin_scope();
+    m_nil_checked_vars_stack.emplace_back();
+
+    // 3. Check every top-level statement in this specific module
+    for (auto stmt_id : module.ast_roots) {
+        check_stmt(stmt_id);
+    }
+
+    // 4. Tear down the file-level scope safely
+    m_nil_checked_vars_stack.pop_back();
+    variables.end_scope();
+
+    // Reset context
+    current_module_id = Module_id::null();
 }
 
 /*
@@ -390,7 +534,7 @@ err::Engine Semantic_checker::check(const std::vector<ast::Stmt_id> &statements)
     (void)statements;
 
     for (const auto &module : ctx.workspace.modules) {
-        hoist_globals(module.ast_roots);
+        hoist_globals(module.id);
     }
 
     for (const auto &module : ctx.workspace.modules) {
@@ -416,7 +560,7 @@ err::Engine Semantic_checker::check(const std::vector<ast::Stmt_id> &statements)
  */
 void Semantic_checker::declare(const std::string &name, types::Type_id type, bool is_mut, const ast::Source_location &loc)
 {
-    // V2 Optimization: Only register in the Global Registry if it's a global/static.
+    // Only register in the Global Registry if it's a global/static.
     // Standard locals live only in the Scope_tracker to save memory and lookup time.
     // 1. Check if name is already reserved in the current scope
     if (variables.is_declared_locally(name)) {
@@ -425,7 +569,7 @@ void Semantic_checker::declare(const std::string &name, types::Type_id type, boo
     }
 
     // 2. Add to Scope_tracker.
-    // In V2, we pass a null Symbol_id for standard locals to indicate
+    // We pass a null Symbol_id for standard locals to indicate
     // they don't have a global entry.
     variables.declare(name, type, is_mut, Symbol_id::null());
 }
@@ -1985,22 +2129,27 @@ void Semantic_checker::check_import_stmt(ast::Stmt_id stmt_id)
 {
     auto &import_stmt = get_stmt<ast::Import_stmt>(ctx.tree, stmt_id);
 
-    // If there are no selectives (e.g. `import std::math`), we have nothing to do!
-    // The Module_resolver already mapped the module alias to the Workspace.
+    // If there are no selectives, the Module_resolver already handled the aliasing.
     if (import_stmt.selectives.empty()) {
         return;
     }
 
-    const std::string module_alias = import_stmt.local_alias.empty() ? import_stmt.path.back() : import_stmt.local_alias;
-    auto target_mod_id_opt = imported_module_id(ctx, current_module_id, module_alias);
+    // 1. Rebuild the logical namespace (e.g., "mather" or "std::math")
+    std::string logical_ns = import_stmt.path.front();
+    for (size_t i = 1; i < import_stmt.path.size(); ++i) {
+        logical_ns += "::" + import_stmt.path[i];
+    }
+
+    // 2. Fetch the module directly from the global workspace
+    auto target_mod_id_opt = ctx.workspace.get_module_by_namespace(logical_ns);
     if (!target_mod_id_opt) {
-        return; // Silent fail: Module_resolver already threw an error for missing files
+        return; // Silent fail: Module_resolver already caught missing files
     }
 
     Module_id target_mod_id = *target_mod_id_opt;
     auto &target_module = ctx.workspace.get_module(target_mod_id);
 
-    // 3. Bind the specific requested symbols into the current file's scope
+    // 3. Bind the specific requested symbols into the current file's local scope
     for (const auto &sym_name : import_stmt.selectives) {
         auto exported_sym_id = target_module.resolve_exported_symbol(sym_name);
         if (!exported_sym_id) {
@@ -2008,8 +2157,12 @@ void Semantic_checker::check_import_stmt(ast::Stmt_id stmt_id)
             continue;
         }
 
-        // Grab the type and inject it into the local Scope_tracker!
-        // Because it's injected at Depth 0, the whole file can use it directly (e.g. `sin(1.0)`)
+        if (variables.is_declared_locally(sym_name)) {
+            type_error(import_stmt.loc, std::format("Import conflict: '{}' is already bound in this module.", sym_name));
+            continue;
+        }
+
+        // Inject the symbol into the local scope so `test_mod()` works without the prefix
         variables.declare(sym_name, resolve_symbol_type(ctx, *exported_sym_id, *this), false, *exported_sym_id);
     }
 }
@@ -2715,86 +2868,86 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
         return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
     }
 
-    if (std::holds_alternative<ast::Static_path_expr>(ctx.tree.get(callee_id).node)) {
-        types::Type_id base_type_res = ctx.tt.get_unknown();
-        auto sp_base_id = get_node<ast::Static_path_expr>(ctx.tree, callee_id).base;
-        auto member_name = get_node<ast::Static_path_expr>(ctx.tree, callee_id).member.lexeme;
-        auto sp_loc = get_node<ast::Static_path_expr>(ctx.tree, callee_id).loc;
-
-        if (std::holds_alternative<ast::Variable_expr>(ctx.tree.get(sp_base_id).node)) {
-            auto vname = get_node<ast::Variable_expr>(ctx.tree, sp_base_id).name;
-            if (ctx.type_env.is_type_defined(vname) && !variables.lookup(vname)) {
-                base_type_res = *ctx.type_env.get_type(vname);
-                ast::get_type(ctx.tree.get(sp_base_id).node) = base_type_res;
-            } else {
-                base_type_res = check_expr(sp_base_id);
-            }
-        } else {
-            base_type_res = check_expr(sp_base_id);
-        }
-
-        if (ctx.tt.is_union(base_type_res)) {
-            type_error(loc, "Union construction via '::' is not supported.");
-            return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
-        } else if (ctx.tt.is_model(base_type_res)) {
-            auto &model_name = std::get<types::Model_type>(ctx.tt.get(base_type_res).data).name;
-            auto model_data_ptr = ctx.type_env.get_model(model_name);
-
-            if (model_data_ptr) {
-                if (model_data_ptr->static_methods.contains(member_name)) {
-                    auto method_decl_id = model_data_ptr->static_methods.at(member_name).declaration;
-                    auto decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(method_decl_id).node);
-
-                    auto bound = bind_call_arguments(decl->parameters, arguments_copy, loc, "static method", member_name);
-                    get_node<ast::Call_expr>(ctx.tree, expr_id).arguments = std::move(bound.ordered_arguments);
-
-                    std::vector<types::Type_id> fparams;
-                    for (auto &p : decl->parameters) {
-                        fparams.push_back(p.type);
-                    }
-                    get_node<ast::Static_path_expr>(ctx.tree, callee_id).type = ctx.tt.function(fparams, decl->return_type);
-
-                    return get_node<ast::Call_expr>(ctx.tree, expr_id).type = decl->return_type;
-
-                } else if (model_data_ptr->methods.contains(member_name)) {
-                    if (arguments_copy.empty()) {
-                        type_error(loc, "UFCS call requires an instance as the first argument.");
-                        return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
-                    }
-                    if (!arguments_copy[0].name.empty()) {
-                        type_error(arguments_copy[0].loc, "First argument of UFCS cannot be named.");
-                        return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
-                    }
-
-                    auto receiver_type = check_expr(arguments_copy[0].value, base_type_res);
-                    if (!is_compatible(base_type_res, receiver_type)) {
-                        type_error(ast::get_loc(ctx.tree.get(arguments_copy[0].value).node), "UFCS receiver type mismatch.");
-                        return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
-                    }
-
-                    auto method_decl_id = model_data_ptr->methods.at(member_name).declaration;
-                    auto decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(method_decl_id).node);
-
-                    auto bound = bind_call_arguments(decl->parameters, arguments_copy, loc, "method", member_name);
-                    get_node<ast::Call_expr>(ctx.tree, expr_id).arguments = std::move(bound.ordered_arguments);
-
-                    std::vector<types::Type_id> fparams;
-                    for (auto &p : decl->parameters) {
-                        fparams.push_back(p.type);
-                    }
-                    get_node<ast::Static_path_expr>(ctx.tree, callee_id).type = ctx.tt.function(fparams, decl->return_type);
-
-                    return get_node<ast::Call_expr>(ctx.tree, expr_id).type = decl->return_type;
-                } else if (model_data_ptr->static_fields.contains(member_name)) {
-                    type_error(sp_loc, std::format("Model static field '{}' is not callable.", member_name));
-                    return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
-                }
-            }
-
-            type_error(sp_loc, std::format("Model '{}' has no callable method '{}'.", model_name, member_name));
-            return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
-        }
-    }
+    //if (std::holds_alternative<ast::Static_path_expr>(ctx.tree.get(callee_id).node)) {
+    //    types::Type_id base_type_res = ctx.tt.get_unknown();
+    //    auto sp_base_id = get_node<ast::Static_path_expr>(ctx.tree, callee_id).base;
+    //    auto member_name = get_node<ast::Static_path_expr>(ctx.tree, callee_id).member.lexeme;
+    //    auto sp_loc = get_node<ast::Static_path_expr>(ctx.tree, callee_id).loc;
+    //
+    //    if (std::holds_alternative<ast::Variable_expr>(ctx.tree.get(sp_base_id).node)) {
+    //        auto vname = get_node<ast::Variable_expr>(ctx.tree, sp_base_id).name;
+    //        if (ctx.type_env.is_type_defined(vname) && !variables.lookup(vname)) {
+    //            base_type_res = *ctx.type_env.get_type(vname);
+    //            ast::get_type(ctx.tree.get(sp_base_id).node) = base_type_res;
+    //        } else {
+    //            base_type_res = check_expr(sp_base_id);
+    //        }
+    //    } else {
+    //        base_type_res = check_expr(sp_base_id);
+    //    }
+    //
+    //    if (ctx.tt.is_union(base_type_res)) {
+    //        type_error(loc, "Union construction via '::' is not supported.");
+    //        return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+    //    } else if (ctx.tt.is_model(base_type_res)) {
+    //        auto &model_name = std::get<types::Model_type>(ctx.tt.get(base_type_res).data).name;
+    //        auto model_data_ptr = ctx.type_env.get_model(model_name);
+    //
+    //        if (model_data_ptr) {
+    //            if (model_data_ptr->static_methods.contains(member_name)) {
+    //                auto method_decl_id = model_data_ptr->static_methods.at(member_name).declaration;
+    //                auto decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(method_decl_id).node);
+    //
+    //                auto bound = bind_call_arguments(decl->parameters, arguments_copy, loc, "static method", member_name);
+    //                get_node<ast::Call_expr>(ctx.tree, expr_id).arguments = std::move(bound.ordered_arguments);
+    //
+    //                std::vector<types::Type_id> fparams;
+    //                for (auto &p : decl->parameters) {
+    //                    fparams.push_back(p.type);
+    //                }
+    //                get_node<ast::Static_path_expr>(ctx.tree, callee_id).type = ctx.tt.function(fparams, decl->return_type);
+    //
+    //                return get_node<ast::Call_expr>(ctx.tree, expr_id).type = decl->return_type;
+    //
+    //            } else if (model_data_ptr->methods.contains(member_name)) {
+    //                if (arguments_copy.empty()) {
+    //                    type_error(loc, "UFCS call requires an instance as the first argument.");
+    //                    return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+    //                }
+    //                if (!arguments_copy[0].name.empty()) {
+    //                    type_error(arguments_copy[0].loc, "First argument of UFCS cannot be named.");
+    //                    return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+    //                }
+    //
+    //                auto receiver_type = check_expr(arguments_copy[0].value, base_type_res);
+    //                if (!is_compatible(base_type_res, receiver_type)) {
+    //                    type_error(ast::get_loc(ctx.tree.get(arguments_copy[0].value).node), "UFCS receiver type mismatch.");
+    //                    return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+    //                }
+    //
+    //                auto method_decl_id = model_data_ptr->methods.at(member_name).declaration;
+    //                auto decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(method_decl_id).node);
+    //
+    //                auto bound = bind_call_arguments(decl->parameters, arguments_copy, loc, "method", member_name);
+    //                get_node<ast::Call_expr>(ctx.tree, expr_id).arguments = std::move(bound.ordered_arguments);
+    //
+    //                std::vector<types::Type_id> fparams;
+    //                for (auto &p : decl->parameters) {
+    //                    fparams.push_back(p.type);
+    //                }
+    //                get_node<ast::Static_path_expr>(ctx.tree, callee_id).type = ctx.tt.function(fparams, decl->return_type);
+    //
+    //                return get_node<ast::Call_expr>(ctx.tree, expr_id).type = decl->return_type;
+    //            } else if (model_data_ptr->static_fields.contains(member_name)) {
+    //                type_error(sp_loc, std::format("Model static field '{}' is not callable.", member_name));
+    //                return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+    //            }
+    //        }
+    //
+    //        type_error(sp_loc, std::format("Model '{}' has no callable method '{}'.", model_name, member_name));
+    //        return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+    //    }
+    //}
 
     auto callee_type = check_expr(callee_id);
     if (ctx.tt.is_unknown(callee_type)) {
@@ -3062,31 +3215,39 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
     auto &expr = get_node<ast::Static_path_expr>(ctx.tree, expr_id);
 
     // 1. Resolve module-qualified paths before treating '::' as a type path.
-    if (!std::holds_alternative<ast::Static_path_expr>(ctx.tree.get(base_id).node)) {
-        (void)check_expr(base_id);
-    } else {
-        auto &base_path = get_node<ast::Static_path_expr>(ctx.tree, base_id);
-        if (!base_path.resolved_module && !base_path.resolved_symbol) {
-            (void)check_expr(base_id);
-        }
+    std::optional<Module_id> base_module_id;
+
+    // Case A: The base is a simple identifier (e.g., 'mather::test_mod')
+    if (auto *var_base = std::get_if<ast::Variable_expr>(&ctx.tree.get(base_id).node)) {
+        // STRICT CHECK: Is this name explicitly aliased in the CURRENT module's imports?
+        base_module_id = ctx.workspace.get_module(current_module_id).resolve_import(var_base->name);
+    }
+    // Case B: The base is a nested path (e.g., 'std::math::test_mod')
+    else if (auto *path_base = std::get_if<ast::Static_path_expr>(&ctx.tree.get(base_id).node)) {
+        check_expr(base_id); // Recursively resolve the parent path first
+        base_module_id = path_base->resolved_module;
     }
 
-    if (auto module_id = resolve_module_context(ctx, current_module_id, base_id)) {
-        auto &module = ctx.workspace.get_module(*module_id);
+    // If we successfully resolved the base to a module, process the member!
+    if (base_module_id) {
+        auto &target_module = ctx.workspace.get_module(*base_module_id);
 
-        if (auto nested_module = module.resolve_import(member_lexeme)) {
+        // Sub-Case 1: The member is a nested module (e.g., math::constants)
+        if (auto nested_module = target_module.resolve_import(member_lexeme)) {
             expr.resolved_module = *nested_module;
             expr.resolved_symbol.reset();
-            return expr.type = ctx.tt.get_any();
+            return expr.type = ctx.tt.get_any(); // Adjust this if you have a specific Module Type_id
         }
 
-        if (auto sym_id = module.resolve_exported_symbol(member_lexeme)) {
+        // Sub-Case 2: The member is an exported symbol (e.g., mather::test_mod)
+        if (auto sym_id = target_module.resolve_exported_symbol(member_lexeme)) {
             expr.resolved_module.reset();
             expr.resolved_symbol = *sym_id;
             return expr.type = resolve_symbol_type(ctx, *sym_id, *this);
         }
 
-        type_error(expr.loc, std::format("Module '{}' does not export '{}'.", module.logical_namespace, member_lexeme));
+        // Failure: The module was found, but the member doesn't exist
+        type_error(loc, std::format("Module does not export '{}'.", member_lexeme));
         return expr.type = ctx.tt.get_unknown();
     }
 
@@ -3127,6 +3288,21 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
             if (model_data->static_methods.contains(member_lexeme)) {
                 auto method_decl_id = model_data->static_methods.at(member_lexeme).declaration;
                 if (auto *decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(method_decl_id).node)) {
+                    std::vector<types::Type_id> fparams;
+                    fparams.reserve(decl->parameters.size());
+                    for (const auto &param : decl->parameters) {
+                        fparams.push_back(param.type);
+                    }
+                    auto ret = ctx.tt.function(fparams, decl->return_type);
+                    get_node<ast::Static_path_expr>(ctx.tree, expr_id).type = ret;
+                    return ret;
+                }
+            }
+            if (model_data->methods.contains(member_lexeme)) {
+                auto method_decl_id = model_data->methods.at(member_lexeme).declaration;
+                if (auto *decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(method_decl_id).node)) {
+                    // The Hoister already injected the `this` parameter!
+                    // We just need to return the raw function signature.
                     std::vector<types::Type_id> fparams;
                     fparams.reserve(decl->parameters.size());
                     for (const auto &param : decl->parameters) {
@@ -3411,7 +3587,7 @@ types::Type_id Semantic_checker::check_method_call_expr(ast::Expr_id expr_id, st
         if (method_name == "next" || method_name == "prev") {
 
             if (arguments_copy.empty()) {
-                ast::Literal_expr default_step{Value(static_cast<int64_t>(1)), 0};
+                ast::Literal_expr default_step{Value(static_cast<int64_t>(1)), {0}, loc};
                 ast::Expr_id step_id = ctx.tree.add_expr(ast::Expr(default_step));
                 ast::get_type(ctx.tree.get(step_id).node) = ctx.tt.get_i32();
                 arguments_copy.push_back({"", step_id, loc});

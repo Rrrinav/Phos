@@ -4,6 +4,7 @@
 #include "frontend/lexer/lexer.hpp"
 #include "frontend/parser/parser.hpp"
 
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 
@@ -35,43 +36,45 @@ Import_target build_import_target(const ast::Import_stmt &stmt)
 types::Type_id value_type(Type_environment &env, const Value &value)
 {
     switch (value.tag()) {
-    case Value_tag::Nil:          return env.tt.get_nil();
-    case Value_tag::Bool:         return env.tt.get_bool();
-    case Value_tag::I8:           return env.tt.get_i8();
-    case Value_tag::I16:          return env.tt.get_i16();
-    case Value_tag::I32:          return env.tt.get_i32();
-    case Value_tag::I64:          return env.tt.get_i64();
-    case Value_tag::U8:           return env.tt.get_u8();
-    case Value_tag::U16:          return env.tt.get_u16();
-    case Value_tag::U32:          return env.tt.get_u32();
-    case Value_tag::U64:          return env.tt.get_u64();
-    case Value_tag::F16:          return env.tt.get_f16();
-    case Value_tag::F32:          return env.tt.get_f32();
-    case Value_tag::F64:          return env.tt.get_f64();
-    case Value_tag::String:       return env.tt.get_string();
+    case Value_tag::Nil:
+        return env.tt.get_nil();
+    case Value_tag::Bool:
+        return env.tt.get_bool();
+    case Value_tag::I8:
+        return env.tt.get_i8();
+    case Value_tag::I16:
+        return env.tt.get_i16();
+    case Value_tag::I32:
+        return env.tt.get_i32();
+    case Value_tag::I64:
+        return env.tt.get_i64();
+    case Value_tag::U8:
+        return env.tt.get_u8();
+    case Value_tag::U16:
+        return env.tt.get_u16();
+    case Value_tag::U32:
+        return env.tt.get_u32();
+    case Value_tag::U64:
+        return env.tt.get_u64();
+    case Value_tag::F16:
+        return env.tt.get_f16();
+    case Value_tag::F32:
+        return env.tt.get_f32();
+    case Value_tag::F64:
+        return env.tt.get_f64();
+    case Value_tag::String:
+        return env.tt.get_string();
     case Value_tag::Array:
     case Value_tag::Model:
     case Value_tag::Union:
     case Value_tag::Closure:
     case Value_tag::Iterator:
     case Value_tag::Green_thread:
-    case Value_tag::Upvalue:      return env.tt.get_any();
+    case Value_tag::Upvalue:
+        return env.tt.get_any();
     }
 
     return env.tt.get_unknown();
-}
-
-void namespace_top_level_declaration(ast::Stmt::Node &node, const std::string &logical_namespace)
-{
-    if (auto *fn = std::get_if<ast::Function_stmt>(&node)) {
-        fn->name = logical_namespace + "::" + fn->name;
-    } else if (auto *model = std::get_if<ast::Model_stmt>(&node)) {
-        model->name = logical_namespace + "::" + model->name;
-    } else if (auto *un = std::get_if<ast::Union_stmt>(&node)) {
-        un->name = logical_namespace + "::" + un->name;
-    } else if (auto *en = std::get_if<ast::Enum_stmt>(&node)) {
-        en->name = logical_namespace + "::" + en->name;
-    }
 }
 
 void publish_native_exports(Compiler_context &ctx, Module_id module_id)
@@ -173,21 +176,56 @@ err::Engine Module_resolver::resolve_imports(Module_id current_module, const std
                 target_mod_id = *ctx.workspace.get_module_by_path(target.os_path);
             }
         }
-        // 2. Check if it is a source module
+        // 2. Check if it is a source module or directory
         else {
             std::filesystem::path file_path = root_dir / (target.os_path + ".phos");
+            std::filesystem::path dir_path = root_dir / target.os_path;
+
             file_path = file_path.lexically_normal();
+            dir_path = dir_path.lexically_normal();
 
             if (!ctx.workspace.is_loaded(file_path)) {
                 if (!std::filesystem::exists(file_path)) {
+                    // Check if it is a directory import
+                    if (std::filesystem::exists(dir_path) && std::filesystem::is_directory(dir_path)) {
+                        if (!import_copy.local_alias.empty()) {
+                            diagnostics_
+                                .error(import_copy.loc.l, import_copy.loc.c, import_copy.loc.file, "Cannot alias an entire directory import.");
+                            continue;
+                        }
+
+                        bool found_files = false;
+                        // Traverse the directory and synthesize an explicit import for each file
+                        for (const auto &entry : std::filesystem::directory_iterator(dir_path)) {
+                            if (entry.is_regular_file() && entry.path().extension() == ".phos") {
+                                ast::Import_stmt synth_import = import_copy;
+                                synth_import.path.push_back(entry.path().stem().string());
+
+                                ast::Stmt_id synth_id = ctx.tree.add_stmt(ast::Stmt(synth_import));
+                                resolve_imports(current_module, {synth_id});
+                                found_files = true;
+                            }
+                        }
+
+                        if (!found_files) {
+                            diagnostics_.error(
+                                import_copy.loc.l,
+                                import_copy.loc.c,
+                                import_copy.loc.file,
+                                "Directory '{}' contains no .phos files.",
+                                target.os_path);
+                        }
+                        // Skip the rest of this loop iteration, as the directory contents have been handled recursively!
+                        continue;
+                    }
+
                     diagnostics_.error(import_copy.loc.l, import_copy.loc.c, import_copy.loc.file, "Module '{}' not found.", target.os_path);
                     continue;
                 }
 
                 std::ifstream file(file_path);
                 if (!file.is_open()) {
-                    diagnostics_
-                        .error(import_copy.loc.l, import_copy.loc.c, import_copy.loc.file, "Could not open module '{}'.", file_path.string());
+                    diagnostics_.error(import_copy.loc.l, import_copy.loc.c, import_copy.loc.file, "Could not open module '{}'.", file_path.string());
                     continue;
                 }
 
@@ -224,20 +262,17 @@ err::Engine Module_resolver::resolve_imports(Module_id current_module, const std
                     }
 
                     ctx.workspace.get_module(target_mod_id).add_ast_root(sub_stmt_id);
-                    namespace_top_level_declaration(ctx.tree.get(sub_stmt_id).node, target.logical_namespace);
                 }
             } else {
                 target_mod_id = *ctx.workspace.get_module_by_path(file_path);
             }
         }
 
-        // 3. Link the imported module to the CURRENT module using the requested alias
-        std::string local_name = import_copy.local_alias.empty() ? import_copy.path.back() : import_copy.local_alias;
-        ctx.workspace.get_module(current_module).add_private_import(local_name, target_mod_id);
-
-        // NOTE: Selective symbol imports (e.g. import std::math::{sin, cos}) are intentionally ignored in this pass.
-        // The Module_resolver's ONLY job is to build the physical File Graph (who imports what file).
-        // The Semantic Resolver will read the AST node later to actually bind those specific symbols into scope.
+        // Only pollute the local namespace if there are NO selective imports!
+        if (import_copy.selectives.empty()) {
+            std::string local_name = import_copy.local_alias.empty() ? import_copy.path.back() : import_copy.local_alias;
+            ctx.workspace.get_module(current_module).add_private_import(local_name, target_mod_id);
+        }
 
         // 4. Recurse if newly loaded
         if (newly_loaded) {

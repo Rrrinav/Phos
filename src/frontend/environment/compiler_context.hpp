@@ -4,7 +4,6 @@
 #include "core/value/type.hpp"
 #include "frontend/parser/ast.hpp"
 
-// The Three V2 Pillars
 #include "frontend/environment/symbol.hpp"
 #include "frontend/environment/type_environment.hpp"
 #include "frontend/environment/workspace.hpp"

@@ -3,7 +3,6 @@
 #include "core/core_types.hpp"
 #include "core/error/err.hpp"
 #include "core/value/type.hpp"
-#include "core/value/value.hpp"
 #include "frontend/environment/compiler_context.hpp"
 #include "frontend/parser/ast.hpp"
 #include "scope_tracker.hpp"
@@ -90,11 +89,16 @@ public:
     err::Engine diagnostics_{"semantic-checking"};
     Module_id current_module_id = Module_id::null();
 
+    std::unordered_set<Module_id> hoisted_modules;
+    std::unordered_set<Module_id> checked_modules;
+
     /*
      * [check] -> diagnostics
      * entry point for semantic analysis
      */
     err::Engine check(const std::vector<ast::Stmt_id> &statements);
+    err::Engine check_workspace();
+    void check_module(Module_id mod_id);
 
     /*
      * [diagnostics]
@@ -113,7 +117,7 @@ public:
     void declare(const std::string &name, types::Type_id type, bool is_mut, const ast::Source_location &loc);
     std::optional<Scope_symbol> lookup(const std::string &name, const ast::Source_location &loc);
 
-    void hoist_globals(const std::vector<ast::Stmt_id> &statements);
+    void hoist_globals(Module_id mod_id);
 
     /*
      * [defaults and nil tracking]

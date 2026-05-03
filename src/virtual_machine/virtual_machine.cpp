@@ -83,7 +83,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
 
         if constexpr (Is_Tracing) {
             std::string disassembled = Assembler::disassemble_instruction(inst, frame->closure);
-            std::println(cfg.out, "TRACE: {:04} | {}", ip, disassembled);
+            std::println(*cfg.out, "TRACE: {:04} | {}", ip, disassembled);
         }
 
         ip++;
@@ -465,9 +465,9 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             uint8_t stream_flag = inst.rrr.src_a;
 
             if (stream_flag == 1) {
-                this->cfg.err << result.to_debug_string();
+                *this->cfg.err << result.to_debug_string();
             } else {
-                this->cfg.out << result.to_debug_string();
+                *this->cfg.out << result.to_debug_string();
             }
             break;
         }

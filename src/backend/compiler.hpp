@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -46,6 +47,7 @@ class Compiler
     Function_context *root_ctx_{nullptr};
 
     std::unordered_map<std::string, uint16_t> function_locations_;
+    std::string current_module_ns_;
 
     // Helper to grab the active block
     Code_block &current_block()
@@ -57,6 +59,10 @@ class Compiler
     void push_context(Function_context *ctx);
     void pop_context();
     uint16_t function_constant_index(const std::string &name);
+    std::string canonical_function_name(const ast::Function_stmt &stmt) const;
+    void set_closure_name(Closure_data &closure, std::string_view name);
+    void hoist_function_placeholder(const std::string &canonical_name);
+    void hoist_module_functions(const Module_unit &module);
 
     // Variable Resolution Magic
     int resolve_local(Function_context *ctx, const std::string &name);
@@ -66,6 +72,7 @@ class Compiler
 public:
     explicit Compiler(phos::Compiler_context &ctx);
     Closure_data compile(const std::vector<ast::Stmt_id> &statements);
+    Closure_data compile_workspace(Module_id main_mod);
 
     // Register management for the current block
     uint8_t allocate_register();

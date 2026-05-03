@@ -291,10 +291,17 @@ struct Union_stmt
     Source_location loc;
 };
 
+enum class Var_kind : uint8_t {
+    Let,       // Standard immutable variable
+    Mut,       // Mutable variable
+    Const,     // Compile-time constant (No VM memory)
+    Static,    // True global memory
+    Static_mut // True global memory
+};
+
 struct Var_stmt
 {
-    bool is_mut = false;
-    bool is_const = false;
+    Var_kind kind = Var_kind::Let;
     std::string name;
     types::Type_id type;
     Expr_id initializer = Expr_id::null();

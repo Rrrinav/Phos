@@ -41,6 +41,78 @@ uint16_t Compiler::function_constant_index(const std::string &name)
     return add_constant(root_ctx_->block.constants[hoisted_idx]);
 }
 
+std::string Compiler::canonical_function_name(const ast::Function_stmt &stmt) const
+{
+    if (stmt.name.find("::") != std::string::npos) {
+        return stmt.name;
+    }
+
+    if (current_module_ns_.empty() || current_module_ns_ == "main") {
+        return stmt.name;
+    }
+
+    return current_module_ns_ + "::" + stmt.name;
+}
+
+void Compiler::set_closure_name(Closure_data &closure, std::string_view name)
+{
+    size_t name_size = sizeof(String_data) + name.length() + 1;
+    closure.name = static_cast<String_data *>(ctx.arena.allocate_bytes(name_size));
+    closure.name->length = name.length();
+    std::copy(name.begin(), name.end(), closure.name->chars);
+    closure.name->chars[name.length()] = '\0';
+}
+
+void Compiler::hoist_function_placeholder(const std::string &canonical_name)
+{
+    if (!function_locations_.contains(canonical_name)) {
+        function_locations_[canonical_name] = add_constant(Value(nullptr));
+    }
+}
+
+void Compiler::hoist_module_functions(const Module_unit &module)
+{
+    for (auto stmt_id : module.ast_roots) {
+        if (stmt_id.is_null()) {
+            continue;
+        }
+
+        const auto &node = ctx.tree.get(stmt_id).node;
+
+        if (const auto *fn_stmt = std::get_if<ast::Function_stmt>(&node)) {
+            const std::string canonical_name =
+                (fn_stmt->name.find("::") != std::string::npos || module.logical_namespace == "main" || module.logical_namespace.empty())
+                ? fn_stmt->name
+                : module.logical_namespace + "::" + fn_stmt->name;
+            hoist_function_placeholder(canonical_name);
+            continue;
+        }
+
+        const auto *model_stmt = std::get_if<ast::Model_stmt>(&node);
+        if (!model_stmt) {
+            continue;
+        }
+
+        const std::string model_namespace = (module.logical_namespace == "main" || module.logical_namespace.empty())
+            ? model_stmt->name
+            : module.logical_namespace + "::" + model_stmt->name;
+
+        for (auto method_id : model_stmt->methods) {
+            if (method_id.is_null()) {
+                continue;
+            }
+
+            const auto *method = std::get_if<ast::Function_stmt>(&ctx.tree.get(method_id).node);
+            if (!method) {
+                continue;
+            }
+
+            const std::string canonical_name = (method->name.find("::") != std::string::npos) ? method->name : model_namespace + "::" + method->name;
+            hoist_function_placeholder(canonical_name);
+        }
+    }
+}
+
 int Compiler::resolve_local(Function_context *fctx, const std::string &name)
 {
     // Search backwards so we find the most recently declared variable with this name (shadowing)
@@ -87,8 +159,81 @@ int Compiler::resolve_upvalue(Function_context *fctx, const std::string &name)
     return -1;
 }
 
-// Main Compilation Flow
+Closure_data Compiler::compile_workspace([[maybe_unused]] Module_id main_mod)
+{
+    // 1. Setup Global Execution Context
+    Function_context global_ctx;
+    global_ctx.enclosing = nullptr;
+    global_ctx.current_register = 0;
+    current_ctx_ = nullptr;
+    root_ctx_ = nullptr;
+    current_module_ns_.clear();
+    function_locations_.clear();
+    push_context(&global_ctx);
 
+    // 2. PASS 1: Hoist Natives into the Constant Pool
+    for (const auto &[name, sigs] : ctx.type_env.native_signatures) {
+        if (sigs.empty() || sigs[0].func == nullptr) {
+            continue;
+        }
+
+        Closure_data *closure = ctx.arena.allocate<Closure_data>();
+        new (closure) Closure_data();
+
+        set_closure_name(*closure, name);
+
+        closure->arity = sigs[0].params.size();
+        closure->native_func = sigs[0].func;
+        closure->code_count = 0;
+        closure->code = nullptr;
+        closure->constant_count = 0;
+        closure->constants = nullptr;
+
+        uint16_t const_idx = add_constant(Value::make_closure(closure));
+        function_locations_[name] = const_idx;
+    }
+
+    // 3. PASS 1: Hoist User Functions into Constant Pool (Allows mutual recursion)
+    for (const auto &module : ctx.workspace.modules) {
+        hoist_module_functions(module);
+    }
+
+    // 4. PASS 2: Bytecode Generation (Topological Order!)
+    std::vector<Module_id> build_order = ctx.workspace.get_topological_order();
+    for (Module_id mod_id : build_order) {
+        const auto &module = ctx.workspace.get_module(mod_id);
+
+        // ADD THIS: Tell the compiler which namespace it is currently inside
+        current_module_ns_ = module.logical_namespace;
+
+        for (auto stmt_id : module.ast_roots) {
+            compile_stmt(stmt_id);
+        }
+    }
+
+    // 5. Package and Extract Main Closure
+    emit(vm::Instruction::make_rrr(vm::Opcode::Return, 0, 0, 0));
+
+    Closure_data data{};
+    auto &final_block = current_block();
+
+    data.code_count = final_block.instructions.size();
+    if (data.code_count > 0) {
+        data.code = ctx.arena.allocate<vm::Instruction>(data.code_count);
+        std::copy(final_block.instructions.begin(), final_block.instructions.end(), data.code);
+    }
+
+    data.constant_count = final_block.constants.size();
+    if (data.constant_count > 0) {
+        data.constants = ctx.arena.allocate<Value>(data.constant_count);
+        std::copy(final_block.constants.begin(), final_block.constants.end(), data.constants);
+    }
+
+    pop_context();
+    return data;
+}
+
+// Main Compilation Flow
 /*
     Main Compilation Flow (Two-Pass Architecture):
 
@@ -114,7 +259,10 @@ Closure_data Compiler::compile(const std::vector<ast::Stmt_id> &statements)
     Function_context global_ctx;
     global_ctx.enclosing = nullptr;
     global_ctx.current_register = 0;
+    current_ctx_ = nullptr;
     root_ctx_ = nullptr;
+    current_module_ns_.clear();
+    function_locations_.clear();
     push_context(&global_ctx);
 
     // Hoisting Natives
@@ -126,11 +274,7 @@ Closure_data Compiler::compile(const std::vector<ast::Stmt_id> &statements)
         Closure_data *closure = ctx.arena.allocate<Closure_data>();
         new (closure) Closure_data();
 
-        size_t name_size = sizeof(String_data) + name.length() + 1;
-        closure->name = static_cast<String_data *>(ctx.arena.allocate_bytes(name_size));
-        closure->name->length = name.length();
-        std::copy(name.begin(), name.end(), closure->name->chars);
-        closure->name->chars[name.length()] = '\0';
+        set_closure_name(*closure, name);
 
         closure->arity = sigs[0].params.size();
         closure->native_func = sigs[0].func;
@@ -147,32 +291,12 @@ Closure_data Compiler::compile(const std::vector<ast::Stmt_id> &statements)
 
     // Hoisting User Functions
     for (const auto &module : ctx.workspace.modules) {
-        for (auto stmt_id : module.ast_roots) {
-            if (stmt_id.is_null()) {
-                continue;
-            }
-            const auto &node = ctx.tree.get(stmt_id).node;
-
-            if (std::holds_alternative<ast::Function_stmt>(node)) {
-                const auto &fn_stmt = std::get<ast::Function_stmt>(node);
-                function_locations_[fn_stmt.name] = add_constant(Value(nullptr));
-
-            } else if (std::holds_alternative<ast::Model_stmt>(node)) {
-                const auto &model_stmt = std::get<ast::Model_stmt>(node);
-                for (auto method_id : model_stmt.methods) {
-                    if (method_id.is_null()) {
-                        continue;
-                    }
-                    if (auto *m_fn = std::get_if<ast::Function_stmt>(&ctx.tree.get(method_id).node)) {
-                        function_locations_[m_fn->name] = add_constant(Value(nullptr));
-                    }
-                }
-            }
-        }
+        hoist_module_functions(module);
     }
 
     // Pass 2: Bytecode Generation
     for (const auto &module : ctx.workspace.modules) {
+        current_module_ns_ = module.logical_namespace;
         for (auto stmt_id : module.ast_roots) {
             compile_stmt(stmt_id);
         }
@@ -616,7 +740,7 @@ void Compiler::compile_stmt_node(const ast::For_stmt &stmt)
 
     emit(vm::Instruction::make_i(vm::Opcode::Jump, loop_start));
 
-    if (exit_jump_idx != -1) {
+    if (static_cast<int>(exit_jump_idx) != -1) {
         uint16_t exit_target = static_cast<uint16_t>(current_block().instructions.size());
         current_block().instructions[exit_jump_idx].ri.imm = exit_target;
     }
@@ -636,6 +760,9 @@ void Compiler::compile_stmt_node(const ast::For_stmt &stmt)
 */
 void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
 {
+    const std::string canonical_name = canonical_function_name(stmt);
+    const bool can_reuse_hoisted_slot = (current_ctx_->enclosing == nullptr);
+
     Function_context fn_ctx;
     fn_ctx.current_register = 0;
     push_context(&fn_ctx);
@@ -661,11 +788,7 @@ void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
     new (closure) Closure_data();
 
     // Name
-    size_t name_size = sizeof(String_data) + stmt.name.length() + 1;
-    closure->name = static_cast<String_data *>(ctx.arena.allocate_bytes(name_size));
-    closure->name->length = stmt.name.length();
-    std::copy(stmt.name.begin(), stmt.name.end(), closure->name->chars);
-    closure->name->chars[stmt.name.length()] = '\0';
+    set_closure_name(*closure, canonical_name);
 
     // Arity
     closure->arity = stmt.parameters.size();
@@ -692,16 +815,15 @@ void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
     pop_context(); // Return to the parent compiler context
 
     // Add the blueprint to the parent constant pool
-    uint16_t const_idx = add_constant(Value::make_closure(closure));
-
     // If it is a global function and captures nothing, it can statically replace the hoisted placeholder
-    if (current_ctx_->enclosing == nullptr && closure->upvalue_count == 0) {
-        uint16_t hoisted_idx = function_locations_[stmt.name];
+    if (can_reuse_hoisted_slot && closure->upvalue_count == 0) {
+        uint16_t hoisted_idx = function_locations_.at(canonical_name);
         current_block().constants[hoisted_idx] = Value::make_closure(closure);
         return;
     }
 
     // Otherwise, it requires a runtime Closure
+    uint16_t const_idx = add_constant(Value::make_closure(closure));
     uint8_t dst_reg = allocate_register();
     emit(vm::Instruction::make_ri(vm::Opcode::Make_closure, dst_reg, const_idx));
 
@@ -733,17 +855,27 @@ void Compiler::compile_stmt_node(const ast::Return_stmt &stmt)
     emit(vm::Instruction::make_rrr(vm::Opcode::Return, ret_reg, 0, 0));
 }
 
-void Compiler::compile_stmt_node(const ast::Enum_stmt &stmt)
+void Compiler::compile_stmt_node([[maybe_unused]] const ast::Enum_stmt &stmt)
 {}
+
 void Compiler::compile_stmt_node(const ast::Model_stmt &stmt)
 {
-    // The model fields are purely compile-time info, but we MUST compile the methods
+    // 1. Save the current namespace
+    std::string prev_ns = current_module_ns_;
+
+    // 2. Append the model name (e.g., "mod" -> "mod::MyModel")
+    current_module_ns_ = (prev_ns == "main" || prev_ns.empty()) ? stmt.name : prev_ns + "::" + stmt.name;
+
+    // 3. Compile the methods
     for (auto method_id : stmt.methods) {
         compile_stmt(method_id);
     }
+
+    // 4. Restore the namespace
+    current_module_ns_ = prev_ns;
 }
 
-void Compiler::compile_stmt_node(const ast::Union_stmt &stmt)
+void Compiler::compile_stmt_node([[maybe_unused]] const ast::Union_stmt &stmt)
 {
     // Purely compile-time construct. No bytecode needed.
 }

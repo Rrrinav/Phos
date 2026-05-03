@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace phos {
@@ -92,7 +93,8 @@ public:
             .imports = {},
             .exported_modules = {},
             .exported_symbols = {},
-            .is_native = false});
+            .is_native = false
+        });
 
         path_to_module_[path_str] = id;
         namespace_to_module_[modules.back().logical_namespace] = id;
@@ -140,6 +142,33 @@ public:
     auto end() const
     {
         return modules.end();
+    }
+
+    std::vector<Module_id> get_topological_order() const
+    {
+        std::vector<Module_id> result;
+        std::unordered_set<Module_id> visited;
+
+        // We use a lambda for the recursive Depth-First Search
+        auto visit = [&](auto &&self, Module_id id) -> void {
+            if (visited.contains(id)) {
+                return;
+            }
+            visited.insert(id);
+
+            const auto &module = this->get_module(id);
+            for (const auto &[alias, dep_id] : module.imports) {
+                self(self, dep_id);
+            }
+
+            result.push_back(id);
+        };
+
+        for (const auto &mod : modules) {
+            visit(visit, mod.id);
+        }
+
+        return result;
     }
 };
 

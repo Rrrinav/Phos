@@ -37,7 +37,7 @@ struct Parse_result
 
 inline void print_help()
 {
-    std::cout << "Phos Compiler & Virtual Machine\n\n"
+    std::cout << "== Phos Compiler & Virtual Machine\n\n"
               << "USAGE: phos [SUBCOMMAND] [OPTIONS] <file>\n\n"
               << "SUBCOMMANDS:\n"
               << "  ast             AST manipulation tools\n"

@@ -5,6 +5,7 @@
 #include <format>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace phos::vm {
@@ -314,9 +315,14 @@ std::string Assembler::disassemble_instruction(Instruction inst, const Closure_d
     return asm_str;
 }
 
-std::string Assembler::serialize(const Closure_data &closure)
+namespace {
+
+void serialize_closure(const Closure_data &closure, std::stringstream &ss, std::unordered_set<const Closure_data *> &visited)
 {
-    std::stringstream ss;
+    if (visited.contains(&closure)) {
+        return;
+    }
+    visited.insert(&closure);
 
     // 1. Recursively find and print nested closures FIRST
     if (closure.constants != nullptr) {
@@ -325,7 +331,7 @@ std::string Assembler::serialize(const Closure_data &closure)
                 Closure_data *nested = closure.constants[i].as_closure();
                 // Skip native functions! They don't have bytecode to serialize.
                 if (!nested->native_func.has_value()) {
-                    ss << serialize(*nested);
+                    serialize_closure(*nested, ss, visited);
                 }
             }
         }
@@ -390,7 +396,7 @@ std::string Assembler::serialize(const Closure_data &closure)
             ss << std::format("  .L{:04}:\n", i);
         }
         Instruction inst = closure.code[i];
-        std::string inst_str = disassemble_instruction(inst, &closure);
+        std::string inst_str = Assembler::disassemble_instruction(inst, &closure);
         ss << std::format("    {}\n", inst_str);
 
         // Extract and format routing bytes instead of treating them as instructions
@@ -412,6 +418,15 @@ std::string Assembler::serialize(const Closure_data &closure)
     }
 
     ss << "}\n\n";
+}
+
+} // namespace
+
+std::string Assembler::serialize(const Closure_data &closure)
+{
+    std::stringstream ss;
+    std::unordered_set<const Closure_data *> visited;
+    serialize_closure(closure, ss, visited);
 
     return ss.str();
 }

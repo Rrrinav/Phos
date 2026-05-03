@@ -74,7 +74,7 @@ private:
     Result<ast::Stmt_id> parse_bind_statement();
     Result<ast::Stmt_id> union_declaration();
     Result<ast::Stmt_id> enum_declaration();
-    Result<ast::Stmt_id> var_declaration(bool is_const);
+    Result<ast::Stmt_id> var_declaration(ast::Var_kind kind);
 
     Result<ast::Typed_member_decl> parse_model_field();
     Result<ast::Function_stmt> parse_model_method();

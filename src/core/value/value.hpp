@@ -52,12 +52,21 @@ struct Value;
 using Native_fn = Value (*)(mem::Arena&, std::span<Value> args);
 
 // 1. THE RAW DATA STRUCTS (Zero OOP, Zero Std Lib, Arena Allocated)
+// ISO C++ asks not to put these flexible array members.
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+#endif
 
 struct String_data
 {
     uint32_t length;
     char chars[]; // Flexible Array Member
 };
+
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 struct Array_data
 {

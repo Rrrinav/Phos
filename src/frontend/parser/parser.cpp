@@ -13,6 +13,7 @@
 #include <utility>
 #include <variant>
 #include <vector>
+#include <cassert>
 
 #define PHOS_PARSER_CONCAT_IMPL(x, y) x##y
 #define PHOS_PARSER_CONCAT(x, y) PHOS_PARSER_CONCAT_IMPL(x, y)
@@ -461,11 +462,15 @@ Result<std::optional<ast::Stmt_id>> Parser::declaration()
         return std::optional<ast::Stmt_id>{stmt};
     }
     if (match({lex::TokenType::Let})) {
-        DECL_OR_RETURN(stmt, var_declaration(false));
+        DECL_OR_RETURN(stmt, var_declaration(ast::Var_kind::Let));
         return std::optional<ast::Stmt_id>{stmt};
     }
     if (match({lex::TokenType::Const})) {
-        DECL_OR_RETURN(stmt, var_declaration(true));
+        DECL_OR_RETURN(stmt, var_declaration(ast::Var_kind::Let));
+        return std::optional<ast::Stmt_id>{stmt};
+    }
+    if (match({lex::TokenType::Static})) {
+        DECL_OR_RETURN(stmt, var_declaration(ast::Var_kind::Static));
         return std::optional<ast::Stmt_id>{stmt};
     }
     if (match({lex::TokenType::Import})) {
@@ -763,14 +768,20 @@ Result<ast::Function_stmt> Parser::parse_model_method()
     };
 }
 
-// var_decl   -> "let" "mut"? IDENT (":=" expr | ":" type ("=" expr)?) ";"
-// const_decl -> "const" IDENT (":=" expr | ":" type ("=" expr)?) ";"
-Result<ast::Stmt_id> Parser::var_declaration(bool is_const)
+// var_decl    -> "let" "mut"? IDENT (":=" expr | ":" type ("=" expr)?) ";"
+// const_decl  -> "const" IDENT (":=" expr | ":" type ("=" expr)?) ";"
+// static_decl -> "static" "mut"? IDENT (":=" expr | ":" type ("=" expr)?) ";"
+Result<ast::Stmt_id> Parser::var_declaration(ast::Var_kind kind)
 {
+    // kind here means the type of variable, these are the only 3 possible ones,
+    // then the let and static ones can be mutable or immutable.
+    assert(kind == ast::Var_kind::Let || kind == ast::Var_kind::Static || kind == ast::Var_kind::Const);
+
     bool is_mut = false;
 
     // Only check for 'mut' if we are in a 'let' declaration
-    if (!is_const) {
+    // Statics can be mutable or immutable too.
+    if (kind != ast::Var_kind::Const) {
         is_mut = match({lex::TokenType::Mut});
     }
 
@@ -791,7 +802,7 @@ Result<ast::Stmt_id> Parser::var_declaration(bool is_const)
 
             if (match({lex::TokenType::Assign})) {
                 ASSIGN_OR_RETURN(initializer, expression());
-            } else if (is_const) {
+            } else if (kind != ast::Var_kind::Const) {
                 // Semantic enforcement: Constants must have an initializer
                 return std::unexpected(create_error(peek(), "Constants must be initialized"));
             }
@@ -802,9 +813,18 @@ Result<ast::Stmt_id> Parser::var_declaration(bool is_const)
 
     TRY_IGNORE(consume(lex::TokenType::Semicolon, "Expected ';' after declaration"));
 
+    ast::Var_kind var_kind{ast::Var_kind::Let};
+
+    if (is_mut){
+        if (kind == ast::Var_kind::Let) {
+            var_kind = ast::Var_kind::Mut;
+        } else {
+            var_kind = ast::Var_kind::Static_mut;
+        }
+    }
+
     return ctx_.tree.add_stmt(ast::Stmt{ast::Var_stmt{
-        .is_mut = is_mut,
-        .is_const = is_const,
+        .kind = var_kind,
         .name = name.lexeme,
         .type = var_type,
         .initializer = initializer,
@@ -1081,9 +1101,9 @@ Result<ast::Stmt_id> Parser::for_statement()
     if (match({lex::TokenType::Semicolon})) {
         // empty initializer, do nothing
     } else if (match({lex::TokenType::Let})) {
-        initializer = var_declaration(false).value_or(ast::Stmt_id::null());
+        initializer = var_declaration(ast::Var_kind::Let).value_or(ast::Stmt_id::null());
     } else if (match({lex::TokenType::Const})) {
-        initializer = var_declaration(true).value_or(ast::Stmt_id::null());
+        initializer = var_declaration(ast::Var_kind::Const).value_or(ast::Stmt_id::null());
     } else {
         initializer = expression_statement().value_or(ast::Stmt_id::null());
     }
