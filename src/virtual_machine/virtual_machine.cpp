@@ -120,6 +120,25 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             break;
         }
 
+        case Opcode::Load_global: {
+            uint16_t global_idx = inst.ri.imm;
+            if (global_idx >= globals.size()) {
+                globals.resize(global_idx + 1, Value(nullptr));
+            }
+            registers[base + inst.ri.dst] = globals[global_idx];
+            break;
+        }
+
+        case Opcode::Store_global: {
+            uint16_t global_idx = inst.ri.imm;
+            if (global_idx >= globals.size()) {
+                globals.resize(global_idx + 1, Value(nullptr));
+            }
+            // Note: For Store_global, inst.ri.dst actually holds our SOURCE register
+            globals[global_idx] = registers[base + inst.ri.dst];
+            break;
+        }
+
         case Opcode::Add_i64:
         case Opcode::Sub_i64:
         case Opcode::Mul_i64:

@@ -1,137 +1,12 @@
 #include "module_resolver.hpp"
 
-#include "frontend/environment/symbol.hpp"
-#include "frontend/lexer/lexer.hpp"
 #include "frontend/parser/parser.hpp"
+#include "frontend/lexer/lexer.hpp"
 
-#include <filesystem>
 #include <fstream>
-#include <sstream>
+#include <iostream>
 
 namespace phos {
-
-namespace {
-
-struct Import_target
-{
-    std::string os_path;
-    std::string logical_namespace;
-};
-
-Import_target build_import_target(const ast::Import_stmt &stmt)
-{
-    Import_target target{
-        .os_path = stmt.path.front(),
-        .logical_namespace = stmt.path.front(),
-    };
-
-    for (size_t i = 1; i < stmt.path.size(); ++i) {
-        target.os_path += "/" + stmt.path[i];
-        target.logical_namespace += "::" + stmt.path[i];
-    }
-
-    return target;
-}
-
-types::Type_id value_type(Type_environment &env, const Value &value)
-{
-    switch (value.tag()) {
-    case Value_tag::Nil:
-        return env.tt.get_nil();
-    case Value_tag::Bool:
-        return env.tt.get_bool();
-    case Value_tag::I8:
-        return env.tt.get_i8();
-    case Value_tag::I16:
-        return env.tt.get_i16();
-    case Value_tag::I32:
-        return env.tt.get_i32();
-    case Value_tag::I64:
-        return env.tt.get_i64();
-    case Value_tag::U8:
-        return env.tt.get_u8();
-    case Value_tag::U16:
-        return env.tt.get_u16();
-    case Value_tag::U32:
-        return env.tt.get_u32();
-    case Value_tag::U64:
-        return env.tt.get_u64();
-    case Value_tag::F16:
-        return env.tt.get_f16();
-    case Value_tag::F32:
-        return env.tt.get_f32();
-    case Value_tag::F64:
-        return env.tt.get_f64();
-    case Value_tag::String:
-        return env.tt.get_string();
-    case Value_tag::Array:
-    case Value_tag::Model:
-    case Value_tag::Union:
-    case Value_tag::Closure:
-    case Value_tag::Iterator:
-    case Value_tag::Green_thread:
-    case Value_tag::Upvalue:
-        return env.tt.get_any();
-    }
-
-    return env.tt.get_unknown();
-}
-
-void publish_native_exports(Compiler_context &ctx, Module_id module_id)
-{
-    auto &module = ctx.workspace.get_module(module_id);
-    const std::string prefix = module.logical_namespace + "::";
-
-    for (const auto &[name, signatures] : ctx.type_env.native_signatures) {
-        if (!name.starts_with(prefix) || signatures.empty()) {
-            continue;
-        }
-
-        const std::string export_name = name.substr(prefix.size());
-        if (module.exported_symbols.contains(export_name)) {
-            continue;
-        }
-
-        Symbol sym{
-            .id = Symbol_id{0},
-            .name = name,
-            .kind = Symbol_kind::Native_func,
-            .type = ctx.tt.get_unknown(),
-            .owner_module = module_id,
-            .is_public = true,
-            .const_value = std::nullopt,
-            .stack_offset = std::nullopt,
-            .ffi_index = std::nullopt};
-
-        module.add_public_symbol(export_name, ctx.registry.create_symbol(std::move(sym)));
-    }
-
-    for (const auto &[name, value] : ctx.type_env.native_constants) {
-        if (!name.starts_with(prefix)) {
-            continue;
-        }
-
-        const std::string export_name = name.substr(prefix.size());
-        if (module.exported_symbols.contains(export_name)) {
-            continue;
-        }
-
-        Symbol sym{
-            .id = Symbol_id{0},
-            .name = name,
-            .kind = Symbol_kind::Native_const,
-            .type = value_type(ctx.type_env, value),
-            .owner_module = module_id,
-            .is_public = true,
-            .const_value = value,
-            .stack_offset = std::nullopt,
-            .ffi_index = std::nullopt};
-
-        module.add_public_symbol(export_name, ctx.registry.create_symbol(std::move(sym)));
-    }
-}
-
-} // namespace
 
 Module_resolver::Module_resolver(Compiler_context &ctx, std::filesystem::path root) : ctx(ctx), root_dir(std::move(root))
 {}
@@ -149,84 +24,106 @@ err::Engine Module_resolver::resolve_imports(Module_id current_module, const std
             continue;
         }
 
-        auto &node = ctx.tree.get(stmt_id).node;
-        auto *import_stmt = std::get_if<ast::Import_stmt>(&node);
+        std::string raw_os_path;
+        std::string raw_vm_namespace;
+        std::string local_alias;
+        std::string path_back;
+        ast::Source_location import_loc;
 
-        if (!import_stmt) {
-            continue;
-        }
+        {
+            auto &node = ctx.tree.get(stmt_id).node;
+            auto *import_stmt = std::get_if<ast::Import_stmt>(&node);
 
-        const ast::Import_stmt import_copy = *import_stmt;
-        auto target = build_import_target(import_copy);
-
-        Module_id target_mod_id{0};
-        bool newly_loaded = false;
-        std::vector<ast::Stmt_id> parsed_stmts;
-
-        // 1. Check if it is a native FFI module
-        if (ffi_registry.contains(target.os_path)) {
-            if (!loaded_modules.contains(target.os_path)) {
-                ffi_registry[target.os_path](ctx.type_env);
-                loaded_modules.insert(target.os_path);
-
-                target_mod_id = ctx.workspace.create_module(target.logical_namespace, target.os_path);
-                ctx.workspace.get_module(target_mod_id).is_native = true;
-                publish_native_exports(ctx, target_mod_id);
-            } else {
-                target_mod_id = *ctx.workspace.get_module_by_path(target.os_path);
+            if (!import_stmt) {
+                continue;
             }
+
+            raw_os_path = import_stmt->path[0];
+            raw_vm_namespace = import_stmt->path[0];
+
+            for (size_t i = 1; i < import_stmt->path.size(); ++i) {
+                raw_os_path += "/" + import_stmt->path[i];
+                raw_vm_namespace += "::" + import_stmt->path[i];
+            }
+
+            local_alias = import_stmt->local_alias;
+            path_back = import_stmt->path.back();
+            import_loc = import_stmt->loc;
+        } // The reference to `node` safely goes out of scope here.
+
+        // 2. Check if it is a native FFI module
+        if (ffi_registry.contains(raw_os_path)) {
+            Module_id target_mod_id{0};
+            if (!loaded_modules.contains(raw_os_path)) {
+                ffi_registry[raw_os_path](ctx.type_env);
+                loaded_modules.insert(raw_os_path);
+
+                target_mod_id = ctx.workspace.create_module(raw_vm_namespace, raw_os_path);
+                ctx.workspace.get_module(target_mod_id).is_native = true;
+            } else {
+                target_mod_id = *ctx.workspace.get_module_by_path(raw_os_path);
+            }
+
+            std::string local_name = local_alias.empty() ? path_back : local_alias;
+            ctx.workspace.get_module(current_module).add_private_import(local_name, target_mod_id);
         }
-        // 2. Check if it is a source module or directory
+        // 3. Check if it is a source module or a directory
         else {
-            std::filesystem::path file_path = root_dir / (target.os_path + ".phos");
-            std::filesystem::path dir_path = root_dir / target.os_path;
+            auto &current_mod = ctx.workspace.get_module(current_module);
+            std::filesystem::path final_file_path;
+            std::filesystem::path target_dir;
+            bool is_dir = false;
+            std::string final_vm_namespace = raw_vm_namespace;
 
-            file_path = file_path.lexically_normal();
-            dir_path = dir_path.lexically_normal();
+            // Attempt A: Relative Lookup (if current module is not root/main)
+            if (!current_mod.logical_namespace.empty() && current_mod.logical_namespace != "main") {
+                std::filesystem::path rel_dir = current_mod.os_path.parent_path();
+                std::filesystem::path rel_file = rel_dir / (raw_os_path + ".phos");
+                std::filesystem::path rel_folder = rel_dir / raw_os_path;
 
-            if (!ctx.workspace.is_loaded(file_path)) {
-                if (!std::filesystem::exists(file_path)) {
-                    // Check if it is a directory import
-                    if (std::filesystem::exists(dir_path) && std::filesystem::is_directory(dir_path)) {
-                        if (!import_copy.local_alias.empty()) {
-                            diagnostics_
-                                .error(import_copy.loc.l, import_copy.loc.c, import_copy.loc.file, "Cannot alias an entire directory import.");
-                            continue;
-                        }
+                if (std::filesystem::exists(rel_file)) {
+                    final_file_path = rel_file;
+                    size_t last_colon = current_mod.logical_namespace.rfind("::");
+                    std::string parent_ns = (last_colon != std::string::npos) ? current_mod.logical_namespace.substr(0, last_colon) : "";
+                    final_vm_namespace = parent_ns.empty() ? raw_vm_namespace : parent_ns + "::" + raw_vm_namespace;
+                } else if (std::filesystem::is_directory(rel_folder)) {
+                    is_dir = true;
+                    target_dir = rel_folder;
+                    size_t last_colon = current_mod.logical_namespace.rfind("::");
+                    std::string parent_ns = (last_colon != std::string::npos) ? current_mod.logical_namespace.substr(0, last_colon) : "";
+                    final_vm_namespace = parent_ns.empty() ? raw_vm_namespace : parent_ns + "::" + raw_vm_namespace;
+                }
+            }
 
-                        bool found_files = false;
-                        // Traverse the directory and synthesize an explicit import for each file
-                        for (const auto &entry : std::filesystem::directory_iterator(dir_path)) {
-                            if (entry.is_regular_file() && entry.path().extension() == ".phos") {
-                                ast::Import_stmt synth_import = import_copy;
-                                synth_import.path.push_back(entry.path().stem().string());
+            // Attempt B: Absolute Lookup
+            if (final_file_path.empty() && !is_dir) {
+                std::filesystem::path abs_file = root_dir / (raw_os_path + ".phos");
+                std::filesystem::path abs_folder = root_dir / raw_os_path;
+                if (std::filesystem::exists(abs_file)) {
+                    final_file_path = abs_file;
+                    final_vm_namespace = raw_vm_namespace;
+                } else if (std::filesystem::is_directory(abs_folder)) {
+                    is_dir = true;
+                    target_dir = abs_folder;
+                    final_vm_namespace = raw_vm_namespace;
+                }
+            }
 
-                                ast::Stmt_id synth_id = ctx.tree.add_stmt(ast::Stmt(synth_import));
-                                resolve_imports(current_module, {synth_id});
-                                found_files = true;
-                            }
-                        }
+            if (final_file_path.empty() && !is_dir) {
+                diagnostics_.error(import_loc.l, import_loc.c, import_loc.file, "Module '{}' not found.", raw_os_path);
+                continue;
+            }
 
-                        if (!found_files) {
-                            diagnostics_.error(
-                                import_copy.loc.l,
-                                import_copy.loc.c,
-                                import_copy.loc.file,
-                                "Directory '{}' contains no .phos files.",
-                                target.os_path);
-                        }
-                        // Skip the rest of this loop iteration, as the directory contents have been handled recursively!
-                        continue;
-                    }
-
-                    diagnostics_.error(import_copy.loc.l, import_copy.loc.c, import_copy.loc.file, "Module '{}' not found.", target.os_path);
-                    continue;
+            // Reusable lambda to safely process any individual file we encounter
+            auto load_module_file = [&](const std::filesystem::path &file_path, const std::string &vm_ns) -> std::optional<Module_id> {
+                if (ctx.workspace.is_loaded(file_path)) {
+                    return *ctx.workspace.get_module_by_path(file_path);
                 }
 
                 std::ifstream file(file_path);
                 if (!file.is_open()) {
-                    diagnostics_.error(import_copy.loc.l, import_copy.loc.c, import_copy.loc.file, "Could not open module '{}'.", file_path.string());
-                    continue;
+                    diagnostics_.error(import_loc.l, import_loc.c, import_loc.file, "Could not open module '{}'.", file_path.string());
+                    return std::nullopt;
                 }
 
                 std::stringstream buffer;
@@ -239,7 +136,7 @@ err::Engine Module_resolver::resolve_imports(Module_id current_module, const std
 
                 if (!lexed.diagnostics.empty()) {
                     diagnostics_.append(lexed.diagnostics);
-                    continue;
+                    return std::nullopt;
                 }
 
                 // Parse
@@ -248,35 +145,41 @@ err::Engine Module_resolver::resolve_imports(Module_id current_module, const std
 
                 if (!parsed.diagnostics.empty()) {
                     diagnostics_.append(parsed.diagnostics);
-                    continue;
+                    return std::nullopt;
                 }
 
-                target_mod_id = ctx.workspace.create_module(target.logical_namespace, file_path);
-                loaded_modules.insert(target.os_path);
-                parsed_stmts = parsed.statements;
-                newly_loaded = true;
-
+                Module_id new_mod_id = ctx.workspace.create_module(vm_ns, file_path);
                 for (auto sub_stmt_id : parsed.statements) {
-                    if (sub_stmt_id.is_null()) {
-                        continue;
+                    if (!sub_stmt_id.is_null()) {
+                        ctx.workspace.get_module(new_mod_id).add_ast_root(sub_stmt_id);
                     }
+                }
 
-                    ctx.workspace.get_module(target_mod_id).add_ast_root(sub_stmt_id);
+                resolve_imports(new_mod_id, parsed.statements);
+
+                return new_mod_id;
+            };
+
+            // 4. Bulk Directory Import vs Standard Import
+            if (is_dir) {
+                for (const auto &entry : std::filesystem::directory_iterator(target_dir)) {
+                    if (entry.is_regular_file() && entry.path().extension() == ".phos") {
+                        std::string sub_name = entry.path().stem().string();
+                        std::string sub_vm_namespace = final_vm_namespace + "::" + sub_name;
+
+                        auto loaded_mod_id = load_module_file(entry.path(), sub_vm_namespace);
+                        if (loaded_mod_id) {
+                            ctx.workspace.get_module(current_module).add_private_import(sub_name, *loaded_mod_id);
+                        }
+                    }
                 }
             } else {
-                target_mod_id = *ctx.workspace.get_module_by_path(file_path);
+                auto loaded_mod_id = load_module_file(final_file_path, final_vm_namespace);
+                if (loaded_mod_id) {
+                    std::string local_name = local_alias.empty() ? path_back : local_alias;
+                    ctx.workspace.get_module(current_module).add_private_import(local_name, *loaded_mod_id);
+                }
             }
-        }
-
-        // Only pollute the local namespace if there are NO selective imports!
-        if (import_copy.selectives.empty()) {
-            std::string local_name = import_copy.local_alias.empty() ? import_copy.path.back() : import_copy.local_alias;
-            ctx.workspace.get_module(current_module).add_private_import(local_name, target_mod_id);
-        }
-
-        // 4. Recurse if newly loaded
-        if (newly_loaded) {
-            resolve_imports(target_mod_id, parsed_stmts);
         }
     }
 

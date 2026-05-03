@@ -142,6 +142,14 @@ std::string Assembler::disassemble_instruction(Instruction inst, const Closure_d
         }
         break;
 
+    case Opcode::Load_global:
+        asm_str = std::format("{:<14} %r{}, $G{:03}", name, inst.ri.dst, inst.ri.imm);
+        break;
+
+    case Opcode::Store_global:
+        asm_str = std::format("{:<14} %r{}, $G{:03}", name, inst.ri.dst, inst.ri.imm);
+        break;
+
     case Opcode::Jump:
         asm_str = std::format("{:<14} .L{:04}", name, static_cast<uint32_t>(inst.i.imm));
         break;
@@ -163,6 +171,7 @@ std::string Assembler::disassemble_instruction(Instruction inst, const Closure_d
         comment = std::format("%r{} = %r{}", inst.rrr.dst, inst.rrr.src_a);
         break;
 
+    // Closure opcodes
     case Opcode::Get_upvalue:
     case Opcode::Set_upvalue:
         asm_str = std::format("{:<14} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
@@ -216,6 +225,7 @@ std::string Assembler::disassemble_instruction(Instruction inst, const Closure_d
         asm_str = std::format("{:<14} %r{}, %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
         comment = std::format("%r{}.field[%r{}] = %r{}", inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
         break;
+
     case Opcode::Wrap_option:
         asm_str = std::format("{:<14} %r{}, %r{}, wraps: {}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
         break;
@@ -324,12 +334,12 @@ void serialize_closure(const Closure_data &closure, std::stringstream &ss, std::
     }
     visited.insert(&closure);
 
-    // 1. Recursively find and print nested closures FIRST
+    // Recursively find and print nested closures FIRST
     if (closure.constants != nullptr) {
         for (size_t i = 0; i < closure.constant_count; ++i) {
             if (closure.constants[i].is_closure() && closure.constants[i].as_closure() != nullptr) {
                 Closure_data *nested = closure.constants[i].as_closure();
-                // Skip native functions! They don't have bytecode to serialize.
+                // Skip native functions as they don't have bytecode to serialize
                 if (!nested->native_func.has_value()) {
                     serialize_closure(*nested, ss, visited);
                 }
@@ -337,7 +347,7 @@ void serialize_closure(const Closure_data &closure, std::stringstream &ss, std::
         }
     }
 
-    // 2. Print current closure
+    // Print current closure
     std::string func_name = "main";
     if (closure.name && closure.name->length > 0) {
         func_name = std::string(closure.name->chars, closure.name->length);
@@ -588,6 +598,21 @@ Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &ar
                 continue;
             }
 
+            // Parse routing bytes back into Instruction structs
+            if (line.starts_with(".route")) {
+                bool is_local = line.find("true") != std::string::npos;
+                size_t idx_pos = line.find("index:");
+                uint8_t index = static_cast<uint8_t>(std::stoi(trim(line.substr(idx_pos + 6))));
+
+                Instruction route;
+                route.rrr.op = static_cast<Opcode>(0); // Use 0 (or Opcode::None) for padding
+                route.rrr.src_a = is_local ? 1 : 0;
+                route.rrr.src_b = index;
+                route.rrr.dst = 0;
+                temp_code.push_back(route);
+                continue;
+            }
+
             std::istringstream token_stream(line);
             std::string op_str;
             token_stream >> op_str;
@@ -604,49 +629,46 @@ Closure_data Assembler::deserialize(const std::string &ir_source, mem::Arena &ar
                 args.push_back(trim(item));
             }
 
-            // SAFE vector access fix: Check array length before access!
-            auto get_arg = [&](size_t idx) -> uint16_t {
-                if (idx < args.size()) {
-                    std::string s = args[idx];
-                    if (s.empty()) {
-                        return 0;
-                    }
-                    if (s.starts_with("argc:")) {
-                        return static_cast<uint16_t>(std::stoi(trim(s.substr(5))));
-                    }
-                    if (s.starts_with("%r") || s.starts_with("$K")) {
-                        return static_cast<uint16_t>(std::stoi(s.substr(2)));
-                    }
-                    return static_cast<uint16_t>(std::stoi(s));
+            // SAFE vector access fix: Check array length before access
+            auto parse_arg = [&](const std::string &s) -> uint16_t {
+                if (s.empty()) {
+                    return 0;
                 }
-                return 0; // Return 0 if the argument was omitted (like for Return or Load_nil)
+                if (s.starts_with("argc:")) {
+                    return static_cast<uint16_t>(std::stoi(trim(s.substr(5))));
+                }
+                if (s.starts_with("%r") || s.starts_with("$K") || s.starts_with("$G")) {
+                    return static_cast<uint16_t>(std::stoi(s.substr(2)));
+                }
+                return static_cast<uint16_t>(std::stoi(s));
             };
 
-            auto get_jump = [&](size_t idx) -> uint32_t {
-                if (idx < args.size()) {
-                    std::string s = args[idx];
-                    if (s.empty()) {
-                        return 0;
-                    }
-                    if (s.starts_with(".L")) {
-                        return static_cast<uint32_t>(std::stoul(s.substr(2)));
-                    }
-                    if (s.starts_with("@")) {
-                        return static_cast<uint32_t>(std::stoul(s.substr(1)));
-                    }
+            auto parse_jump = [&](const std::string &s) -> uint32_t {
+                if (s.empty()) {
+                    return 0;
+                }
+                if (s.starts_with(".L")) {
+                    return static_cast<uint32_t>(std::stoul(s.substr(2)));
+                }
+                if (s.starts_with("@")) {
+                    return static_cast<uint32_t>(std::stoul(s.substr(1)));
                 }
                 return 0;
             };
 
-            if (op == Opcode::Load_const) {
-                temp_code.push_back(Instruction::make_ri(op, get_arg(0), get_arg(1)));
+            if (op == Opcode::Load_const || op == Opcode::Load_global || op == Opcode::Store_global) {
+                temp_code.push_back(Instruction::make_ri(op, parse_arg(args[0]), parse_arg(args[1])));
             } else if (op == Opcode::Jump) {
-                temp_code.push_back(Instruction::make_i(op, get_jump(0)));
+                temp_code.push_back(Instruction::make_i(op, parse_jump(args[0])));
             } else if (op == Opcode::Jump_if_false) {
-                temp_code.push_back(Instruction::make_ri(op, get_arg(0), get_jump(1)));
+                temp_code.push_back(Instruction::make_ri(op, parse_arg(args[0]), parse_jump(args[1])));
+            } else if (op == Opcode::Return || op == Opcode::Print) {
+                temp_code.push_back(Instruction::make_rrr(op, parse_arg(args[0]), 0, 0));
+            } else if (op == Opcode::Move) {
+                temp_code.push_back(Instruction::make_rrr(op, parse_arg(args[0]), parse_arg(args[1]), 0));
             } else {
                 // Safely grabs up to 3 arguments. Missing args perfectly default to 0.
-                temp_code.push_back(Instruction::make_rrr(op, get_arg(0), get_arg(1), get_arg(2)));
+                temp_code.push_back(Instruction::make_rrr(op, parse_arg(args[0]), parse_arg(args[1]), parse_arg(args[2])));
             }
         }
     }

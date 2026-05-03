@@ -6,6 +6,7 @@
 #include "frontend/lexer/token.hpp"
 #include "frontend/parser/ast.hpp"
 
+#include <cassert>
 #include <cstddef>
 #include <expected>
 #include <print>
@@ -13,7 +14,6 @@
 #include <utility>
 #include <variant>
 #include <vector>
-#include <cassert>
 
 #define PHOS_PARSER_CONCAT_IMPL(x, y) x##y
 #define PHOS_PARSER_CONCAT(x, y) PHOS_PARSER_CONCAT_IMPL(x, y)
@@ -466,7 +466,7 @@ Result<std::optional<ast::Stmt_id>> Parser::declaration()
         return std::optional<ast::Stmt_id>{stmt};
     }
     if (match({lex::TokenType::Const})) {
-        DECL_OR_RETURN(stmt, var_declaration(ast::Var_kind::Let));
+        DECL_OR_RETURN(stmt, var_declaration(ast::Var_kind::Const));
         return std::optional<ast::Stmt_id>{stmt};
     }
     if (match({lex::TokenType::Static})) {
@@ -802,7 +802,7 @@ Result<ast::Stmt_id> Parser::var_declaration(ast::Var_kind kind)
 
             if (match({lex::TokenType::Assign})) {
                 ASSIGN_OR_RETURN(initializer, expression());
-            } else if (kind != ast::Var_kind::Const) {
+            } else if (kind == ast::Var_kind::Const) {
                 // Semantic enforcement: Constants must have an initializer
                 return std::unexpected(create_error(peek(), "Constants must be initialized"));
             }
@@ -813,9 +813,9 @@ Result<ast::Stmt_id> Parser::var_declaration(ast::Var_kind kind)
 
     TRY_IGNORE(consume(lex::TokenType::Semicolon, "Expected ';' after declaration"));
 
-    ast::Var_kind var_kind{ast::Var_kind::Let};
+    ast::Var_kind var_kind{kind};
 
-    if (is_mut){
+    if (is_mut) {
         if (kind == ast::Var_kind::Let) {
             var_kind = ast::Var_kind::Mut;
         } else {
@@ -2025,6 +2025,11 @@ Result<types::Type_id> Parser::parse_type()
         std::string name = previous().lexeme;
         if (name == "any") {
             return std::unexpected(create_error(peek(), "Expected a type, 'any' is not one."));
+        }
+
+        while (match({lex::TokenType::ColonColon})) {
+            DECL_OR_RETURN(member, consume(lex::TokenType::Identifier, "Expect type name after '::'"));
+            name += "::" + member.lexeme;
         }
         // The parser doesn't attempt to resolve if this is a Model, Union, or Enum!
         // It simply creates an Unresolved_type placeholder. The Type Checker maps it later.

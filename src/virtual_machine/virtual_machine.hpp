@@ -34,6 +34,8 @@ private:
     void execute_loop(Green_thread_data *thread);
 
 public:
+    std::vector<Value> globals;
+
     Virtual_machine(phos::mem::Arena &arena_) : arena(arena_)
     {
         cfg.panic_handler = [this](const std::string &s) {

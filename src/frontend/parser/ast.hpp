@@ -1,9 +1,8 @@
 #pragma once
 
-#include "frontend/lexer/token.hpp"
-#include "core/value/value.hpp"
 #include "core/core_types.hpp"
-
+#include "core/value/value.hpp"
+#include "frontend/lexer/token.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -248,7 +247,7 @@ struct Expr
         Array_literal_expr,
         Array_access_expr,
         Static_path_expr,
-        Range_expr, //
+        Range_expr,
         Spawn_expr,
         Await_expr,
         Yield_expr,
@@ -273,6 +272,7 @@ struct Function_stmt
     std::vector<Function_param> parameters;
     types::Type_id return_type;
     Stmt_id body;
+    std::optional<Symbol_id> resolved_symbol = std::nullopt;
     Source_location loc;
 };
 
@@ -281,6 +281,7 @@ struct Model_stmt
     std::string name;
     std::vector<Typed_member_decl> fields;
     std::vector<Stmt_id> methods;
+    std::optional<Symbol_id> resolved_symbol = std::nullopt;
     Source_location loc;
 };
 
@@ -288,16 +289,11 @@ struct Union_stmt
 {
     std::string name;
     std::vector<Typed_member_decl> variants;
+    std::optional<Symbol_id> resolved_symbol = std::nullopt;
     Source_location loc;
 };
 
-enum class Var_kind : uint8_t {
-    Let,       // Standard immutable variable
-    Mut,       // Mutable variable
-    Const,     // Compile-time constant (No VM memory)
-    Static,    // True global memory
-    Static_mut // True global memory
-};
+enum class Var_kind : uint8_t { Let, Mut, Const, Static, Static_mut };
 
 struct Var_stmt
 {
@@ -383,6 +379,7 @@ struct Enum_stmt
     std::string name;
     types::Type_id base_type;
     std::vector<std::pair<std::string, std::optional<Value>>> variants;
+    std::optional<Symbol_id> resolved_symbol = std::nullopt;
     Source_location loc;
 };
 
@@ -413,8 +410,7 @@ struct Stmt
         Union_stmt,
         Match_stmt,
         Enum_stmt,
-        Import_stmt
-    >;
+        Import_stmt>;
 
     Node node;
 };

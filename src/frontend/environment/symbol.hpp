@@ -11,7 +11,7 @@
 
 namespace phos {
 
-enum class Symbol_kind { Local_var, Global_var, Native_func, Native_const, Phos_func, Model_def, Enum_def, Union_def };
+enum class Symbol_kind { Local_var, Global_var, Native_func, Native_const, Phos_const, Phos_func, Model_def, Enum_def, Union_def };
 
 struct Symbol
 {
@@ -24,6 +24,7 @@ struct Symbol
     bool is_public;
 
     std::optional<Value> const_value;
+    std::optional<uint32_t> global_index; // The VM memory slot for this static variable
     std::optional<uint16_t> stack_offset;
     std::optional<size_t> ffi_index;
 
@@ -33,6 +34,7 @@ struct Symbol
 class Symbol_registry
 {
 public:
+    uint32_t next_global_index = 0; // Counter to track total VM global memory slots
     std::vector<Symbol> symbols;
     std::unordered_map<std::string, Symbol_id> global_index;
 
@@ -64,6 +66,7 @@ struct formatter<phos::Symbol_kind, char>
         case phos::Symbol_kind::Native_func:  text = "Native_func";  break;
         case phos::Symbol_kind::Native_const: text = "Native_const"; break;
         case phos::Symbol_kind::Phos_func:    text = "Phos_func";    break;
+        case phos::Symbol_kind::Phos_const:   text = "Phos_const";   break;
         case phos::Symbol_kind::Model_def:    text = "Model_def";    break;
         case phos::Symbol_kind::Enum_def:     text = "Enum_def";     break;
         case phos::Symbol_kind::Union_def:    text = "Union_def";    break;

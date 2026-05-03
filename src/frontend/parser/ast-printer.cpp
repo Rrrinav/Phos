@@ -655,7 +655,15 @@ void Tree_printer::print_node(const Enum_stmt &node)
 void Tree_printer::print_node(const Var_stmt &node)
 {
     indent();
-    print_str("Var: " + node.name + " : " + tt.to_string(node.type));
+    std::string kw{};
+    switch (node.kind) {
+        case ast::Var_kind::Let: kw = ""; break;
+        case ast::Var_kind::Mut: kw = "mut"; break;
+        case ast::Var_kind::Const: kw = "const"; break;
+        case ast::Var_kind::Static: kw = "static"; break;
+        case ast::Var_kind::Static_mut: kw = "satic mut"; break;
+    }
+    print_str("Var: " + kw + " " + node.name + " : " + tt.to_string(node.type));
     if (!node.initializer.is_null()) {
         with_child(false, [&] {
             indent();
@@ -1082,7 +1090,14 @@ std::string Sexpr_printer::print_node(const Union_stmt &node)
 
 std::string Sexpr_printer::print_node(const Var_stmt &node)
 {
-    std::string kw = node.is_const ? "const" : (node.is_mut ? "mut" : "let");
+    std::string kw{};
+    switch (node.kind) {
+        case ast::Var_kind::Let: kw = ""; break;
+        case ast::Var_kind::Mut: kw = "mut"; break;
+        case ast::Var_kind::Const: kw = "const"; break;
+        case ast::Var_kind::Static: kw = "static"; break;
+        case ast::Var_kind::Static_mut: kw = "satic mut"; break;
+    }
     if (!node.initializer.is_null()) {
         return "(" + kw + " " + node.name + " " + print_expr(node.initializer) + ")";
     }

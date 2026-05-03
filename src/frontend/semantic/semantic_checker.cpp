@@ -84,67 +84,77 @@ std::optional<Module_id> resolve_module_context(Compiler_context &ctx, Module_id
 }
 } // namespace
 
-/*
- * [find_by_key]
- * `-- linear search in pair vector
- */
 template <typename Vec>
 static auto find_by_key(const Vec &vec, const std::string &key)
 {
     return std::find_if(vec.begin(), vec.end(), [&](const auto &pair) { return pair.first == key; });
 }
 
-/*
- * [contains_key]
- * `-- checks existence using find_by_key
- */
 template <typename Vec>
 static bool contains_key(const Vec &vec, const std::string &key)
 {
     return find_by_key(vec, key) != vec.end();
 }
 
-/*
- * [constructor]
- * `-- initialize checker state
- */
 Semantic_checker::Semantic_checker(Compiler_context &ctx) : ctx(ctx)
 {}
 
-/*
- * [type_error]
- * `-- emit error diagnostic
- */
 void Semantic_checker::type_error(const ast::Source_location &loc, const std::string &message)
 {
     diagnostics_.error(loc.l, loc.c, loc.file, "{}", message);
 }
 
-/*
- * [type_warning]
- * `-- emit warning diagnostic
- */
 void Semantic_checker::type_warning(const ast::Source_location &loc, const std::string &message)
 {
     diagnostics_.warning(loc.l, loc.c, loc.file, "{}", message);
 }
 
-/*
- * [resolve_type_recursively]
- * |-- unwrap optionals/arrays/iters
- * |-- resolve named type
- * `-- re-wrap containers
- */
 types::Type_id Semantic_checker::resolve_type_recursively(types::Type_id type_id, const ast::Source_location &loc)
 {
     if (ctx.tt.is_unresolved(type_id)) {
         auto type_name = ctx.tt.get(type_id).as<types::Unresolved_type>().name;
+
         if (ctx.type_env.is_type_defined(type_name)) {
             return *ctx.type_env.get_type(type_name);
-        } else {
-            type_error(loc, "Unknown type '" + type_name + "'.");
-            return ctx.tt.get_unknown();
         }
+
+        if (!current_module_id.is_null()) {
+            std::string current_ns = ctx.workspace.get_module(current_module_id).logical_namespace;
+            if (!current_ns.empty() && current_ns != "main") {
+                std::string local_canonical = current_ns + "::" + type_name;
+                if (ctx.type_env.is_type_defined(local_canonical)) {
+                    return *ctx.type_env.get_type(local_canonical);
+                }
+            }
+
+            if (auto local_sym = variables.lookup(type_name)) {
+                if (!local_sym->id.is_null()) {
+                    auto &sym = ctx.registry.get_symbol(local_sym->id);
+                    if (sym.kind == Symbol_kind::Model_def || sym.kind == Symbol_kind::Enum_def || sym.kind == Symbol_kind::Union_def) {
+                        return sym.type;
+                    }
+                }
+            }
+        }
+
+        size_t pos = type_name.find("::");
+        if (pos != std::string::npos) {
+            std::string alias = type_name.substr(0, pos);
+            std::string member = type_name.substr(pos + 2);
+
+            if (auto mod_id = imported_module_id(ctx, current_module_id, alias)) {
+                auto &target_module = ctx.workspace.get_module(*mod_id);
+                if (auto sym_id = target_module.resolve_exported_symbol(member)) {
+                    auto &sym = ctx.registry.get_symbol(*sym_id);
+                    if (sym.kind == Symbol_kind::Model_def || sym.kind == Symbol_kind::Enum_def || sym.kind == Symbol_kind::Union_def) {
+                        return sym.type;
+                    }
+                }
+            }
+        }
+
+        type_error(loc, "Unknown type '" + type_name + "'.");
+        return ctx.tt.get_unknown();
     }
 
     if (ctx.tt.is_optional(type_id)) {
@@ -168,11 +178,6 @@ types::Type_id Semantic_checker::resolve_type_recursively(types::Type_id type_id
     return type_id;
 }
 
-/*
- * [is_iterator_protocol_type]
- * |-- check native iter
- * `-- check custom model for next()
- */
 bool Semantic_checker::is_iterator_protocol_type(types::Type_id type) const
 {
     if (ctx.tt.is_iterator(type)) {
@@ -194,11 +199,6 @@ bool Semantic_checker::is_iterator_protocol_type(types::Type_id type) const
     return false;
 }
 
-/*
- * [iterator_element_type]
- * |-- extract from native iter
- * `-- extract from custom model next() return
- */
 types::Type_id Semantic_checker::iterator_element_type(types::Type_id type) const
 {
     if (ctx.tt.is_iterator(type)) {
@@ -218,11 +218,6 @@ types::Type_id Semantic_checker::iterator_element_type(types::Type_id type) cons
     return ctx.tt.get_void();
 }
 
-/*
- * [to_iterator_type]
- * |-- map collections to iter types
- * `-- resolve iter() method on custom models
- */
 types::Type_id Semantic_checker::to_iterator_type(types::Type_id type) const
 {
     if (is_iterator_protocol_type(type)) {
@@ -262,13 +257,6 @@ types::Type_id Semantic_checker::to_iterator_type(types::Type_id type) const
     return ctx.tt.iterator(type);
 }
 
-/*
- * [hoist_globals]
- * |-- register functions
- * |-- register models and methods
- * |-- register unions
- * `-- register enums
- */
 void Semantic_checker::hoist_globals(Module_id mod_id)
 {
     auto &module = ctx.workspace.get_module(mod_id);
@@ -284,32 +272,30 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
             std::string canonical_name =
                 (module.logical_namespace == "main" || module.logical_namespace.empty()) ? fn.name : module.logical_namespace + "::" + fn.name;
 
-            // 1. Create the globally unique Symbol
             Symbol sym{
                 .id = Symbol_id{0},
                 .name = canonical_name,
                 .kind = Symbol_kind::Phos_func,
-                .type = ctx.tt.get_unknown(), // Resolved safely in Pass 2
+                .type = ctx.tt.get_unknown(),
                 .owner_module = mod_id,
                 .is_public = true,
                 .const_value = std::nullopt,
+                .global_index = std::nullopt,
                 .stack_offset = std::nullopt,
                 .ffi_index = std::nullopt,
                 .declaration = stmt_id};
 
             Symbol_id sym_id = ctx.registry.create_symbol(std::move(sym));
+            fn.resolved_symbol = sym_id;
 
-            // 2. Export it to the module using the raw AST name
             module.add_public_symbol(fn.name, sym_id);
 
-            // 3. Register it in the legacy Type Environment
             ctx.type_env.functions[canonical_name] = Function_type_data{stmt_id};
 
         } else if (std::holds_alternative<ast::Model_stmt>(ctx.tree.get(stmt_id).node)) {
             auto &model = get_stmt<ast::Model_stmt>(ctx.tree, stmt_id);
 
-            std::string canonical_name =
-                (module.logical_namespace == "main" || module.logical_namespace.empty()) ? model.name : module.logical_namespace + "::" + model.name;
+            std::string canonical_name = (module.logical_namespace == "main" || module.logical_namespace.empty()) ? model.name : module.logical_namespace + "::" + model.name;
 
             std::vector<std::pair<std::string, types::Type_id>> tt_fields;
             for (const auto &field : model.fields) {
@@ -335,7 +321,6 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
             }
             ctx.type_env.model_data[canonical_name] = std::move(m_data);
 
-            // Export Model Symbol
             Symbol sym{
                 .id = Symbol_id{0},
                 .name = canonical_name,
@@ -344,10 +329,13 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
                 .owner_module = mod_id,
                 .is_public = true,
                 .const_value = std::nullopt,
+                .global_index = std::nullopt,
                 .stack_offset = std::nullopt,
                 .ffi_index = std::nullopt,
                 .declaration = stmt_id};
             Symbol_id sym_id = ctx.registry.create_symbol(std::move(sym));
+
+            model.resolved_symbol = sym_id;
             module.add_public_symbol(model.name, sym_id);
 
             for (auto method_id : model.methods) {
@@ -357,6 +345,27 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
 
                 if (std::holds_alternative<ast::Function_stmt>(ctx.tree.get(method_id).node)) {
                     auto &m_fn = get_stmt<ast::Function_stmt>(ctx.tree, method_id);
+
+                    std::string canonical_method_name = canonical_name + "::" + m_fn.name;
+
+                    // 1. Create a global Symbol for the method
+                    Symbol method_sym{
+                        .id = Symbol_id{0},
+                        .name = canonical_method_name,
+                        .kind = Symbol_kind::Phos_func,
+                        .type = ctx.tt.get_unknown(),
+                        .owner_module = mod_id,
+                        .is_public = true,
+                        .const_value = std::nullopt,
+                        .global_index = std::nullopt,
+                        .stack_offset = std::nullopt,
+                        .ffi_index = std::nullopt,
+                        .declaration = method_id};
+
+                    Symbol_id method_sym_id = ctx.registry.create_symbol(std::move(method_sym));
+                    m_fn.resolved_symbol = method_sym_id;
+
+                    // 2. Safely bind "this" parameter
                     if (!m_fn.is_static) {
                         ast::Function_param this_param;
                         this_param.name = "this";
@@ -367,7 +376,7 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
                     }
 
                     auto original_name = m_fn.name;
-                    m_fn.name = canonical_name + "::" + m_fn.name;
+                    m_fn.name = canonical_method_name;
 
                     if (m_fn.is_static) {
                         ctx.type_env.model_data[canonical_name].static_methods[original_name] = Function_type_data{method_id};
@@ -398,7 +407,6 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
             }
             ctx.type_env.union_data[canonical_name] = std::move(u_data);
 
-            // Export Union Symbol
             Symbol sym{
                 .id = Symbol_id{0},
                 .name = canonical_name,
@@ -407,10 +415,13 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
                 .owner_module = mod_id,
                 .is_public = true,
                 .const_value = std::nullopt,
+                .global_index = std::nullopt,
                 .stack_offset = std::nullopt,
                 .ffi_index = std::nullopt,
                 .declaration = stmt_id};
             Symbol_id sym_id = ctx.registry.create_symbol(std::move(sym));
+
+            un.resolved_symbol = sym_id;
             module.add_public_symbol(un.name, sym_id);
 
         } else if (std::holds_alternative<ast::Enum_stmt>(ctx.tree.get(stmt_id).node)) {
@@ -447,7 +458,6 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
 
             ctx.type_env.enum_data[canonical_name] = std::move(e_data);
 
-            // Export Enum Symbol
             Symbol sym{
                 .id = Symbol_id{0},
                 .name = canonical_name,
@@ -456,79 +466,99 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
                 .owner_module = mod_id,
                 .is_public = true,
                 .const_value = std::nullopt,
+                .global_index = std::nullopt,
                 .stack_offset = std::nullopt,
                 .ffi_index = std::nullopt,
                 .declaration = stmt_id};
             Symbol_id sym_id = ctx.registry.create_symbol(std::move(sym));
+
+            en.resolved_symbol = sym_id;
             module.add_public_symbol(en.name, sym_id);
+
+        } else if (std::holds_alternative<ast::Var_stmt>(ctx.tree.get(stmt_id).node)) {
+            auto &var = get_stmt<ast::Var_stmt>(ctx.tree, stmt_id);
+
+            if (var.kind == ast::Var_kind::Let || var.kind == ast::Var_kind::Mut) {
+                continue;
+            }
+
+            std::string canonical_name =
+                (module.logical_namespace == "main" || module.logical_namespace.empty()) ? var.name : module.logical_namespace + "::" + var.name;
+
+            std::optional<Value> const_val = std::nullopt;
+            std::optional<uint32_t> global_idx = std::nullopt;
+            Symbol_kind kind = Symbol_kind::Global_var;
+
+            if (var.kind == ast::Var_kind::Const) {
+                kind = Symbol_kind::Phos_const;
+                if (auto *lit = std::get_if<ast::Literal_expr>(&ctx.tree.get(var.initializer).node)) {
+                    const_val = lit->value;
+                } else {
+                    type_error(var.loc, "Constants must be initialized with a primitive literal.");
+                }
+            } else {
+                kind = Symbol_kind::Global_var;
+                global_idx = ctx.registry.next_global_index++;
+            }
+
+            Symbol sym{
+                .id = Symbol_id{0},
+                .name = canonical_name,
+                .kind = kind,
+                .type = ctx.tt.get_unknown(),
+                .owner_module = mod_id,
+                .is_public = true,
+                .const_value = const_val,
+                .global_index = global_idx,
+                .stack_offset = std::nullopt,
+                .ffi_index = std::nullopt,
+                .declaration = stmt_id};
+
+            Symbol_id sym_id = ctx.registry.create_symbol(std::move(sym));
+            module.add_public_symbol(var.name, sym_id);
         }
     }
 }
 
 err::Engine Semantic_checker::check_workspace()
 {
-    // PASS 1: Unified Symbol Hoisting
     for (const auto &module : ctx.workspace.modules) {
         if (hoisted_modules.contains(module.id)) {
             continue;
         }
         hoisted_modules.insert(module.id);
-
-        // Pass the Module ID so it can export symbols properly!
         hoist_globals(module.id);
     }
 
-    // PASS 2: Unified Semantic Checking
     for (const auto &module : ctx.workspace.modules) {
         if (checked_modules.contains(module.id)) {
             continue;
         }
         checked_modules.insert(module.id);
-
-        // Pass the Module ID so it can set up the correct file scope!
         check_module(module.id);
     }
 
     return diagnostics_;
 }
 
-
-/*
- * [check_module]
- * |-- set current module context
- * |-- open file-level scope
- * |-- verify all statements in THIS file
- * `-- clean up scope
- */
 void Semantic_checker::check_module(Module_id mod_id)
 {
     auto &module = ctx.workspace.get_module(mod_id);
-
-    // 1. Lock the checker into this specific file's context
     current_module_id = mod_id;
 
-    // 2. Open the file-level variable scope
     variables.begin_scope();
     m_nil_checked_vars_stack.emplace_back();
 
-    // 3. Check every top-level statement in this specific module
     for (auto stmt_id : module.ast_roots) {
         check_stmt(stmt_id);
     }
 
-    // 4. Tear down the file-level scope safely
     m_nil_checked_vars_stack.pop_back();
     variables.end_scope();
 
-    // Reset context
     current_module_id = Module_id::null();
 }
 
-/*
- * [check]
- * |-- hoist globals
- * `-- verify all statements
- */
 err::Engine Semantic_checker::check(const std::vector<ast::Stmt_id> &statements)
 {
     (void)statements;
@@ -554,53 +584,30 @@ err::Engine Semantic_checker::check(const std::vector<ast::Stmt_id> &statements)
     return diagnostics_;
 }
 
-/*
- * [declare]
- * `-- register local scoped var
- */
 void Semantic_checker::declare(const std::string &name, types::Type_id type, bool is_mut, const ast::Source_location &loc)
 {
-    // Only register in the Global Registry if it's a global/static.
-    // Standard locals live only in the Scope_tracker to save memory and lookup time.
-    // 1. Check if name is already reserved in the current scope
     if (variables.is_declared_locally(name)) {
         type_error(loc, std::format("Variable '{}' is already declared in this scope.", name));
         return;
     }
-
-    // 2. Add to Scope_tracker.
-    // We pass a null Symbol_id for standard locals to indicate
-    // they don't have a global entry.
     variables.declare(name, type, is_mut, Symbol_id::null());
 }
 
-/*
- * [lookup]
- * |-- locals
- * |-- natives
- * `-- globals
- */
 std::optional<Scope_symbol> Semantic_checker::lookup(const std::string &name, const ast::Source_location &loc)
 {
-    // Locals
     if (auto var_opt = variables.lookup(name)) {
         return *var_opt;
     }
 
-    // Check for Module Aliases in the CURRENT module unit
     if (auto module_id = imported_module_id(ctx, current_module_id, name)) {
-        // Return a dummy symbol that points to the module
-        // The Static_path_expr handler will use this to resolve Member access
         return Scope_symbol{ctx.tt.get_any(), Symbol_id::null(), false, 0};
     }
 
-    // Check for native FFI functions
     if (ctx.type_env.is_native_defined(name)) {
         types::Type_id dummy = ctx.tt.function({}, ctx.tt.get_any());
         return Scope_symbol{dummy, Symbol_id::null(), false, 0};
     }
 
-    // Check for global functions/symbols
     if (auto func_data = ctx.type_env.get_function(name)) {
         const auto *decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(func_data->declaration).node);
         std::vector<types::Type_id> params;
@@ -615,12 +622,6 @@ std::optional<Scope_symbol> Semantic_checker::lookup(const std::string &name, co
     return std::nullopt;
 }
 
-/*
- * [is_compatible]
- * |-- strict equality
- * |-- optional depth bounds
- * `-- structural matches
- */
 bool Semantic_checker::is_compatible(types::Type_id expected, types::Type_id actual) const
 {
     if (expected == actual) {
@@ -635,18 +636,15 @@ bool Semantic_checker::is_compatible(types::Type_id expected, types::Type_id act
         auto &exp_model = std::get<types::Model_type>(ctx.tt.get(expected).data);
         auto &act_model = std::get<types::Model_type>(ctx.tt.get(actual).data);
 
-        // If both models are anonymous (empty names), we verify them structurally
         if (exp_model.name.empty() && act_model.name.empty()) {
             if (exp_model.fields.size() != act_model.fields.size()) {
                 return false;
             }
 
             for (size_t i = 0; i < exp_model.fields.size(); ++i) {
-                // Field names must match
                 if (exp_model.fields[i].first != act_model.fields[i].first) {
                     return false;
                 }
-                // Field types must be recursively compatible
                 if (!is_compatible(exp_model.fields[i].second, act_model.fields[i].second)) {
                     return false;
                 }
@@ -691,10 +689,6 @@ bool Semantic_checker::is_compatible(types::Type_id expected, types::Type_id act
     return false;
 }
 
-/*
- * [promote_numeric_type]
- * `-- find safest numeric upcast
- */
 types::Type_id Semantic_checker::promote_numeric_type(types::Type_id left, types::Type_id right) const
 {
     if (ctx.tt.is_unknown(left) || ctx.tt.is_unknown(right)) {
@@ -724,10 +718,6 @@ types::Type_id Semantic_checker::promote_numeric_type(types::Type_id left, types
     return ctx.tt.primitive(types::primitive_bit_width(left_kind) >= types::primitive_bit_width(right_kind) ? left_kind : right_kind);
 }
 
-/*
- * [default_expr_uses_forbidden_names]
- * `-- safety scan
- */
 bool Semantic_checker::default_expr_uses_forbidden_names(ast::Expr_id expr_id, const std::unordered_set<std::string> &forbidden_names) const
 {
     if (expr_id.is_null()) {
@@ -810,10 +800,6 @@ bool Semantic_checker::default_expr_uses_forbidden_names(ast::Expr_id expr_id, c
         ctx.tree.get(expr_id).node);
 }
 
-/*
- * [validate_function_defaults]
- * `-- safe evaluation
- */
 void Semantic_checker::validate_function_defaults(const ast::Function_stmt &stmt)
 {
     std::unordered_set<std::string> forbidden_names = {"this"};
@@ -840,10 +826,6 @@ void Semantic_checker::validate_function_defaults(const ast::Function_stmt &stmt
     }
 }
 
-/*
- * [validate_model_defaults]
- * `-- safe evaluation
- */
 void Semantic_checker::validate_model_defaults(const ast::Model_stmt &stmt)
 {
     std::unordered_set<std::string> forbidden_names = {"this"};
@@ -873,10 +855,6 @@ void Semantic_checker::validate_model_defaults(const ast::Model_stmt &stmt)
     }
 }
 
-/*
- * [validate_union_defaults]
- * `-- safe evaluation
- */
 void Semantic_checker::validate_union_defaults(const ast::Union_stmt &stmt)
 {
     std::unordered_set<std::string> forbidden_names = {"this"};
@@ -906,10 +884,6 @@ void Semantic_checker::validate_union_defaults(const ast::Union_stmt &stmt)
     }
 }
 
-/*
- * [extract_access_path]
- * `-- build path sequence
- */
 std::optional<Semantic_checker::Access_path> Semantic_checker::extract_access_path(ast::Expr_id expr_id) const
 {
     if (expr_id.is_null()) {
@@ -958,10 +932,6 @@ std::optional<Semantic_checker::Access_path> Semantic_checker::extract_access_pa
     return std::nullopt;
 }
 
-/*
- * [collect_nil_check_from_optional_method]
- * `-- optional method trace
- */
 void Semantic_checker::collect_nil_check_from_optional_method(
     const ast::Method_call_expr &expr, bool target_truthy_branch, std::unordered_set<Access_path, Access_path_hash> &out)
 {
@@ -981,10 +951,6 @@ void Semantic_checker::collect_nil_check_from_optional_method(
     }
 }
 
-/*
- * [collect_nil_check_from_comparison]
- * `-- binary nil trace
- */
 void Semantic_checker::collect_nil_check_from_comparison(
     const ast::Binary_expr &expr, lex::TokenType target_op, std::unordered_set<Access_path, Access_path_hash> &out)
 {
@@ -1003,10 +969,6 @@ void Semantic_checker::collect_nil_check_from_comparison(
     }
 }
 
-/*
- * [collect_nil_checked_vars_for_then]
- * `-- then branch tracker
- */
 void Semantic_checker::collect_nil_checked_vars_for_then(ast::Expr_id expr_id, std::unordered_set<Access_path, Access_path_hash> &out)
 {
     if (expr_id.is_null()) {
@@ -1040,10 +1002,6 @@ void Semantic_checker::collect_nil_checked_vars_for_then(ast::Expr_id expr_id, s
     }
 }
 
-/*
- * [collect_nil_checked_vars_for_else]
- * `-- else branch tracker
- */
 void Semantic_checker::collect_nil_checked_vars_for_else(ast::Expr_id expr_id, std::unordered_set<Access_path, Access_path_hash> &out)
 {
     if (expr_id.is_null()) {
@@ -1071,10 +1029,6 @@ void Semantic_checker::collect_nil_checked_vars_for_else(ast::Expr_id expr_id, s
     }
 }
 
-/*
- * [parse_type_string]
- * `-- build type from ffi signature
- */
 types::Type_id Semantic_checker::parse_type_string(std::string str, const std::unordered_map<std::string, types::Type_id> &generics) const
 {
     str.erase(str.find_last_not_of(" \t\r\n") + 1);
@@ -1153,10 +1107,6 @@ types::Type_id Semantic_checker::parse_type_string(std::string str, const std::u
     return ctx.tt.get_any();
 }
 
-/*
- * [match_ffi_type]
- * `-- structurally matches target strings
- */
 bool Semantic_checker::match_ffi_type(
     std::string expected_str, types::Type_id actual_type, std::unordered_map<std::string, types::Type_id> &generics) const
 {
@@ -1217,10 +1167,6 @@ bool Semantic_checker::match_ffi_type(
     return is_compatible(concrete_expected, actual_type);
 }
 
-/*
- * [bind_call_arguments]
- * `-- match abi positional and named
- */
 Semantic_checker::Bound_call_arguments Semantic_checker::bind_call_arguments(
     const std::vector<ast::Function_param> &parameters,
     const std::vector<ast::Call_argument> &arguments,
@@ -1303,10 +1249,6 @@ Semantic_checker::Bound_call_arguments Semantic_checker::bind_call_arguments(
     return result;
 }
 
-/*
- * [try_bind_native_arguments]
- * `-- ffi matching
- */
 Semantic_checker::Bound_native_arguments Semantic_checker::try_bind_native_arguments(
     const std::vector<Native_param> &parameters, const std::vector<ast::Call_argument> &arguments, std::optional<types::Type_id> receiver_type)
 {
@@ -1386,10 +1328,6 @@ Semantic_checker::Bound_native_arguments Semantic_checker::try_bind_native_argum
     return result;
 }
 
-/*
- * [check_stmt]
- * `-- safe index routing dispatcher
- */
 void Semantic_checker::check_stmt(ast::Stmt_id stmt_id)
 {
     if (stmt_id.is_null()) {
@@ -1434,13 +1372,6 @@ void Semantic_checker::check_stmt(ast::Stmt_id stmt_id)
         ctx.tree.get(stmt_id).node);
 }
 
-/*
- * [check_expr]
- * |-- peel hints
- * |-- route via ID
- * |-- auto lift
- * `-- save depths
- */
 types::Type_id Semantic_checker::check_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     if (expr_id.is_null()) {
@@ -1550,21 +1481,20 @@ types::Type_id Semantic_checker::check_expr(ast::Expr_id expr_id, std::optional<
 
 // STATEMENT VISITORS
 
-/*
- * [function_stmt]
- * |-- check defaults
- * |-- scope params
- * `-- check body
- */
 void Semantic_checker::check_function_stmt(ast::Stmt_id stmt_id)
 {
-    // Grab by REFERENCE so we can mutate the AST node permanently!
     auto &fn_stmt = get_stmt<ast::Function_stmt>(ctx.tree, stmt_id);
 
-    // 1. PERMANENTLY resolve return type and parameter types in the AST
     fn_stmt.return_type = resolve_type_recursively(fn_stmt.return_type, fn_stmt.loc);
+    std::vector<types::Type_id> param_types;
+
     for (auto &param : fn_stmt.parameters) {
         param.type = resolve_type_recursively(param.type, param.loc);
+        param_types.push_back(param.type);
+    }
+
+    if (fn_stmt.resolved_symbol) {
+        ctx.registry.get_symbol(*fn_stmt.resolved_symbol).type = ctx.tt.function(param_types, fn_stmt.return_type);
     }
 
     auto saved_return = current_return_type;
@@ -1586,12 +1516,6 @@ void Semantic_checker::check_function_stmt(ast::Stmt_id stmt_id)
     current_return_type = saved_return;
 }
 
-/*
- * [var_stmt]
- * |-- evaluate initializer
- * |-- infer type
- * `-- add to scope
- */
 void Semantic_checker::check_var_stmt(ast::Stmt_id stmt_id)
 {
     auto type_inferred = get_stmt<ast::Var_stmt>(ctx.tree, stmt_id).type_inferred;
@@ -1599,7 +1523,7 @@ void Semantic_checker::check_var_stmt(ast::Stmt_id stmt_id)
     auto loc = get_stmt<ast::Var_stmt>(ctx.tree, stmt_id).loc;
     auto initializer = get_stmt<ast::Var_stmt>(ctx.tree, stmt_id).initializer;
     auto name = get_stmt<ast::Var_stmt>(ctx.tree, stmt_id).name;
-    auto is_mut = get_stmt<ast::Var_stmt>(ctx.tree, stmt_id).is_mut;
+    auto kind = get_stmt<ast::Var_stmt>(ctx.tree, stmt_id).kind;
 
     if (!type_inferred) {
         type = resolve_type_recursively(type, loc);
@@ -1656,50 +1580,58 @@ void Semantic_checker::check_var_stmt(ast::Stmt_id stmt_id)
             diagnostics_.push(std::move(diagnostic));
         }
     }
-    declare(name, type, is_mut, loc);
+    bool is_global = (kind == ast::Var_kind::Const || kind == ast::Var_kind::Static || kind == ast::Var_kind::Static_mut);
+    bool is_mut = (kind == ast::Var_kind::Mut || kind == ast::Var_kind::Static_mut);
+
+    if (is_global) {
+        auto &module = ctx.workspace.get_module(current_module_id);
+        if (auto sym_id = module.resolve_exported_symbol(name)) {
+            ctx.registry.get_symbol(*sym_id).type = type;
+
+            variables.declare(name, type, is_mut, *sym_id);
+        }
+    } else {
+        declare(name, type, is_mut, loc);
+    }
 }
 
-/*
- * [model_stmt]
- * |-- validate defaults
- * `-- check methods
- */
 void Semantic_checker::check_model_stmt(ast::Stmt_id stmt_id)
 {
-    validate_model_defaults(get_stmt<ast::Model_stmt>(ctx.tree, stmt_id));
-    auto name = get_stmt<ast::Model_stmt>(ctx.tree, stmt_id).name;
-    auto methods = get_stmt<ast::Model_stmt>(ctx.tree, stmt_id).methods;
+    auto &model = get_stmt<ast::Model_stmt>(ctx.tree, stmt_id);
+    validate_model_defaults(model);
 
     auto saved_model = current_model_type;
-    if (ctx.type_env.is_type_defined(name)) {
-        current_model_type = ctx.type_env.get_type(name);
+
+    if (model.resolved_symbol) {
+        current_model_type = ctx.registry.get_symbol(*model.resolved_symbol).type;
+    } else {
+        type_error(model.loc, "Compiler Bug: Model lacks resolved_symbol");
     }
-    for (auto &method : methods) {
+
+    for (auto &method : model.methods) {
         check_stmt(method);
     }
+
     current_model_type = saved_model;
 }
 
-/*
- * [union_stmt]
- * `-- validate variants
- */
 void Semantic_checker::check_union_stmt(ast::Stmt_id stmt_id)
 {
     validate_union_defaults(get_stmt<ast::Union_stmt>(ctx.tree, stmt_id));
 }
 
-/*
- * [enum_stmt]
- * `-- validate uniqueness
- */
 void Semantic_checker::check_enum_stmt(ast::Stmt_id stmt_id)
 {
-    auto name = get_stmt<ast::Enum_stmt>(ctx.tree, stmt_id).name;
-    auto loc = get_stmt<ast::Enum_stmt>(ctx.tree, stmt_id).loc;
-    auto variants = get_stmt<ast::Enum_stmt>(ctx.tree, stmt_id).variants;
+    auto &en = get_stmt<ast::Enum_stmt>(ctx.tree, stmt_id);
 
-    auto enum_data_ptr = ctx.type_env.get_enum(name);
+    if (!en.resolved_symbol) {
+        type_error(en.loc, "Compiler Bug: Enum lacks resolved_symbol");
+        return;
+    }
+
+    std::string canonical_name = ctx.registry.get_symbol(*en.resolved_symbol).name;
+    auto enum_data_ptr = ctx.type_env.get_enum(canonical_name);
+
     if (!enum_data_ptr) {
         return;
     }
@@ -1708,9 +1640,9 @@ void Semantic_checker::check_enum_stmt(ast::Stmt_id stmt_id)
     std::unordered_set<int64_t> used_ints;
     std::unordered_set<std::string> used_strings;
 
-    for (const auto &variant : variants) {
+    for (const auto &variant : en.variants) {
         if (!used_names.insert(variant.first).second) {
-            type_error(loc, std::format("Duplicate enum variant name '{}'.", variant.first));
+            type_error(en.loc, std::format("Duplicate enum variant name '{}'.", variant.first));
             continue;
         }
 
@@ -1718,23 +1650,17 @@ void Semantic_checker::check_enum_stmt(ast::Stmt_id stmt_id)
         if (val.is_integer()) {
             int64_t i = val.as_int();
             if (!used_ints.insert(i).second) {
-                type_error(loc, std::format("Duplicate enum value '{}' in variant '{}'. Enum values must be unique.", i, variant.first));
+                type_error(en.loc, std::format("Duplicate enum value '{}' in variant '{}'. Enum values must be unique.", i, variant.first));
             }
         } else if (val.is_string()) {
             std::string s(val.as_string());
             if (!used_strings.insert(s).second) {
-                type_error(loc, std::format("Duplicate enum value '\"{}\"' in variant '{}'. Enum values must be unique.", s, variant.first));
+                type_error(en.loc, std::format("Duplicate enum value '\"{}\"' in variant '{}'. Enum values must be unique.", s, variant.first));
             }
         }
     }
 }
 
-/*
- * [block_stmt]
- * |-- open scope
- * |-- evaluate children
- * `-- close scope
- */
 void Semantic_checker::check_block_stmt(ast::Stmt_id stmt_id)
 {
     auto statements = get_stmt<ast::Block_stmt>(ctx.tree, stmt_id).statements;
@@ -1745,10 +1671,6 @@ void Semantic_checker::check_block_stmt(ast::Stmt_id stmt_id)
     variables.end_scope();
 }
 
-/*
- * [expr_stmt]
- * `-- pass through to expr
- */
 void Semantic_checker::check_expr_stmt(ast::Stmt_id stmt_id)
 {
     auto expression = get_stmt<ast::Expr_stmt>(ctx.tree, stmt_id).expression;
@@ -1757,12 +1679,6 @@ void Semantic_checker::check_expr_stmt(ast::Stmt_id stmt_id)
     }
 }
 
-/*
- * [if_stmt]
- * |-- check condition
- * |-- pass nil hints
- * `-- evaluate branches
- */
 void Semantic_checker::check_if_stmt(ast::Stmt_id stmt_id)
 {
     auto condition = get_stmt<ast::If_stmt>(ctx.tree, stmt_id).condition;
@@ -1807,10 +1723,6 @@ void Semantic_checker::check_if_stmt(ast::Stmt_id stmt_id)
     variables.end_scope();
 }
 
-/*
- * [print_stmt]
- * `-- force evaluate
- */
 void Semantic_checker::check_print_stmt(ast::Stmt_id stmt_id)
 {
     auto expressions = get_stmt<ast::Print_stmt>(ctx.tree, stmt_id).expressions;
@@ -1819,10 +1731,6 @@ void Semantic_checker::check_print_stmt(ast::Stmt_id stmt_id)
     }
 }
 
-/*
- * [return_stmt]
- * `-- validate against function bound
- */
 void Semantic_checker::check_return_stmt(ast::Stmt_id stmt_id)
 {
     auto expression = get_stmt<ast::Return_stmt>(ctx.tree, stmt_id).expression;
@@ -1844,11 +1752,6 @@ void Semantic_checker::check_return_stmt(ast::Stmt_id stmt_id)
     }
 }
 
-/*
- * [while_stmt]
- * |-- assert condition
- * `-- check loop
- */
 void Semantic_checker::check_while_stmt(ast::Stmt_id stmt_id)
 {
     auto condition = get_stmt<ast::While_stmt>(ctx.tree, stmt_id).condition;
@@ -1865,13 +1768,6 @@ void Semantic_checker::check_while_stmt(ast::Stmt_id stmt_id)
     }
 }
 
-/*
- * [for_stmt]
- * |-- define init
- * |-- assert bool
- * |-- check increment
- * `-- body
- */
 void Semantic_checker::check_for_stmt(ast::Stmt_id stmt_id)
 {
     auto initializer = get_stmt<ast::For_stmt>(ctx.tree, stmt_id).initializer;
@@ -1898,12 +1794,6 @@ void Semantic_checker::check_for_stmt(ast::Stmt_id stmt_id)
     variables.end_scope();
 }
 
-/*
- * [for_in_stmt]
- * |-- bind protocol
- * |-- inject scope var
- * `-- body
- */
 void Semantic_checker::check_for_in_stmt(ast::Stmt_id stmt_id)
 {
     auto iterable = get_stmt<ast::For_in_stmt>(ctx.tree, stmt_id).iterable;
@@ -1931,12 +1821,6 @@ void Semantic_checker::check_for_in_stmt(ast::Stmt_id stmt_id)
     variables.end_scope();
 }
 
-/*
- * [match_stmt]
- * |-- assert exhaustive
- * |-- check unions
- * `-- check enums
- */
 void Semantic_checker::check_match_stmt(ast::Stmt_id stmt_id)
 {
     auto subject = get_stmt<ast::Match_stmt>(ctx.tree, stmt_id).subject;
@@ -2120,36 +2004,28 @@ void Semantic_checker::check_match_stmt(ast::Stmt_id stmt_id)
     type_error(loc, "Non-exhaustive match. Add a wildcard '_' arm.");
 }
 
-/*
- * [import_stmt]
- * `-- Bind selective imports (e.g. ::{sin, cos}) into the local file scope.
- *     (File loading and module aliasing was already handled by Module_resolver)
- */
 void Semantic_checker::check_import_stmt(ast::Stmt_id stmt_id)
 {
     auto &import_stmt = get_stmt<ast::Import_stmt>(ctx.tree, stmt_id);
 
-    // If there are no selectives, the Module_resolver already handled the aliasing.
     if (import_stmt.selectives.empty()) {
         return;
     }
 
-    // 1. Rebuild the logical namespace (e.g., "mather" or "std::math")
-    std::string logical_ns = import_stmt.path.front();
-    for (size_t i = 1; i < import_stmt.path.size(); ++i) {
-        logical_ns += "::" + import_stmt.path[i];
-    }
+    // 1. Get the alias for this module (e.g., "create")
+    auto &current_module = ctx.workspace.get_module(current_module_id);
+    std::string alias = import_stmt.local_alias.empty() ? import_stmt.path.back() : import_stmt.local_alias;
 
-    // 2. Fetch the module directly from the global workspace
-    auto target_mod_id_opt = ctx.workspace.get_module_by_namespace(logical_ns);
+    // 2. Ask the Workspace what Module_id the Resolver assigned to this alias
+    auto target_mod_id_opt = current_module.resolve_import(alias);
     if (!target_mod_id_opt) {
-        return; // Silent fail: Module_resolver already caught missing files
+        type_error(import_stmt.loc, "Compiler Bug: Module alias '" + alias + "' not resolved by Module_resolver.");
+        return;
     }
 
-    Module_id target_mod_id = *target_mod_id_opt;
-    auto &target_module = ctx.workspace.get_module(target_mod_id);
+    auto &target_module = ctx.workspace.get_module(*target_mod_id_opt);
 
-    // 3. Bind the specific requested symbols into the current file's local scope
+    // 3. Bind the specific requested symbols into the local scope
     for (const auto &sym_name : import_stmt.selectives) {
         auto exported_sym_id = target_module.resolve_exported_symbol(sym_name);
         if (!exported_sym_id) {
@@ -2162,7 +2038,6 @@ void Semantic_checker::check_import_stmt(ast::Stmt_id stmt_id)
             continue;
         }
 
-        // Inject the symbol into the local scope so `test_mod()` works without the prefix
         variables.declare(sym_name, resolve_symbol_type(ctx, *exported_sym_id, *this), false, *exported_sym_id);
     }
 }
@@ -2175,11 +2050,6 @@ void Semantic_checker::bind_import_alias(const ast::Import_stmt &stmt, Module_id
 
 // EXPRESSION VISITORS
 
-/*
- * [model_literal_expr] -> Type
- * |-- assert variants if union
- * `-- populate defaults if model
- */
 types::Type_id Semantic_checker::check_model_literal_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
@@ -2187,16 +2057,15 @@ types::Type_id Semantic_checker::check_model_literal_expr(ast::Expr_id expr_id, 
     auto loc = get_node<ast::Model_literal_expr>(ctx.tree, expr_id).loc;
     auto fields = get_node<ast::Model_literal_expr>(ctx.tree, expr_id).fields;
 
-    if (!ctx.type_env.is_type_defined(model_name)) {
-        type_error(loc, "Unknown type '" + model_name + "'.");
+    types::Type_id resolved_type = resolve_type_recursively(ctx.tt.unresolved(model_name), loc);
+
+    if (ctx.tt.is_unknown(resolved_type)) {
         return get_node<ast::Model_literal_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
     }
 
-    types::Type_id resolved_type = *ctx.type_env.get_type(model_name);
-
     if (ctx.tt.is_union(resolved_type)) {
-        auto union_data_ptr = ctx.type_env.get_union(model_name);
         auto &union_t = std::get<types::Union_type>(ctx.tt.get(resolved_type).data);
+        auto union_data_ptr = ctx.type_env.get_union(union_t.name);
 
         if (fields.size() != 1) {
             type_error(loc, "Union literals must be initialized with exactly one variant field.");
@@ -2307,11 +2176,6 @@ types::Type_id Semantic_checker::check_model_literal_expr(ast::Expr_id expr_id, 
     return get_node<ast::Model_literal_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
 }
 
-/*
- * [anon_model_literal_expr] -> Type
- * |-- assert peeled target bounds
- * `-- structurally expand literal
- */
 types::Type_id Semantic_checker::check_anon_model_literal_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     auto loc = get_node<ast::Anon_model_literal_expr>(ctx.tree, expr_id).loc;
@@ -2439,12 +2303,6 @@ types::Type_id Semantic_checker::check_anon_model_literal_expr(ast::Expr_id expr
     return get_node<ast::Anon_model_literal_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
 }
 
-/*
- * [assignment_expr] -> Type
- * |-- target must be bound
- * |-- assert mut
- * `-- assert assignable
- */
 types::Type_id Semantic_checker::check_assignment_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
@@ -2457,8 +2315,25 @@ types::Type_id Semantic_checker::check_assignment_expr(ast::Expr_id expr_id, std
         return get_node<ast::Assignment_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
     }
 
+    if (!var_info_res->id.is_null()) {
+        auto &sym = ctx.registry.get_symbol(var_info_res->id);
+
+        if (sym.kind == Symbol_kind::Phos_const || sym.kind == Symbol_kind::Native_const) {
+            type_error(loc, "Cannot mutate a constant.");
+            return get_node<ast::Assignment_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+        }
+
+        if (sym.kind == Symbol_kind::Global_var) {
+            if (sym.owner_module != current_module_id) {
+                type_error(loc, std::format("Cannot mutate foreign static variable '{}'. It is read-only outside its module.", sym.name));
+                return get_node<ast::Assignment_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+            }
+        }
+    }
+
     if (!var_info_res->is_mut) {
-        type_error(loc, "Cannot assign to an immutable/constant variable.");
+        type_error(loc, "Cannot assign to an immutable variable. Use 'mut'.");
+        return get_node<ast::Assignment_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
     }
 
     auto var_type = var_info_res->type;
@@ -2472,21 +2347,14 @@ types::Type_id Semantic_checker::check_assignment_expr(ast::Expr_id expr_id, std
     return get_node<ast::Assignment_expr>(ctx.tree, expr_id).type = var_type;
 }
 
-/*
- * [variable_expr] -> Type
- * |-- replace self ref
- * `-- lookup bindings & stamp AST with Symbol_id
- */
 types::Type_id Semantic_checker::check_variable_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
 
-    // Grab a mutable reference to the AST node
     auto &expr = get_node<ast::Variable_expr>(ctx.tree, expr_id);
     auto name = expr.name;
     auto loc = expr.loc;
 
-    // 1. Standard Object 'this' Lookup
     if (name == "this") {
         if (!current_model_type) {
             type_error(loc, "Cannot use 'this' outside of a model method");
@@ -2495,7 +2363,6 @@ types::Type_id Semantic_checker::check_variable_expr(ast::Expr_id expr_id, std::
         return expr.type = *current_model_type;
     }
 
-    // 2. Lexical Variable Lookup (Local Scope)
     if (auto local_sym = variables.lookup(name)) {
         if (!local_sym->id.is_null()) {
             expr.resolved_symbol = local_sym->id;
@@ -2505,7 +2372,6 @@ types::Type_id Semantic_checker::check_variable_expr(ast::Expr_id expr_id, std::
         return expr.type = local_sym->type;
     }
 
-    // 3. Module Alias & Global Registry Lookup
     if (auto module_id = imported_module_id(ctx, current_module_id, name)) {
         return expr.type = ctx.tt.get_any();
     }
@@ -2518,7 +2384,6 @@ types::Type_id Semantic_checker::check_variable_expr(ast::Expr_id expr_id, std::
         return expr.type = resolve_symbol_type(ctx, *global_sym_id, *this);
     }
 
-    // 4. Legacy Fallback (Until we move standard functions into the registry)
     auto type_res = lookup(name, loc);
     if (!type_res) {
         return expr.type = ctx.tt.get_unknown();
@@ -2527,11 +2392,6 @@ types::Type_id Semantic_checker::check_variable_expr(ast::Expr_id expr_id, std::
     return expr.type = type_res->type;
 }
 
-/*
- * [binary_expr] -> Type
- * |-- extract left and right
- * `-- type match per op type
- */
 types::Type_id Semantic_checker::check_binary_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
@@ -2667,12 +2527,6 @@ types::Type_id Semantic_checker::check_binary_expr(ast::Expr_id expr_id, std::op
     return get_node<ast::Binary_expr>(ctx.tree, expr_id).type = result;
 }
 
-/*
- * [call_expr] -> Type
- * |-- handle variable vs method
- * |-- dispatch intrinsics
- * `-- perform call linkage
- */
 types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
@@ -2802,8 +2656,6 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
                 get_node<ast::Call_expr>(ctx.tree, expr_id).arguments = std::move(bound.ordered_arguments);
                 get_node<ast::Call_expr>(ctx.tree, expr_id).native_signature_index = static_cast<int>(sig_index);
 
-                // Stamp the resolved_symbol onto the Static_path_expr callee so the
-                // compiler's Phase 1 handler fires correctly instead of falling through.
                 if (std::holds_alternative<ast::Static_path_expr>(ctx.tree.get(callee_id).node)) {
                     auto &sp = get_node<ast::Static_path_expr>(ctx.tree, callee_id);
                     if (auto global_sym_id = ctx.registry.lookup_global(ffi_callee_name)) {
@@ -2868,87 +2720,6 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
         return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
     }
 
-    //if (std::holds_alternative<ast::Static_path_expr>(ctx.tree.get(callee_id).node)) {
-    //    types::Type_id base_type_res = ctx.tt.get_unknown();
-    //    auto sp_base_id = get_node<ast::Static_path_expr>(ctx.tree, callee_id).base;
-    //    auto member_name = get_node<ast::Static_path_expr>(ctx.tree, callee_id).member.lexeme;
-    //    auto sp_loc = get_node<ast::Static_path_expr>(ctx.tree, callee_id).loc;
-    //
-    //    if (std::holds_alternative<ast::Variable_expr>(ctx.tree.get(sp_base_id).node)) {
-    //        auto vname = get_node<ast::Variable_expr>(ctx.tree, sp_base_id).name;
-    //        if (ctx.type_env.is_type_defined(vname) && !variables.lookup(vname)) {
-    //            base_type_res = *ctx.type_env.get_type(vname);
-    //            ast::get_type(ctx.tree.get(sp_base_id).node) = base_type_res;
-    //        } else {
-    //            base_type_res = check_expr(sp_base_id);
-    //        }
-    //    } else {
-    //        base_type_res = check_expr(sp_base_id);
-    //    }
-    //
-    //    if (ctx.tt.is_union(base_type_res)) {
-    //        type_error(loc, "Union construction via '::' is not supported.");
-    //        return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
-    //    } else if (ctx.tt.is_model(base_type_res)) {
-    //        auto &model_name = std::get<types::Model_type>(ctx.tt.get(base_type_res).data).name;
-    //        auto model_data_ptr = ctx.type_env.get_model(model_name);
-    //
-    //        if (model_data_ptr) {
-    //            if (model_data_ptr->static_methods.contains(member_name)) {
-    //                auto method_decl_id = model_data_ptr->static_methods.at(member_name).declaration;
-    //                auto decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(method_decl_id).node);
-    //
-    //                auto bound = bind_call_arguments(decl->parameters, arguments_copy, loc, "static method", member_name);
-    //                get_node<ast::Call_expr>(ctx.tree, expr_id).arguments = std::move(bound.ordered_arguments);
-    //
-    //                std::vector<types::Type_id> fparams;
-    //                for (auto &p : decl->parameters) {
-    //                    fparams.push_back(p.type);
-    //                }
-    //                get_node<ast::Static_path_expr>(ctx.tree, callee_id).type = ctx.tt.function(fparams, decl->return_type);
-    //
-    //                return get_node<ast::Call_expr>(ctx.tree, expr_id).type = decl->return_type;
-    //
-    //            } else if (model_data_ptr->methods.contains(member_name)) {
-    //                if (arguments_copy.empty()) {
-    //                    type_error(loc, "UFCS call requires an instance as the first argument.");
-    //                    return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
-    //                }
-    //                if (!arguments_copy[0].name.empty()) {
-    //                    type_error(arguments_copy[0].loc, "First argument of UFCS cannot be named.");
-    //                    return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
-    //                }
-    //
-    //                auto receiver_type = check_expr(arguments_copy[0].value, base_type_res);
-    //                if (!is_compatible(base_type_res, receiver_type)) {
-    //                    type_error(ast::get_loc(ctx.tree.get(arguments_copy[0].value).node), "UFCS receiver type mismatch.");
-    //                    return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
-    //                }
-    //
-    //                auto method_decl_id = model_data_ptr->methods.at(member_name).declaration;
-    //                auto decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(method_decl_id).node);
-    //
-    //                auto bound = bind_call_arguments(decl->parameters, arguments_copy, loc, "method", member_name);
-    //                get_node<ast::Call_expr>(ctx.tree, expr_id).arguments = std::move(bound.ordered_arguments);
-    //
-    //                std::vector<types::Type_id> fparams;
-    //                for (auto &p : decl->parameters) {
-    //                    fparams.push_back(p.type);
-    //                }
-    //                get_node<ast::Static_path_expr>(ctx.tree, callee_id).type = ctx.tt.function(fparams, decl->return_type);
-    //
-    //                return get_node<ast::Call_expr>(ctx.tree, expr_id).type = decl->return_type;
-    //            } else if (model_data_ptr->static_fields.contains(member_name)) {
-    //                type_error(sp_loc, std::format("Model static field '{}' is not callable.", member_name));
-    //                return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
-    //            }
-    //        }
-    //
-    //        type_error(sp_loc, std::format("Model '{}' has no callable method '{}'.", model_name, member_name));
-    //        return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
-    //    }
-    //}
-
     auto callee_type = check_expr(callee_id);
     if (ctx.tt.is_unknown(callee_type)) {
         return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
@@ -2996,11 +2767,6 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
     return get_node<ast::Call_expr>(ctx.tree, expr_id).type = sig.ret;
 }
 
-/*
- * [cast_expr] -> Type
- * |-- eval source expression
- * `-- validate explicitly defined conversion
- */
 types::Type_id Semantic_checker::check_cast_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
@@ -3111,11 +2877,6 @@ types::Type_id Semantic_checker::check_cast_expr(ast::Expr_id expr_id, std::opti
     return get_node<ast::Cast_expr>(ctx.tree, expr_id).target_type = ctx.tt.get_unknown();
 }
 
-/*
- * [closure_expr] -> Type
- * |-- inject args into scope
- * `-- eval body mapping
- */
 types::Type_id Semantic_checker::check_closure_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
@@ -3148,11 +2909,6 @@ types::Type_id Semantic_checker::check_closure_expr(ast::Expr_id expr_id, std::o
     return ret;
 }
 
-/*
- * [field_access_expr] -> Type
- * |-- assert model instance
- * `-- fetch field type
- */
 types::Type_id Semantic_checker::check_field_access_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
@@ -3199,12 +2955,6 @@ types::Type_id Semantic_checker::check_field_access_expr(ast::Expr_id expr_id, s
     return get_node<ast::Field_access_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
 }
 
-/*
- * [static_path_expr] -> Type
- * |-- assert static receiver context
- * |-- bind FFI modules via Registry
- * `-- bind variants or static methods
- */
 types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
@@ -3214,44 +2964,34 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
 
     auto &expr = get_node<ast::Static_path_expr>(ctx.tree, expr_id);
 
-    // 1. Resolve module-qualified paths before treating '::' as a type path.
     std::optional<Module_id> base_module_id;
 
-    // Case A: The base is a simple identifier (e.g., 'mather::test_mod')
     if (auto *var_base = std::get_if<ast::Variable_expr>(&ctx.tree.get(base_id).node)) {
-        // STRICT CHECK: Is this name explicitly aliased in the CURRENT module's imports?
         base_module_id = ctx.workspace.get_module(current_module_id).resolve_import(var_base->name);
-    }
-    // Case B: The base is a nested path (e.g., 'std::math::test_mod')
-    else if (auto *path_base = std::get_if<ast::Static_path_expr>(&ctx.tree.get(base_id).node)) {
-        check_expr(base_id); // Recursively resolve the parent path first
+    } else if (auto *path_base = std::get_if<ast::Static_path_expr>(&ctx.tree.get(base_id).node)) {
+        check_expr(base_id);
         base_module_id = path_base->resolved_module;
     }
 
-    // If we successfully resolved the base to a module, process the member!
     if (base_module_id) {
         auto &target_module = ctx.workspace.get_module(*base_module_id);
 
-        // Sub-Case 1: The member is a nested module (e.g., math::constants)
         if (auto nested_module = target_module.resolve_import(member_lexeme)) {
             expr.resolved_module = *nested_module;
             expr.resolved_symbol.reset();
-            return expr.type = ctx.tt.get_any(); // Adjust this if you have a specific Module Type_id
+            return expr.type = ctx.tt.get_any();
         }
 
-        // Sub-Case 2: The member is an exported symbol (e.g., mather::test_mod)
         if (auto sym_id = target_module.resolve_exported_symbol(member_lexeme)) {
             expr.resolved_module.reset();
             expr.resolved_symbol = *sym_id;
             return expr.type = resolve_symbol_type(ctx, *sym_id, *this);
         }
 
-        // Failure: The module was found, but the member doesn't exist
         type_error(loc, std::format("Module does not export '{}'.", member_lexeme));
         return expr.type = ctx.tt.get_unknown();
     }
 
-    // 2. Standard Type Resolution (Models, Unions, Enums)
     types::Type_id base_type = ctx.tt.get_unknown();
 
     if (std::holds_alternative<ast::Variable_expr>(ctx.tree.get(base_id).node)) {
@@ -3301,8 +3041,6 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
             if (model_data->methods.contains(member_lexeme)) {
                 auto method_decl_id = model_data->methods.at(member_lexeme).declaration;
                 if (auto *decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(method_decl_id).node)) {
-                    // The Hoister already injected the `this` parameter!
-                    // We just need to return the raw function signature.
                     std::vector<types::Type_id> fparams;
                     fparams.reserve(decl->parameters.size());
                     for (const auto &param : decl->parameters) {
@@ -3344,11 +3082,6 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
     return get_node<ast::Static_path_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
 }
 
-/*
- * [enum_member_expr] -> Type
- * |-- assert explicit context exists
- * `-- structurally map into context
- */
 types::Type_id Semantic_checker::check_enum_member_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     auto member_name = get_node<ast::Enum_member_expr>(ctx.tree, expr_id).member_name;
@@ -3378,11 +3111,6 @@ types::Type_id Semantic_checker::check_enum_member_expr(ast::Expr_id expr_id, st
     return get_node<ast::Enum_member_expr>(ctx.tree, expr_id).type = *context_type;
 }
 
-/*
- * [field_assignment_expr] -> Type
- * |-- eval object locally
- * `-- assert compatible write bound
- */
 types::Type_id Semantic_checker::check_field_assignment_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
@@ -3420,10 +3148,6 @@ types::Type_id Semantic_checker::check_field_assignment_expr(ast::Expr_id expr_i
     return get_node<ast::Field_assignment_expr>(ctx.tree, expr_id).type = field_type;
 }
 
-/*
- * [literal_expr] -> Type
- * `-- raw value to primitive tag
- */
 types::Type_id Semantic_checker::check_literal_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     auto val = get_node<ast::Literal_expr>(ctx.tree, expr_id).value;
@@ -3446,13 +3170,6 @@ types::Type_id Semantic_checker::check_literal_expr(ast::Expr_id expr_id, std::o
     return base_type;
 }
 
-/*
- * [method_call_expr] -> Type
- * |-- evaluate base object
- * |-- map to intrinsic (iter, next, prev)
- * |-- route to UFCS or member closures
- * `-- fallback to FFI
- */
 types::Type_id Semantic_checker::check_method_call_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
@@ -3675,7 +3392,6 @@ types::Type_id Semantic_checker::check_method_call_expr(ast::Expr_id expr_id, st
         }
 
         get_node<ast::Method_call_expr>(ctx.tree, expr_id).arguments = std::move(arguments_copy);
-        // It safely strips the optional wrapper and returns the guaranteed base type!
         return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type = base_type;
     }
 
@@ -3824,10 +3540,6 @@ types::Type_id Semantic_checker::check_method_call_expr(ast::Expr_id expr_id, st
     return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
 }
 
-/*
- * [unary_expr] -> Type
- * `-- sign flip or logical inverse
- */
 types::Type_id Semantic_checker::check_unary_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
@@ -3861,12 +3573,6 @@ types::Type_id Semantic_checker::check_unary_expr(ast::Expr_id expr_id, std::opt
     }
 }
 
-/*
- * [array_literal_expr] -> Type
- * |-- align common payload types
- * |-- preserve nil as outer-none
- * `-- lift only present values into deeper optional layers
- */
 types::Type_id Semantic_checker::check_array_literal_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     auto elements = get_node<ast::Array_literal_expr>(ctx.tree, expr_id).elements;
@@ -3896,9 +3602,6 @@ types::Type_id Semantic_checker::check_array_literal_expr(ast::Expr_id expr_id, 
         }
     }
 
-    // Pass 1: Find the shared payload type and the deepest optional level in use.
-    // The resolved element type already carries contextual optional depth.
-    // Only a raw nil literal needs auto_wrap_depth to reveal which optional level it means.
     for (const auto &elem_expr : elements) {
         auto elem_type = check_expr(elem_expr, element_context);
 
@@ -3957,7 +3660,6 @@ types::Type_id Semantic_checker::check_array_literal_expr(ast::Expr_id expr_id, 
         return get_node<ast::Array_literal_expr>(ctx.tree, expr_id).type = ctx.tt.array(ctx.tt.get_unknown());
     }
 
-    // Pass 2: Lift only real payload values. Nil keeps its own optional level.
     for (auto elem_id : elements) {
         auto *lit = std::get_if<ast::Literal_expr>(&ctx.tree.get(elem_id).node);
         bool is_literal_nil = lit && lit->value.is_nil();
@@ -3976,7 +3678,6 @@ types::Type_id Semantic_checker::check_array_literal_expr(ast::Expr_id expr_id, 
 
         uint8_t logical_depth = type_depth;
 
-        // Lift standard values to max_depth
         if (max_depth > logical_depth) {
             ctx.tree.get(elem_id).auto_wrap_depth += (max_depth - logical_depth);
         }
@@ -3989,11 +3690,6 @@ types::Type_id Semantic_checker::check_array_literal_expr(ast::Expr_id expr_id, 
     return get_node<ast::Array_literal_expr>(ctx.tree, expr_id).type = ctx.tt.array(common_type);
 }
 
-/*
- * [array_access_expr] -> Type
- * |-- verify bounds lookup maps to int
- * `-- retrieve nested element type
- */
 types::Type_id Semantic_checker::check_array_access_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
@@ -4018,11 +3714,6 @@ types::Type_id Semantic_checker::check_array_access_expr(ast::Expr_id expr_id, s
     }
 }
 
-/*
- * [array_assignment_expr] -> Type
- * |-- assert target mutable structure
- * `-- assert compatible write bound
- */
 types::Type_id Semantic_checker::check_array_assignment_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
@@ -4056,11 +3747,6 @@ types::Type_id Semantic_checker::check_array_assignment_expr(ast::Expr_id expr_i
     return get_node<ast::Array_assignment_expr>(ctx.tree, expr_id).type = value_type;
 }
 
-/*
- * [range_expr] -> Type
- * |-- promote edges
- * `-- wrap in iterator object
- */
 types::Type_id Semantic_checker::check_range_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
@@ -4090,10 +3776,6 @@ types::Type_id Semantic_checker::check_range_expr(ast::Expr_id expr_id, std::opt
     return get_node<ast::Range_expr>(ctx.tree, expr_id).type = ctx.tt.iterator(element_type);
 }
 
-/*
- * [spawn_expr] -> Type
- * `-- yield back to OS/scheduler
- */
 types::Type_id Semantic_checker::check_spawn_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
@@ -4105,10 +3787,6 @@ types::Type_id Semantic_checker::check_spawn_expr(ast::Expr_id expr_id, std::opt
     return get_node<ast::Spawn_expr>(ctx.tree, expr_id).type = ctx.tt.get_any();
 }
 
-/*
- * [await_expr] -> Type
- * `-- blocks on routine
- */
 types::Type_id Semantic_checker::check_await_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
@@ -4120,10 +3798,6 @@ types::Type_id Semantic_checker::check_await_expr(ast::Expr_id expr_id, std::opt
     return get_node<ast::Await_expr>(ctx.tree, expr_id).type = ctx.tt.get_any();
 }
 
-/*
- * [yield_expr] -> Type
- * `-- yield payload checking
- */
 types::Type_id Semantic_checker::check_yield_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
