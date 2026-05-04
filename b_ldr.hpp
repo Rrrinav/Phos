@@ -307,8 +307,9 @@ struct Command
 
     void append(std::vector<std::string> args)
     {
-        for (auto a : args)
+        for (auto a : args) {
             this->parts.push_back(a);
+        }
     }
 };
 
@@ -1116,8 +1117,9 @@ void bld::log(bld::Log_type type, const std::string &msg)
 std::string bld::Command::get_command_string() const
 {
     std::stringstream ss;
-    for (const auto &part : parts)
+    for (const auto &part : parts) {
         ss << part << " ";
+    }
     return ss.str();
 }
 
@@ -1125,23 +1127,27 @@ std::string bld::Command::get_command_string() const
 std::vector<char *> bld::Command::to_exec_args() const
 {
     std::vector<char *> exec_args;
-    for (const auto &part : parts)
+    for (const auto &part : parts) {
         exec_args.push_back(const_cast<char *>(part.c_str()));
+    }
     exec_args.push_back(nullptr); // Null terminator
     return exec_args;
 }
 
 std::string bld::Command::get_print_string() const
 {
-    if (parts.empty())
+    if (parts.empty()) {
         return "''";
+    }
     std::stringstream ss;
     ss << "' " << parts[0];
-    if (parts.size() == 1)
+    if (parts.size() == 1) {
         return ss.str() + "'";
+    }
 
-    for (int i = 1; i < parts.size(); i++)
+    for (int i = 1; i < parts.size(); i++) {
         ss << " " << parts[i];
+    }
 
     ss << " '";
 
@@ -1194,8 +1200,9 @@ bld::Exit_status bld::wait_proc(bld::Proc proc)
     status.normal = true;
     status.exit_code = static_cast<int>(exit_code);
 
-    if (exit_code != 0)
+    if (exit_code != 0) {
         bld::log(Log_type::ERR, "Process exited with code: " + std::to_string(exit_code));
+    }
 
 #else
     int wait_status;
@@ -1208,8 +1215,9 @@ bld::Exit_status bld::wait_proc(bld::Proc proc)
         status.normal = true;
         status.exit_code = WEXITSTATUS(wait_status);
 
-        if (status.exit_code != 0)
+        if (status.exit_code != 0) {
             bld::internal_log(Log_type::ERR, "Process exited with code: " + std::to_string(status.exit_code));
+        }
     } else if (WIFSIGNALED(wait_status)) {
         status.signal = WTERMSIG(wait_status);
         bld::internal_log(Log_type::ERR, "Process terminated by signal: " + std::to_string(status.signal));
@@ -1228,8 +1236,9 @@ bld::Par_exec_res bld::wait_procs(std::vector<bld::Proc> procs, int sleep_ms)
 
     while (remaining > 0) {
         for (size_t i = 0; i < procs.size(); ++i) {
-            if (completed[i])
+            if (completed[i]) {
                 continue;
+            }
 
             bld::Wait_status status = bld::try_wait_nb(procs[i]);
 
@@ -1247,18 +1256,20 @@ bld::Par_exec_res bld::wait_procs(std::vector<bld::Proc> procs, int sleep_ms)
 #endif
                 result.exit_statuses[i] = exit_status;
 
-                if (status) // success (normal && exit_code == 0)
+                if (status) { // success (normal && exit_code == 0)
                     result.completed++;
-                else
+                } else {
                     result.failed_indices.push_back(i);
+                }
 
                 bld::cleanup_process(procs[i]);
             }
             // If !status.exited, process is still running, continue polling
         }
 
-        if (remaining > 0)
+        if (remaining > 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms));
+        }
     }
 
     return result;
@@ -1312,14 +1323,16 @@ bld::Proc bld::execute_async(const Command &command)
     // Build command string
     std::string command_str;
     for (size_t i = 0; i < command.parts.size(); ++i) {
-        if (i > 0)
+        if (i > 0) {
             command_str += " ";
+        }
 
         const auto &part = command.parts[i];
-        if (part.find(' ') != std::string::npos)
+        if (part.find(' ') != std::string::npos) {
             command_str += "\"" + part + "\"";
-        else
+        } else {
             command_str += part;
+        }
     }
 
     std::vector<char> cmd_buffer(command_str.begin(), command_str.end());
@@ -1376,14 +1389,16 @@ bld::Proc bld::execute_async_redirect(const Command &command, const Redirect &re
     // Build command string
     std::string command_str;
     for (size_t i = 0; i < command.parts.size(); ++i) {
-        if (i > 0)
+        if (i > 0) {
             command_str += " ";
+        }
 
         const auto &part = command.parts[i];
-        if (part.find(' ') != std::string::npos)
+        if (part.find(' ') != std::string::npos) {
             command_str += "\"" + part + "\"";
-        else
+        } else {
             command_str += part;
+        }
     }
 
     std::vector<char> cmd_buffer(command_str.begin(), command_str.end());
@@ -1432,12 +1447,15 @@ bld::Proc bld::execute_async_redirect(const Command &command, const Redirect &re
         }
 
         // Close redirected FDs in child
-        if (redirect.stdin_fd != INVALID_FD)
+        if (redirect.stdin_fd != INVALID_FD) {
             close(redirect.stdin_fd);
-        if (redirect.stdout_fd != INVALID_FD)
+        }
+        if (redirect.stdout_fd != INVALID_FD) {
             close(redirect.stdout_fd);
-        if (redirect.stderr_fd != INVALID_FD)
+        }
+        if (redirect.stderr_fd != INVALID_FD) {
             close(redirect.stderr_fd);
+        }
 
         // Execute command
         if (execvp(args[0], args.data()) == -1) {
@@ -1447,12 +1465,15 @@ bld::Proc bld::execute_async_redirect(const Command &command, const Redirect &re
     }
 
     // Parent process - close redirected FDs
-    if (redirect.stdin_fd != INVALID_FD)
+    if (redirect.stdin_fd != INVALID_FD) {
         close(redirect.stdin_fd);
-    if (redirect.stdout_fd != INVALID_FD)
+    }
+    if (redirect.stdout_fd != INVALID_FD) {
         close(redirect.stdout_fd);
-    if (redirect.stderr_fd != INVALID_FD)
+    }
+    if (redirect.stderr_fd != INVALID_FD) {
         close(redirect.stderr_fd);
+    }
 
     return Proc(pid);
 #endif
@@ -1463,8 +1484,9 @@ bld::Exit_status bld::execute_redirect(const Command &command, const Redirect &r
     bld::internal_log(Log_type::INFO, "Executing with redirection: " + command.get_print_string());
 
     Proc proc = execute_async_redirect(command, redirect);
-    if (!proc)
+    if (!proc) {
         return Exit_status{};
+    }
 
     Exit_status status = wait_proc(proc);
     cleanup_process(proc);
@@ -1479,13 +1501,15 @@ bld::Fd bld::open_for_read(const std::string &path)
     sa.bInheritHandle = TRUE;
 
     HAND handle = CreateFileA(path.c_str(), GENERIC_READ, 0, &sa, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (handle == INVALID_HANDLE_VALUE)
+    if (handle == INVALID_HANDLE_VALUE) {
         bld::log(Log_type::ERR, "Failed to open file for reading: " + path);
+    }
     return handle;
 #else
     int fd = open(path.c_str(), O_RDONLY);
-    if (fd == -1)
+    if (fd == -1) {
         bld::internal_log(Log_type::ERR, "Failed to open file for reading: " + path + " - " + std::string(strerror(errno)));
+    }
     return fd;
 #endif
 }
@@ -1504,51 +1528,60 @@ bld::Fd bld::open_for_write(const std::string &path, bool append)
         return INVALID_FD;
     }
 
-    if (append)
+    if (append) {
         SetFilePointer(handle, 0, NULL, FILE_END);
+    }
 
     return handle;
 #else
     int flags = O_WRONLY | O_CREAT | (append ? O_APPEND : O_TRUNC);
     int fd = open(path.c_str(), flags, 0644);
-    if (fd == -1)
+    if (fd == -1) {
         bld::internal_log(Log_type::ERR, "Failed to open file for writing: " + path + " - " + std::string(strerror(errno)));
+    }
     return fd;
 #endif
 }
 
 bld::Redirect::Redirect(const std::string &_in, const std::string &_out, const std::string &_err)
 {
-    if (_in.empty())
+    if (_in.empty()) {
         this->stdin_fd = bld::INVALID_FD;
-    else
+    } else {
         this->stdin_fd = bld::open_for_read(_in);
-    if (_out.empty())
+    }
+    if (_out.empty()) {
         this->stdout_fd = bld::INVALID_FD;
-    else
+    } else {
         this->stdout_fd = bld::open_for_write(_out);
-    if (_err.empty())
+    }
+    if (_err.empty()) {
         this->stderr_fd = bld::INVALID_FD;
-    else
+    } else {
         this->stderr_fd = bld::open_for_write(_err);
+    }
 }
 
 bld::Redirect::~Redirect()
 {
-    if (this->stdin_fd != bld::INVALID_FD)
+    if (this->stdin_fd != bld::INVALID_FD) {
         bld::close_fd(stdin_fd);
-    if (this->stdout_fd != bld::INVALID_FD)
+    }
+    if (this->stdout_fd != bld::INVALID_FD) {
         bld::close_fd(stdout_fd);
-    if (this->stderr_fd != bld::INVALID_FD)
+    }
+    if (this->stderr_fd != bld::INVALID_FD) {
         bld::close_fd(stderr_fd);
+    }
 }
 
 template <typename... Fds, typename>
 void bld::close_fd(Fds... fds)
 {
     (..., ([&] {
-         if (fds == INVALID_FD)
+         if (fds == INVALID_FD) {
              return;
+         }
 
 #ifdef _WIN32
          CloseHandle((HANDLE)fds);
@@ -1563,20 +1596,24 @@ bld::Par_exec_res bld::execute_threads(const std::vector<bld::Command> &cmds, si
     bld::Par_exec_res result;
     result.exit_statuses.resize(cmds.size());
 
-    if (cmds.empty())
+    if (cmds.empty()) {
         return result;
-    if (threads == 0)
+    }
+    if (threads == 0) {
         threads = 1;
-    if (threads > std::thread::hardware_concurrency())
+    }
+    if (threads > std::thread::hardware_concurrency()) {
         threads = std::thread::hardware_concurrency();
+    }
 
     std::mutex queue_mutex, output_mutex;
     std::atomic<bool> stop_workers{false}; // Used when strict = true
 
     // Queue of command indices to process
     std::queue<size_t> cmd_queue;
-    for (size_t i = 0; i < cmds.size(); ++i)
+    for (size_t i = 0; i < cmds.size(); ++i) {
         cmd_queue.push(i);
+    }
 
     bld::internal_log(
         bld::Log_type::INFO,
@@ -1585,14 +1622,16 @@ bld::Par_exec_res bld::execute_threads(const std::vector<bld::Command> &cmds, si
     // Worker function
     auto worker = [&]() {
         while (true) {
-            if (strict && stop_workers)
+            if (strict && stop_workers) {
                 return; // Stop all threads if strict and an error occurs
+            }
 
             size_t cmd_idx;
             {
                 std::lock_guard<std::mutex> lock(queue_mutex);
-                if (cmd_queue.empty())
+                if (cmd_queue.empty()) {
                     return;
+                }
                 cmd_idx = cmd_queue.front();
                 cmd_queue.pop();
             }
@@ -1630,13 +1669,16 @@ bld::Par_exec_res bld::execute_threads(const std::vector<bld::Command> &cmds, si
     // Launch worker threads
     std::vector<std::thread> workers;
     size_t num_threads = std::min(threads, cmds.size());
-    for (size_t i = 0; i < num_threads; ++i)
+    for (size_t i = 0; i < num_threads; ++i) {
         workers.emplace_back(worker);
+    }
 
     // Wait for all threads to complete
-    for (auto &t : workers)
-        if (t.joinable())
+    for (auto &t : workers) {
+        if (t.joinable()) {
             t.join();
+        }
+    }
 
     return result;
 }
@@ -1716,12 +1758,14 @@ int bld::get_n_procs(bool physical_cores_only)
         // Proper Windows physical core count
         DWORD length = 0;
         GetLogicalProcessorInformation(nullptr, &length);
-        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
             return 0;
+        }
 
         auto *buffer = (SYSTEM_LOGICAL_PROCESSOR_INFORMATION *)malloc(length);
-        if (!buffer)
+        if (!buffer) {
             return 0;
+        }
 
         if (!GetLogicalProcessorInformation(buffer, &length)) {
             free(buffer);
@@ -1732,8 +1776,9 @@ int bld::get_n_procs(bool physical_cores_only)
         DWORD byteOffset = 0;
         while (byteOffset < length) {
             auto *current = (SYSTEM_LOGICAL_PROCESSOR_INFORMATION *)((BYTE *)buffer + byteOffset);
-            if (current->Relationship == RelationProcessorCore)
+            if (current->Relationship == RelationProcessorCore) {
                 core_count++;
+            }
             byteOffset += sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION);
         }
 
@@ -1765,10 +1810,11 @@ int bld::execute_shell(std::string cmd)
 int bld::execute_shell(std::string cmd, bool prompt)
 {
     if (prompt) {
-        if (validate_command(cmd))
+        if (validate_command(cmd)) {
             return execute_shell(cmd);
-        else
+        } else {
             return -1;
+        }
     }
     // Execute the shell command using the original execute function
     return execute_shell(cmd);
@@ -1813,8 +1859,9 @@ bool bld::read_process_output(const Command &cmd, std::string &output, size_t bu
     // Read output from the pipe
     std::vector<char> buffer(buffer_size);
     DWORD bytes_read;
-    while (ReadFile(read_pipe, buffer.data(), static_cast<DWORD>(buffer.size()), &bytes_read, NULL) && bytes_read > 0)
+    while (ReadFile(read_pipe, buffer.data(), static_cast<DWORD>(buffer.size()), &bytes_read, NULL) && bytes_read > 0) {
         output.append(buffer.data(), bytes_read);
+    }
 
     CloseHandle(read_pipe);
 
@@ -1847,8 +1894,9 @@ bool bld::read_process_output(const Command &cmd, std::string &output, size_t bu
     // Read output from the pipe
     std::vector<char> buffer(buffer_size);
     ssize_t bytes_read;
-    while ((bytes_read = read(pipefd[0], buffer.data(), buffer.size())) > 0)
+    while ((bytes_read = read(pipefd[0], buffer.data(), buffer.size())) > 0) {
         output.append(buffer.data(), bytes_read);
+    }
 
     close(pipefd[0]);
 
@@ -1880,8 +1928,9 @@ bld::Wait_status bld::try_wait_nb(const bld::Proc &proc)
         if (GetExitCodeProcess(proc.process_handle, &exit_code)) {
             status.normal = true;
             status.exit_code = static_cast<int>(exit_code);
-            if (exit_code != 0)
+            if (exit_code != 0) {
                 bld::log(Log_type::ERR, "Process exited with code: " + std::to_string(exit_code));
+            }
         } else {
             bld::log(Log_type::ERR, "Failed to get exit code. Error: " + std::to_string(GetLastError()));
             // status.normal remains false, but exited=true so we know it terminated
@@ -1905,8 +1954,9 @@ bld::Wait_status bld::try_wait_nb(const bld::Proc &proc)
         if (WIFEXITED(wait_status)) {
             status.normal = true;
             status.exit_code = WEXITSTATUS(wait_status);
-            if (status.exit_code != 0)
+            if (status.exit_code != 0) {
                 bld::internal_log(Log_type::ERR, "Process exited with code: " + std::to_string(status.exit_code));
+            }
         } else if (WIFSIGNALED(wait_status)) {
             status.signal = WTERMSIG(wait_status);
             bld::internal_log(Log_type::ERR, "Process terminated by signal: " + std::to_string(status.signal));
@@ -1948,8 +1998,9 @@ bool bld::read_shell_output(const std::string &cmd, std::string &output)
     }
 
     char buffer[4096];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr)
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
         output += buffer;
+    }
 
 #ifdef _WIN32
     int exit_code = _pclose(pipe);
@@ -1976,8 +2027,9 @@ bool bld::is_executable_outdated(std::string file_name, std::string executable)
         }
 
         // Check if the executable exists
-        if (!std::filesystem::exists(executable))
+        if (!std::filesystem::exists(executable)) {
             return true; // Treat as changed if the executable doesn't exist
+        }
 
         // Get last write times
         auto last_write_time = std::filesystem::last_write_time(file_name);
@@ -2002,16 +2054,18 @@ void bld::rebuild_yourself_onchange_and_run(const std::string &filename, const s
     fs::path exec_path(executable);
     fs::path backup_path = exec_path.string() + ".old";
 
-    if (!bld::is_executable_outdated(filename, executable))
+    if (!bld::is_executable_outdated(filename, executable)) {
         return; // No rebuild needed
+    }
 
     bld::internal_log(Log_type::INFO, "Build executable not up-to-date. Rebuilding...");
 
     // Create backup of existing executable if it exists
     if (fs::exists(exec_path)) {
         try {
-            if (fs::exists(backup_path))
+            if (fs::exists(backup_path)) {
                 fs::remove(backup_path); // Remove existing backup
+            }
             fs::rename(exec_path, backup_path);
             bld::internal_log(Log_type::INFO, "Created backup at: " + backup_path.string());
         } catch (const fs::filesystem_error &e) {
@@ -2083,8 +2137,9 @@ void bld::rebuild_yourself_onchange_and_run(const std::string &filename, const s
 
     // Only remove backup after successful restart
     try {
-        if (fs::exists(backup_path))
+        if (fs::exists(backup_path)) {
             fs::remove(backup_path);
+        }
     } catch (const fs::filesystem_error &e) {
         bld::internal_log(Log_type::WARNING, "Failed to remove backup: " + std::string(e.what()));
     }
@@ -2146,8 +2201,9 @@ void Config::add_flag(const std::string &name, const std::string &description)
 void Config::add_option(const std::string &name, const std::string &default_value, const std::string &description)
 {
     custom_configs[name] = {.default_value = default_value, .description = description, .is_flag = false};
-    if (!default_value.empty())
+    if (!default_value.empty()) {
         values[name] = default_value;
+    }
 }
 
 const std::unordered_map<std::string, Config::CustomConfig> &Config::get_custom_configs() const
@@ -2176,8 +2232,9 @@ Config::Config_proxy &Config::Config_proxy::operator=(const std::string &value)
     } else if (key == "link" || key == "l") {
         config->linker_flags = value;
     } else if (key == "threads" || key == "j") {
-        if (str::is_numeric(value))
+        if (str::is_numeric(value)) {
             config->threads = std::max(1, std::stoi(value));
+        }
     } else if (key == "pre") {
         config->pre_build = value;
     } else if (key == "post") {
@@ -2197,30 +2254,40 @@ Config::Config_proxy &Config::Config_proxy::operator=(const char *value)
 Config::Config_proxy::operator std::string() const
 {
     auto it = config->values.find(key);
-    if (it != config->values.end())
+    if (it != config->values.end()) {
         return it->second;
+    }
 
     auto custom_it = config->custom_configs.find(key);
-    if (custom_it != config->custom_configs.end())
+    if (custom_it != config->custom_configs.end()) {
         return custom_it->second.default_value;
+    }
 
     // Fallback: check if it's a built-in that wasn't synced
-    if (key == "compiler" || key == "c")
+    if (key == "compiler" || key == "c") {
         return config->compiler;
-    if (key == "target" || key == "t")
+    }
+    if (key == "target" || key == "t") {
         return config->target;
-    if (key == "build-dir" || key == "d")
+    }
+    if (key == "build-dir" || key == "d") {
         return config->build_dir;
-    if (key == "flags" || key == "f")
+    }
+    if (key == "flags" || key == "f") {
         return config->compiler_flags;
-    if (key == "link" || key == "l")
+    }
+    if (key == "link" || key == "l") {
         return config->linker_flags;
-    if (key == "threads" || key == "j")
+    }
+    if (key == "threads" || key == "j") {
         return std::to_string(config->threads);
-    if (key == "pre")
+    }
+    if (key == "pre") {
         return config->pre_build;
-    if (key == "post")
+    }
+    if (key == "post") {
         return config->post_build;
+    }
 
     return "";
 }
@@ -2228,8 +2295,9 @@ Config::Config_proxy::operator std::string() const
 bool Config::Config_proxy::operator==(const std::string &other) const
 {
     // First check if it's a flag
-    if (config->flags.count(key))
+    if (config->flags.count(key)) {
         return other == "true" || other == "yes" || other == "1" || other.empty();
+    }
     // Then check value
     auto it = config->values.find(key);
     return it != config->values.end() && it->second == other;
@@ -2242,8 +2310,9 @@ bool Config::Config_proxy::operator==(const char *other) const
 
 Config::Config_proxy::operator bool() const
 {
-    if (config->flags.count(key))
+    if (config->flags.count(key)) {
         return true;
+    }
 
     auto it = config->values.find(key);
     if (it != config->values.end()) {
@@ -2252,12 +2321,15 @@ Config::Config_proxy::operator bool() const
     }
 
     // Check built-in boolean flags
-    if (key == "verbose" || key == "v")
+    if (key == "verbose" || key == "v") {
         return config->verbose;
-    if (key == "hot-reload" || key == "hr")
+    }
+    if (key == "hot-reload" || key == "hr") {
         return config->hot_reload;
-    if (key == "override-run")
+    }
+    if (key == "override-run") {
         return config->override_run;
+    }
 
     return false;
 }
@@ -2270,8 +2342,9 @@ bool Config::Config_proxy::exists() const
 int Config::Config_proxy::as_int() const
 {
     std::string val = *this;
-    if (val.empty() || val.find_first_not_of("0123456789") != std::string::npos)
+    if (val.empty() || val.find_first_not_of("0123456789") != std::string::npos) {
         return 0;
+    }
     return std::stoi(val);
 }
 
@@ -2317,8 +2390,9 @@ void Config::initialize_builtin_options()
 void Config::parse_args(const std::vector<std::string> &args)
 {
     for (const auto &arg : args) {
-        if (!str::starts_with(arg, "-"))
+        if (!str::starts_with(arg, "-")) {
             continue;
+        }
 
         auto eq_pos = arg.find('=');
 
@@ -2371,9 +2445,11 @@ void Config::parse_file_list(const std::string &value)
         std::stringstream ss(value);
         std::string file;
         hot_reload_files.clear();
-        while (std::getline(ss, file, ','))
-            if (!file.empty())
+        while (std::getline(ss, file, ',')) {
+            if (!file.empty()) {
                 hot_reload_files.push_back(file);
+            }
+        }
         hot_reload = true;
     }
 }
@@ -2400,15 +2476,18 @@ void Config::show_help() const
         for (const auto &[name, config] : custom_configs) {
             if (config.is_flag) {
                 std::cout << "  -" << name;
-                if (!config.description.empty())
+                if (!config.description.empty()) {
                     std::cout << "                    " << config.description;
+                }
                 std::cout << "\n";
             } else {
                 std::cout << "  -" << name << "=VALUE";
-                if (!config.default_value.empty())
+                if (!config.default_value.empty()) {
                     std::cout << "           (default: " << config.default_value << ")";
-                if (!config.description.empty())
+                }
+                if (!config.description.empty()) {
                     std::cout << " " << config.description;
+                }
                 std::cout << "\n";
             }
         }
@@ -2421,11 +2500,13 @@ void Config::dump() const
 {
     std::cout << "=== Config Dump ===\n";
     std::cout << "Flags:\n";
-    for (const auto &flag : flags)
+    for (const auto &flag : flags) {
         std::cout << "  " << flag << "\n";
+    }
     std::cout << "Values:\n";
-    for (const auto &[key, value] : values)
+    for (const auto &[key, value] : values) {
         std::cout << "  " << key << " = " << value << "\n";
+    }
     std::cout << "==================\n";
 }
 
@@ -2433,25 +2514,29 @@ void Config::dump() const
 bool Config::load_from_file(const std::string &filename)
 {
     std::ifstream file(filename);
-    if (!file.is_open())
+    if (!file.is_open()) {
         return false;
+    }
 
     std::vector<std::string> file_args;
     std::string line;
     while (std::getline(file, line)) {
         line.erase(0, line.find_first_not_of(" \t"));
-        if (line.empty() || line[0] == '#')
+        if (line.empty() || line[0] == '#') {
             continue;
+        }
 
         if (line.find('=') != std::string::npos) {
             // key=value format
-            if (!str::starts_with(line, "-"))
+            if (!str::starts_with(line, "-")) {
                 line = "-" + line;
+            }
             file_args.push_back(line);
         } else {
             // Simple flag
-            if (!str::starts_with(line, "-"))
+            if (!str::starts_with(line, "-")) {
                 line = "-" + line;
+            }
             file_args.push_back(line);
         }
     }
@@ -2463,8 +2548,9 @@ bool Config::load_from_file(const std::string &filename)
 bool Config::save_to_file(const std::string &filename) const
 {
     std::ofstream file(filename);
-    if (!file.is_open())
+    if (!file.is_open()) {
         return false;
+    }
 
     file << "# Build configuration\n";
 
@@ -2475,17 +2561,22 @@ bool Config::save_to_file(const std::string &filename) const
     file << "flags=" << compiler_flags << "\n";
     file << "threads=" << threads << "\n";
 
-    if (verbose)
+    if (verbose) {
         file << "verbose\n";
-    if (hot_reload)
+    }
+    if (hot_reload) {
         file << "hot-reload\n";
-    if (override_run)
+    }
+    if (override_run) {
         file << "override-run\n";
+    }
 
     // Save custom flags
-    for (const auto &flag : flags)
-        if (flag != "verbose" && flag != "hot-reload" && flag != "override-run" && flag != "v" && flag != "hr")
+    for (const auto &flag : flags) {
+        if (flag != "verbose" && flag != "hot-reload" && flag != "override-run" && flag != "v" && flag != "hr") {
             file << flag << "\n";
+        }
+    }
 
     // Save custom values
     for (const auto &[key, value] : values) {
@@ -2521,8 +2612,9 @@ void handle_args(int argc, char *argv[])
         Config::get().cmd_args.push_back(argv[i]);
     }
 
-    if (args.size() <= 1)
+    if (args.size() <= 1) {
         return;
+    }
 
     std::string command = args[1];
     if (command == "-configure") {
@@ -2542,12 +2634,14 @@ void handle_args(int argc, char *argv[])
 
 bool bld::args_to_vec(int argc, char *argv[], std::vector<std::string> &args)
 {
-    if (argc < 1)
+    if (argc < 1) {
         return false;
+    }
 
     args.reserve(argc - 1);
-    for (int i = 1; i < argc; i++)
+    for (int i = 1; i < argc; i++) {
         args.push_back(argv[i]);
+    }
 
     return true;
 }
@@ -2598,8 +2692,9 @@ int bld::handle_run_command(std::vector<std::string> args)
 
 bool bld::starts_with(const std::string &str, const std::string &prefix)
 {
-    if (prefix.size() > str.size())
+    if (prefix.size() > str.size()) {
         return false;
+    }
     return str.compare(0, prefix.size(), prefix) == 0;
 }
 
@@ -2660,8 +2755,9 @@ bool bld::fs::read_lines(const std::string &path, std::vector<std::string> &line
     }
 
     std::string line;
-    while (std::getline(file, line))
+    while (std::getline(file, line)) {
         lines.push_back(line);
+    }
 
     return true;
 }
@@ -2728,8 +2824,9 @@ std::string bld::fs::get_extension(const std::string &path)
 std::string bld::fs::get_stem(const std::string &path, bool with_full_path)
 {
     std::string filename = path;
-    if (!with_full_path)
+    if (!with_full_path) {
         filename = bld::fs::get_file_name(path);
+    }
     auto pos = filename.find_last_of('.');
     return pos == std::string::npos ? filename : filename.substr(0, pos);
 }
@@ -2752,10 +2849,11 @@ bool bld::fs::create_dir_if_not_exists(const std::string &path)
 
     try {
         bool created = std::filesystem::create_directories(path);
-        if (created)
+        if (created) {
             bld::internal_log(bld::Log_type::INFO, "Directory created: " + path);
-        else
+        } else {
             bld::internal_log(bld::Log_type::ERR, "Failed to create directory: " + path);
+        }
         return created;
     } catch (const std::filesystem::filesystem_error &e) {
         bld::internal_log(bld::Log_type::ERR, "Failed to create directory: " + std::string(e.what()));
@@ -2784,10 +2882,11 @@ bool bld::fs::remove_dir(const std::string &path)
 
     try {
         std::uintmax_t removed_count = std::filesystem::remove_all(path);
-        if (removed_count > 0)
+        if (removed_count > 0) {
             bld::internal_log(bld::Log_type::INFO, "Directory removed: " + path);
-        else
+        } else {
             bld::internal_log(bld::Log_type::ERR, "Failed to remove directory: " + path);
+        }
         return removed_count > 0;
     } catch (const std::filesystem::filesystem_error &e) {
         bld::internal_log(bld::Log_type::ERR, "Failed to remove directory: " + std::string(e.what()));
@@ -2800,13 +2899,17 @@ std::vector<std::string> bld::fs::list_files_in_dir(const std::string &path, boo
     std::vector<std::string> files;
     try {
         if (recursive) {
-            for (const auto &entry : std::filesystem::recursive_directory_iterator(path))
-                if (entry.is_regular_file())
+            for (const auto &entry : std::filesystem::recursive_directory_iterator(path)) {
+                if (entry.is_regular_file()) {
                     files.push_back(entry.path().string());
+                }
+            }
         } else {
-            for (const auto &entry : std::filesystem::directory_iterator(path))
-                if (entry.is_regular_file())
+            for (const auto &entry : std::filesystem::directory_iterator(path)) {
+                if (entry.is_regular_file()) {
                     files.push_back(entry.path().string());
+                }
+            }
         }
     } catch (const std::filesystem::filesystem_error &e) {
         bld::internal_log(bld::Log_type::ERR, "Failed to list files: " + std::string(e.what()));
@@ -2819,13 +2922,17 @@ std::vector<std::string> bld::fs::list_directories(const std::string &path, bool
     std::vector<std::string> directories;
     try {
         if (recursive) {
-            for (const auto &entry : std::filesystem::recursive_directory_iterator(path))
-                if (entry.is_directory())
+            for (const auto &entry : std::filesystem::recursive_directory_iterator(path)) {
+                if (entry.is_directory()) {
                     directories.push_back(entry.path().string());
+                }
+            }
         } else {
-            for (const auto &entry : std::filesystem::directory_iterator(path))
-                if (entry.is_directory())
+            for (const auto &entry : std::filesystem::directory_iterator(path)) {
+                if (entry.is_directory()) {
                     directories.push_back(entry.path().string());
+                }
+            }
         }
     } catch (const std::filesystem::filesystem_error &e) {
         bld::internal_log(bld::Log_type::ERR, "Failed to list directories: " + std::string(e.what()));
@@ -2858,8 +2965,9 @@ std::vector<std::string> bld::fs::get_all_files_with_name(const std::string &dir
         if (recursive) {
             for (const auto &entry : fs::recursive_directory_iterator(dir, fs::directory_options::skip_permission_denied)) {
                 try {
-                    if (entry.is_regular_file() && entry.path().filename() == name)
+                    if (entry.is_regular_file() && entry.path().filename() == name) {
                         results.push_back(entry.path().string());
+                    }
                 } catch (const fs::filesystem_error &e) {
                     bld::internal_log(bld::Log_type::WARNING, "Filesystem error: " + std::string(e.what()));
                     bld::internal_log(bld::Log_type::INFO, "Skipping previous file");
@@ -2869,8 +2977,9 @@ std::vector<std::string> bld::fs::get_all_files_with_name(const std::string &dir
         } else {
             for (const auto &entry : fs::directory_iterator(dir, fs::directory_options::skip_permission_denied)) {
                 try {
-                    if (entry.is_regular_file() && entry.path().filename() == name)
+                    if (entry.is_regular_file() && entry.path().filename() == name) {
                         results.push_back(entry.path().string());
+                    }
                 } catch (const fs::filesystem_error &e) {
                     bld::internal_log(bld::Log_type::WARNING, "Filesystem error: " + std::string(e.what()));
                     bld::internal_log(bld::Log_type::INFO, "Skipping previous file");
@@ -2928,18 +3037,21 @@ std::vector<std::string> bld::fs::get_all_files_with_extensions(
     // Normalize extensions - handle both "cpp" and ".cpp" formats
     std::vector<std::string> normalized_extensions;
     for (const auto &ext : extensions) {
-        if (ext.empty())
+        if (ext.empty()) {
             continue;
+        }
 
         std::string normalized = ext;
 
         // Ensure extension starts with '.' - handle both "cpp" and ".cpp"
-        if (normalized[0] != '.')
+        if (normalized[0] != '.') {
             normalized = "." + normalized;
+        }
 
         // Apply case transformation if case_insensitive is true
-        if (case_insensitive)
+        if (case_insensitive) {
             std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char c) { return std::tolower(c); });
+        }
 
         normalized_extensions.push_back(normalized);
     }
@@ -2953,20 +3065,23 @@ std::vector<std::string> bld::fs::get_all_files_with_extensions(
     auto process_entry = [&](const std::filesystem::directory_entry &entry) {
         std::error_code entry_ec;
 
-        if (!entry.is_regular_file(entry_ec))
+        if (!entry.is_regular_file(entry_ec)) {
             return;
+        }
 
-        if (entry_ec)
+        if (entry_ec) {
             return; // Skip this entry if we can't determine its type
+        }
 
         std::string file_ext = entry.path().extension().string();
 
         // Apply case transformation to file extension if case_insensitive is true
         std::string comparison_ext = file_ext;
-        if (case_insensitive)
+        if (case_insensitive) {
             std::transform(comparison_ext.begin(), comparison_ext.end(), comparison_ext.begin(), [](unsigned char c) {
                 return std::tolower(c);
             });
+        }
 
         for (const auto &target_ext : normalized_extensions) {
             if (comparison_ext == target_ext) {
@@ -3002,12 +3117,15 @@ std::vector<std::string> bld::fs::get_all_files_with_extensions(
 
 inline bld::fs::Path_type classify(const std::filesystem::directory_entry &e)
 {
-    if (e.is_directory())
+    if (e.is_directory()) {
         return bld::fs::Path_type::Directory;
-    if (e.is_regular_file())
+    }
+    if (e.is_regular_file()) {
         return bld::fs::Path_type::File;
-    if (e.is_symlink())
+    }
+    if (e.is_symlink()) {
         return bld::fs::Path_type::Symlink;
+    }
     return bld::fs::Path_type::Other;
 }
 
@@ -3017,8 +3135,9 @@ inline bool walk_directory_impl(const std::string &root, bld::fs::Walk_func cb, 
     std::error_code ec;
     fs::recursive_directory_iterator it(root, ec), end;
 
-    if (ec)
+    if (ec) {
         return false;
+    }
 
     while (it != end) {
         const std::size_t level = it.depth();
@@ -3037,16 +3156,19 @@ inline bool walk_directory_impl(const std::string &root, bld::fs::Walk_func cb, 
             .args = arg};
 
         // Callback failure propagates
-        if (!cb(opt))
+        if (!cb(opt)) {
             return false;
+        }
 
         // Normal early stop (SUCCESS)
-        if (opt.action == bld::fs::Walk_act::Stop)
+        if (opt.action == bld::fs::Walk_act::Stop) {
             return true;
+        }
 
         // Skip recursion if requested
-        if (opt.action == bld::fs::Walk_act::Ignore && it->is_directory())
+        if (opt.action == bld::fs::Walk_act::Ignore && it->is_directory()) {
             it.disable_recursion_pending();
+        }
 
         ++it;
     }
@@ -3124,8 +3246,9 @@ std::unordered_map<std::string, std::string> bld::env::get_all()
 #if defined(_WIN32)
     // Windows uses `GetEnvironmentStrings()` to retrieve environment variables
     LPWCH env_block = GetEnvironmentStringsW();
-    if (!env_block)
+    if (!env_block) {
         return env_vars;
+    }
 
     LPWCH env = env_block;
     while (*env) {
@@ -3145,8 +3268,9 @@ std::unordered_map<std::string, std::string> bld::env::get_all()
     for (char **env = ENVIRON; *env; ++env) {
         std::string entry(*env);
         size_t pos = entry.find('=');
-        if (pos != std::string::npos)
+        if (pos != std::string::npos) {
             env_vars[entry.substr(0, pos)] = entry.substr(pos + 1);
+        }
     }
 #endif
     return env_vars;
@@ -3219,19 +3343,22 @@ void bld::Dep_graph::add_phony(const std::string &target, const std::vector<std:
 
 bool bld::Dep_graph::needs_rebuild(const Node *node)
 {
-    if (node->dep.is_phony)
+    if (node->dep.is_phony) {
         return true;
+    }
 
-    if (!std::filesystem::exists(node->dep.target))
+    if (!std::filesystem::exists(node->dep.target)) {
         return true;
+    }
 
     auto target_time = std::filesystem::last_write_time(node->dep.target);
 
     for (const auto &dep_name : node->dep.dependencies) {
         auto it = nodes.find(dep_name);
         if (it != nodes.end()) {
-            if (it->second->dep.is_phony)
+            if (it->second->dep.is_phony) {
                 return true;
+            }
         }
 
         if (!std::filesystem::exists(dep_name)) {
@@ -3239,8 +3366,9 @@ bool bld::Dep_graph::needs_rebuild(const Node *node)
             return true;
         }
 
-        if (std::filesystem::last_write_time(dep_name) > target_time)
+        if (std::filesystem::last_write_time(dep_name) > target_time) {
             return true;
+        }
     }
     return false;
 }
@@ -3265,9 +3393,11 @@ bool bld::Dep_graph::build(const Dep &dep)
 bool bld::Dep_graph::build_all()
 {
     bool success = true;
-    for (const auto &node : nodes)
-        if (!build(node.first))
+    for (const auto &node : nodes) {
+        if (!build(node.first)) {
             success = false;
+        }
+    }
     return success;
 }
 
@@ -3275,9 +3405,11 @@ bool bld::Dep_graph::F_build_all()
 {
     checked_sources.clear();
     bool success = true;
-    for (const auto &node : nodes)
-        if (!build(node.first))
+    for (const auto &node : nodes) {
+        if (!build(node.first)) {
             success = false;
+        }
+    }
     return success;
 }
 
@@ -3297,13 +3429,16 @@ bool bld::Dep_graph::build_node(const std::string &target)
     }
 
     Node *node = it->second.get();
-    if (node->checked) // Skip if we've already checked this node
+    if (node->checked) { // Skip if we've already checked this node
         return true;
+    }
 
     // First build all dependencies
-    for (const auto &dep : node->dependencies)
-        if (!build_node(dep))
+    for (const auto &dep : node->dependencies) {
+        if (!build_node(dep)) {
             return false;
+        }
+    }
 
     // Check if we need to rebuild
     if (!needs_rebuild(node)) {
@@ -3319,10 +3454,11 @@ bool bld::Dep_graph::build_node(const std::string &target)
             bld::internal_log(bld::Log_type::ERR, "Failed to build target: " + target);
             return false;
         }
-    } else if (node->dep.is_phony)
+    } else if (node->dep.is_phony) {
         bld::internal_log(bld::Log_type::INFO, "Phony target: " + target);
-    else
+    } else {
         bld::internal_log(bld::Log_type::WARNING, "No command for target: " + target);
+    }
 
     node->checked = true;
     return true;
@@ -3331,21 +3467,26 @@ bool bld::Dep_graph::build_node(const std::string &target)
 bool bld::Dep_graph::detect_cycle(
     const std::string &target, std::unordered_set<std::string> &visited, std::unordered_set<std::string> &in_progress)
 {
-    if (in_progress.find(target) != in_progress.end())
+    if (in_progress.find(target) != in_progress.end()) {
         return true; // Cycle detected
+    }
 
-    if (visited.find(target) != visited.end())
+    if (visited.find(target) != visited.end()) {
         return false; // Already processed
+    }
 
     auto it = nodes.find(target);
-    if (it == nodes.end())
+    if (it == nodes.end()) {
         return false; // Target doesn't exist
+    }
 
     in_progress.insert(target);
 
-    for (const auto &dep : it->second->dependencies)
-        if (detect_cycle(dep, visited, in_progress))
+    for (const auto &dep : it->second->dependencies) {
+        if (detect_cycle(dep, visited, in_progress)) {
             return true;
+        }
+    }
 
     in_progress.erase(target);
     visited.insert(target);
@@ -3362,10 +3503,12 @@ bool bld::Dep_graph::build_parallel(const std::string &root_target, size_t threa
 {
     // 1. Thread Count Validation
     size_t hw_conc = std::thread::hardware_concurrency();
-    if (thread_count > hw_conc && hw_conc > 0)
+    if (thread_count > hw_conc && hw_conc > 0) {
         thread_count = hw_conc;
-    if (thread_count == 0)
+    }
+    if (thread_count == 0) {
         thread_count = 1;
+    }
 
     // 2. Cycle Detection (Global check before starting)
     std::unordered_set<std::string> visited_cycle, in_progress_cycle;
@@ -3384,13 +3527,15 @@ bool bld::Dep_graph::build_parallel(const std::string &root_target, size_t threa
 
     // Helper to populate build_map using DFS
     std::function<void(const std::string &)> prepare_topology = [&](const std::string &current) {
-        if (build_map.find(current) != build_map.end())
+        if (build_map.find(current) != build_map.end()) {
             return; // Already visited
+        }
 
         // Ensure node exists in graph (if it's a source file, we ignore it in the map)
         auto it = nodes.find(current);
-        if (it == nodes.end())
+        if (it == nodes.end()) {
             return;
+        }
 
         // Initialize entry
         build_map[current];
@@ -3438,12 +3583,14 @@ bool bld::Dep_graph::build_parallel(const std::string &root_target, size_t threa
                 // Wait until there is work, or failure, or all tasks are done
                 cv.wait(lock, [&] { return !ready_queue.empty() || build_failed || (active_workers == 0 && total_tasks_remaining == 0); });
 
-                if (build_failed)
+                if (build_failed) {
                     return;
+                }
 
                 // If queue is empty here, it means we woke up because everything is done
-                if (ready_queue.empty())
+                if (ready_queue.empty()) {
                     return;
+                }
 
                 current_target = ready_queue.front();
                 ready_queue.pop();
@@ -3516,8 +3663,9 @@ bool bld::Dep_graph::build_parallel(const std::string &root_target, size_t threa
     }
 
     for (auto &t : threads) {
-        if (t.joinable())
+        if (t.joinable()) {
             t.join();
+        }
     }
 
     return !build_failed;
@@ -3539,23 +3687,27 @@ bool bld::Dep_graph::prepare_build_graph(const std::string &target, std::queue<s
     }
 
     auto node = it->second.get();
-    if (node->visited)
+    if (node->visited) {
         return true;
+    }
     node->visited = true;
 
     // Process dependencies
     for (const auto &dep : node->dependencies) {
-        if (!prepare_build_graph(dep, ready_targets))
+        if (!prepare_build_graph(dep, ready_targets)) {
             return false;
+        }
 
         // Only track node dependencies that actually need rebuilding
-        if (nodes.find(dep) != nodes.end() && needs_rebuild(nodes[dep].get()))
+        if (nodes.find(dep) != nodes.end() && needs_rebuild(nodes[dep].get())) {
             node->waiting_on.push_back(dep);
+        }
     }
 
     // Only add to ready queue if NEEDS rebuild and dependencies are met
-    if (node->waiting_on.empty() && needs_rebuild(node))
+    if (node->waiting_on.empty() && needs_rebuild(node)) {
         ready_targets.push(target);
+    }
 
     return true;
 }
@@ -3575,8 +3727,9 @@ void bld::Dep_graph::process_completed_target(
             waiting.erase(std::remove(waiting.begin(), waiting.end(), target), waiting.end());
 
             // If no more dependencies, add to ready queue
-            if (waiting.empty())
+            if (waiting.empty()) {
                 ready_targets.push(node_pair.first);
+            }
         }
     }
 }
@@ -3594,8 +3747,9 @@ bool bld::Dep_graph::build_all_parallel(size_t thread_count)
                 break;
             }
         }
-        if (!is_dependency)
+        if (!is_dependency) {
             root_targets.push_back(node.first);
+        }
     }
 
     if (root_targets.empty() && !nodes.empty()) {
@@ -3618,8 +3772,9 @@ std::string bld::str::trim(const std::string &str)
 {
     {
         const auto begin = str.find_first_not_of(" \t\n\r\f\v");
-        if (begin == std::string::npos)
+        if (begin == std::string::npos) {
             return ""; // No non-space characters
+        }
         const auto end = str.find_last_not_of(" \t\n\r\f\v");
         return str.substr(begin, end - begin + 1);
     }
@@ -3627,24 +3782,28 @@ std::string bld::str::trim(const std::string &str)
 
 std::string bld::str::trim_left(const std::string &str)
 {
-    if (str.size() == 0)
+    if (str.size() == 0) {
         return "";
+    }
 
     const auto begin = str.find_first_not_of(" \t\n\r\f\v");
-    if (begin == std::string::npos)
+    if (begin == std::string::npos) {
         return ""; // No non-space characters
+    }
     const auto end = str.size();
     return str.substr(begin, end - begin + 1);
 }
 
 std::string bld::str::trim_right(const std::string &str)
 {
-    if (str.size() == 0)
+    if (str.size() == 0) {
         return "";
+    }
 
     const auto begin = 0;
-    if (begin == std::string::npos)
+    if (begin == std::string::npos) {
         return ""; // No non-space characters
+    }
     const auto end = str.find_last_not_of(" \t\n\r\f\v");
     return str.substr(begin, end - begin + 1);
 }
@@ -3666,10 +3825,11 @@ std::string bld::str::to_upper(const std::string &str)
 std::string bld::str::replace(std::string str, const std::string &from, const std::string &to)
 {
     if (str.size() == 0) {
-        if (from == "")
+        if (from == "") {
             return to;
-        else
+        } else {
             return str;
+        }
     }
 
     size_t start_pos = 0;
@@ -3687,20 +3847,23 @@ bool bld::str::starts_with(const std::string &str, const std::string &prefix)
 
 bool bld::str::ends_with(const std::string &str, const std::string &suffix)
 {
-    if (str.length() < suffix.length())
+    if (str.length() < suffix.length()) {
         return false;
+    }
     return str.compare(str.length() - suffix.length(), suffix.length(), suffix) == 0;
 }
 
 std::string bld::str::join(const std::vector<std::string> &strings, const std::string &delimiter)
 {
-    if (strings.size() == 0)
+    if (strings.size() == 0) {
         return "";
+    }
 
     std::ostringstream oss;
     for (size_t i = 0; i < strings.size(); ++i) {
-        if (i != 0)
+        if (i != 0) {
             oss << delimiter;
+        }
         oss << strings[i];
     }
     return oss.str();
@@ -3708,27 +3871,31 @@ std::string bld::str::join(const std::vector<std::string> &strings, const std::s
 
 std::string bld::str::trim_till(const std::string &str, char delimiter)
 {
-    if (str.size() == 0 || str.size() == 1)
+    if (str.size() == 0 || str.size() == 1) {
         return "";
+    }
 
     const auto pos = str.find(delimiter);
-    if (pos == std::string::npos)
+    if (pos == std::string::npos) {
         return str; // Delimiter not found, return the whole string
+    }
     return str.substr(pos + 1);
 }
 
 bool bld::str::equal_ignorecase(const std::string &str1, const std::string &str2)
 {
-    if (str1.size() != str2.size())
+    if (str1.size() != str2.size()) {
         return false;
+    }
 
     return std::equal(str1.begin(), str1.end(), str2.begin(), [](char c1, char c2) { return std::tolower(c1) == std::tolower(c2); });
 }
 
 std::vector<std::string> bld::str::chop_by_delimiter(const std::string &s, const std::string &delimiter)
 {
-    if (delimiter.size() == 0)
+    if (delimiter.size() == 0) {
         return {s};
+    }
     // Estimate number of splits to reduce vector reallocations
     std::vector<std::string> res;
     res.reserve(std::count(s.begin(), s.end(), delimiter[0]) + 1);
@@ -3749,8 +3916,9 @@ std::vector<std::string> bld::str::chop_by_delimiter(const std::string &s, const
 std::string bld::str::remove_duplicates(const std::string &str)
 {
     // Early exit for empty or single-character strings
-    if (str.size() <= 1)
+    if (str.size() <= 1) {
         return str;
+    }
 
     // Use a character set to track seen characters
     std::unordered_set<char> seen;
@@ -3759,8 +3927,9 @@ std::string bld::str::remove_duplicates(const std::string &str)
 
     for (char c : str) {
         // Only insert if not previously seen
-        if (seen.insert(c).second)
+        if (seen.insert(c).second) {
             result += c;
+        }
     }
 
     return result;
@@ -3769,8 +3938,9 @@ std::string bld::str::remove_duplicates(const std::string &str)
 std::string bld::str::remove_duplicates_case_insensitive(const std::string &str)
 {
     // Early exit for empty or single-character strings
-    if (str.size() <= 1)
+    if (str.size() <= 1) {
         return str;
+    }
 
     // Use a character set to track seen characters, converted to lowercase
     std::unordered_set<char> seen;
@@ -3780,8 +3950,9 @@ std::string bld::str::remove_duplicates_case_insensitive(const std::string &str)
     for (char c : str) {
         // Convert to lowercase for comparison, but preserve original case
         char lower = std::tolower(c);
-        if (seen.insert(lower).second)
+        if (seen.insert(lower).second) {
             result += c;
+        }
     }
 
     return result;
@@ -3789,8 +3960,9 @@ std::string bld::str::remove_duplicates_case_insensitive(const std::string &str)
 
 bool bld::str::is_numeric(const std::string &str)
 {
-    if (str.empty())
+    if (str.empty()) {
         return false;
+    }
 
     // Track if we've seen a decimal point
     bool decimal_point_seen = false;
@@ -3802,15 +3974,17 @@ bool bld::str::is_numeric(const std::string &str)
         // Check for decimal point
         if (str[i] == '.') {
             // Only one decimal point allowed
-            if (decimal_point_seen)
+            if (decimal_point_seen) {
                 return false;
+            }
             decimal_point_seen = true;
             continue;
         }
 
         // Must be a digit
-        if (!std::isdigit(str[i]))
+        if (!std::isdigit(str[i])) {
             return false;
+        }
     }
 
     return true;
@@ -3818,8 +3992,9 @@ bool bld::str::is_numeric(const std::string &str)
 
 std::string bld::str::replace_all(const std::string &str, const std::string &from, const std::string &to)
 {
-    if (from.empty())
+    if (from.empty()) {
         return str;
+    }
 
     std::string result = str;
     size_t start_pos = 0;
@@ -3835,8 +4010,9 @@ std::string bld::str::replace_all(const std::string &str, const std::string &fro
 std::string read_clean_source(const std::filesystem::path &path)
 {
     std::ifstream file(path);
-    if (!file)
+    if (!file) {
         return "";
+    }
 
     std::string src((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     std::string clean;
@@ -3860,8 +4036,9 @@ std::string read_clean_source(const std::filesystem::path &path)
             }
         } else if (in_str) {
             clean += src[i];
-            if (src[i] == '"' && src[i - 1] != '\\')
+            if (src[i] == '"' && src[i - 1] != '\\') {
                 in_str = false;
+            }
         } else if (src[i] == '/' && i + 1 < src.size() && src[i + 1] == '*') {
             in_block = true;
             i++;
@@ -3884,12 +4061,14 @@ std::vector<bld::fs::Cpp_module> bld::fs::scan_modules(const std::string &path)
     std::vector<bld::fs::Cpp_module> modules;
 
     bld::fs::walk_directory(path, [&](bld::fs::Walk_fn_opt &opt) -> bool {
-        if (!std::filesystem::is_regular_file(opt.path) || opt.path.extension() != ".cppm")
+        if (!std::filesystem::is_regular_file(opt.path) || opt.path.extension() != ".cppm") {
             return true;
+        }
 
         std::string content = read_clean_source(opt.path);
-        if (content.empty())
+        if (content.empty()) {
             return true;
+        }
 
         // Tokenize
         std::vector<std::string> tokens;
@@ -3900,8 +4079,9 @@ std::vector<bld::fs::Cpp_module> bld::fs::scan_modules(const std::string &path)
                     tokens.push_back(token);
                     token.clear();
                 }
-                if (c == ';')
+                if (c == ';') {
                     tokens.push_back(";");
+                }
             } else {
                 token += c;
             }
@@ -3924,39 +4104,45 @@ std::vector<bld::fs::Cpp_module> bld::fs::scan_modules(const std::string &path)
             // Handle: import name; OR export import name;
             else if (tokens[i] == "import") {
                 // Skip if this is part of "export import"
-                if (i > 0 && tokens[i - 1] == "export")
+                if (i > 0 && tokens[i - 1] == "export") {
                     continue;
+                }
 
                 if (i + 1 < tokens.size()) {
                     std::string dep = tokens[i + 1];
                     // Skip std and empty
                     if (!bld::str::starts_with(dep, "std") && dep != ";" && !dep.empty()) {
-                        if (bld::str::starts_with(dep, ":") && !primary_name.empty())
+                        if (bld::str::starts_with(dep, ":") && !primary_name.empty()) {
                             dep = primary_name + dep;
+                        }
 
                         // Only add if not seen before
-                        if (seen_imports.insert(dep).second)
+                        if (seen_imports.insert(dep).second) {
                             mod.imports.push_back(dep);
+                        }
                     }
                 }
             } else if (tokens[i] == "export" && i + 2 < tokens.size() && tokens[i + 1] == "import") {
                 std::string dep = tokens[i + 2];
                 // Skip std and empty
                 if (!bld::str::starts_with(dep, "std") && dep != ";" && !dep.empty()) {
-                    if (bld::str::starts_with(dep, ":") && !primary_name.empty())
+                    if (bld::str::starts_with(dep, ":") && !primary_name.empty()) {
                         dep = primary_name + dep;
+                    }
 
                     // Only add if not seen before
-                    if (seen_imports.insert(dep).second)
+                    if (seen_imports.insert(dep).second) {
                         mod.imports.push_back(dep);
+                    }
                 }
             }
         }
 
-        if (found_name)
+        if (found_name) {
             modules.push_back(std::move(mod));
-        else
+        } else {
             bld::internal_log(bld::Log_type::WARNING, "Skipped file (no module decl found): " + opt.path.string());
+        }
         return true;
     });
     return modules;

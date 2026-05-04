@@ -2,6 +2,8 @@
 
 > An interpreted statically typed scripting language with proper type checking
 
+GC not implemented yet.
+
 I aim at adding a lot of features for learning purposes, they may not be perfect though.
 
 ## Example
@@ -68,7 +70,7 @@ g++ ./bld.cpp -o ./bld
 
 ## TODO
 
-- [ ] Iterators/ranges
+- [ ] Add a saturation cast (limits to size, not truncate bits)
 - [ ] Concurrency (green threads)
 - [ ] Proper I/O (reading input, file streams)
 - [ ] Have proper command line args for it
@@ -76,3 +78,5 @@ g++ ./bld.cpp -o ./bld
 - [ ] FFI (In langugae FFI)
 
 ## TODO 2
+
+- [ ] Add inline code documentation

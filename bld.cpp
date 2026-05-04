@@ -1,6 +1,5 @@
 #include <atomic>
 #include <cstdlib>
-#include <exception>
 #include <filesystem>
 #include <format>
 #include <mutex>
@@ -22,8 +21,8 @@ const std::string SRC = "./src/";
 const std::string BIN = "./bin/";
 const std::string TARGET = BIN + "phos";
 
-const std::vector<std::string> COMMON_FLAGS = {"--std=c++23", "-pthread"};
-const std::vector<std::string> DEBUG_FLAGS = {"-ggdb", "-O0"};
+const std::vector<std::string> COMMON_FLAGS = {"--std=c++23", "-pthread", "-I./src" , "-Wall", "-Wpedantic"};
+const std::vector<std::string> DEBUG_FLAGS = {"-ggdb", "-O0",  "-fsanitize=address", "-fsanitize=undefined" };
 const std::vector<std::string> RELEASE_FLAGS = {"-O2", "-DNDEBUG"};
 
 struct Progress
@@ -369,7 +368,8 @@ auto compile_custom(std::string ip, std::string op = "./new")
     bld::fs::write_entire_file(op, "");
 
     bld::Command cmd;
-    cmd.add_parts("g++", "-o", op, ip, "-Wall", "--std=c++23", "-lm", "-pthread", "-ggdb", "-O0");
+    // ADDED: "-I./src" so custom compilation also respects the path mappings
+    cmd.add_parts("g++", "-o", op, ip, "-Wall", "--std=c++23", "-I./src", "-lm", "-pthread", "-ggdb", "-O0");
 
     bld::fs::walk_directory(BIN, [ip, op, &cmd](bld::fs::Walk_fn_opt &opt) -> bool {
         if (stdfs::is_directory(opt.path)) {
