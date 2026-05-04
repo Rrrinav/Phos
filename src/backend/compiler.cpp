@@ -1029,14 +1029,6 @@ uint8_t Compiler::compile_expr_node(const ast::Assignment_expr &expr)
         emit_numeric_normalize(rhs_reg, expr.type);
     }
 
-    if (auto global_sym_id = ctx.registry.lookup_global(expr.name)) {
-        auto &sym = ctx.registry.get_symbol(*global_sym_id);
-        if (sym.kind == Symbol_kind::Global_var) {
-            emit(vm::Instruction::make_ri(vm::Opcode::Store_global, rhs_reg, *sym.global_index));
-            return rhs_reg;
-        }
-    }
-
     int local_arg = resolve_local(current_ctx_, expr.name);
     if (local_arg != -1) {
         emit(vm::Instruction::make_rrr(vm::Opcode::Move, static_cast<uint8_t>(local_arg), rhs_reg, 0));
@@ -1047,6 +1039,16 @@ uint8_t Compiler::compile_expr_node(const ast::Assignment_expr &expr)
     if (upval_arg != -1) {
         emit(vm::Instruction::make_rrr(vm::Opcode::Set_upvalue, static_cast<uint8_t>(upval_arg), rhs_reg, 0));
         return rhs_reg;
+    }
+
+    std::string canonical_name = current_module_ns_.empty() || current_module_ns_ == "main" ? expr.name : current_module_ns_ + "::" + expr.name;
+
+    if (auto global_sym_id = ctx.registry.lookup_global(canonical_name)) {
+        auto &sym = ctx.registry.get_symbol(*global_sym_id);
+        if (sym.kind == Symbol_kind::Global_var) {
+            emit(vm::Instruction::make_ri(vm::Opcode::Store_global, rhs_reg, *sym.global_index));
+            return rhs_reg;
+        }
     }
 
     std::println(std::cerr, "Compiler Bug: Reassignment of unresolved variable '{}'.", expr.name);

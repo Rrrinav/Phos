@@ -1,7 +1,7 @@
 #include "module_resolver.hpp"
 
-#include "frontend/parser/parser.hpp"
 #include "frontend/lexer/lexer.hpp"
+#include "frontend/parser/parser.hpp"
 
 #include <fstream>
 #include <iostream>
@@ -29,6 +29,7 @@ err::Engine Module_resolver::resolve_imports(Module_id current_module, const std
         std::string local_alias;
         std::string path_back;
         ast::Source_location import_loc;
+        bool is_explicit_super = false;
 
         {
             auto &node = ctx.tree.get(stmt_id).node;
@@ -38,22 +39,128 @@ err::Engine Module_resolver::resolve_imports(Module_id current_module, const std
                 continue;
             }
 
-            raw_os_path = import_stmt->path[0];
-            raw_vm_namespace = import_stmt->path[0];
+            auto &current_mod = ctx.workspace.get_module(current_module);
 
-            for (size_t i = 1; i < import_stmt->path.size(); ++i) {
-                raw_os_path += "/" + import_stmt->path[i];
-                raw_vm_namespace += "::" + import_stmt->path[i];
+            // 1. RESOLVE 'super' DIRECTORY TRAVERSAL
+            if (!import_stmt->path.empty() && import_stmt->path[0] == "super") {
+                is_explicit_super = true;
+
+                // Break current namespace into a stack
+                std::string c_ns = current_mod.logical_namespace;
+                std::vector<std::string> ns_stack;
+                size_t pos = 0;
+                while ((pos = c_ns.find("::")) != std::string::npos) {
+                    ns_stack.push_back(c_ns.substr(0, pos));
+                    c_ns.erase(0, pos + 2);
+                }
+                if (!c_ns.empty()) {
+                    ns_stack.push_back(c_ns);
+                }
+
+                // Pop the current file's name to get to its parent directory
+                if (!ns_stack.empty()) {
+                    ns_stack.pop_back();
+                }
+
+                // Pop a directory for every 'super' in the import path
+                size_t path_idx = 0;
+                while (path_idx < import_stmt->path.size() && import_stmt->path[path_idx] == "super") {
+                    if (!ns_stack.empty()) {
+                        ns_stack.pop_back();
+                    }
+                    path_idx++;
+                }
+
+                // Reconstruct the physical and logical paths
+                for (const auto &part : ns_stack) {
+                    raw_os_path += (raw_os_path.empty() ? "" : "/") + part;
+                    raw_vm_namespace += (raw_vm_namespace.empty() ? "" : "::") + part;
+                }
+
+                for (; path_idx < import_stmt->path.size(); ++path_idx) {
+                    raw_os_path += (raw_os_path.empty() ? "" : "/") + import_stmt->path[path_idx];
+                    raw_vm_namespace += (raw_vm_namespace.empty() ? "" : "::") + import_stmt->path[path_idx];
+                }
+
+                // REWRITE AST NODE: Suppress 'super' so the Semantic Checker sees the absolute path
+                std::vector<std::string> new_ast_path = ns_stack;
+                size_t reset_idx = 0;
+                while (reset_idx < import_stmt->path.size() && import_stmt->path[reset_idx] == "super") {
+                    reset_idx++;
+                }
+                for (; reset_idx < import_stmt->path.size(); ++reset_idx) {
+                    new_ast_path.push_back(import_stmt->path[reset_idx]);
+                }
+                import_stmt->path = new_ast_path;
+
+            } else {
+                // Standard Import Path (e.g. math.core)
+                raw_os_path = import_stmt->path[0];
+                raw_vm_namespace = import_stmt->path[0];
+                for (size_t i = 1; i < import_stmt->path.size(); ++i) {
+                    raw_os_path += "/" + import_stmt->path[i];
+                    raw_vm_namespace += "::" + import_stmt->path[i];
+                }
+            }
+
+            // 2. AST HEALING (Fixing parser's premature selective split)
+            if (!import_stmt->selectives.empty()) {
+                std::string extended_os_path = raw_os_path + "/" + import_stmt->selectives[0];
+                bool is_fs_module = false;
+
+                // Attempt A: Relative
+                if (!is_explicit_super && !current_mod.logical_namespace.empty() && current_mod.logical_namespace != "main") {
+                    std::filesystem::path rel_dir = current_mod.os_path.parent_path();
+                    if (std::filesystem::exists(rel_dir / (extended_os_path + ".phos"))
+                        || std::filesystem::is_directory(rel_dir / extended_os_path)) {
+                        is_fs_module = true;
+                    }
+                }
+                // Attempt B: Absolute
+                if (!is_fs_module) {
+                    if (std::filesystem::exists(root_dir / (extended_os_path + ".phos"))
+                        || std::filesystem::is_directory(root_dir / extended_os_path)) {
+                        is_fs_module = true;
+                    }
+                }
+
+                if (is_fs_module) {
+                    // It's a module! Move it from selectives into the true path
+                    raw_os_path = extended_os_path;
+                    raw_vm_namespace += "::" + import_stmt->selectives[0];
+
+                    import_stmt->path.push_back(import_stmt->selectives[0]);
+
+                    if (import_stmt->selectives.size() == 1) {
+                        import_stmt->selectives.clear();
+                    } else {
+                        import_stmt->selectives.erase(import_stmt->selectives.begin());
+                    }
+                }
             }
 
             local_alias = import_stmt->local_alias;
             path_back = import_stmt->path.back();
             import_loc = import_stmt->loc;
-        } // The reference to `node` safely goes out of scope here.
+        } // `node` reference safely goes out of scope here.
 
-        // 2. Check if it is a native FFI module
+        // 3. SECURITY: Reject physically named 'super' folders/files
+        if (raw_os_path == "super" || raw_os_path.find("/super") != std::string::npos || raw_os_path.find("super/") != std::string::npos) {
+            if (!is_explicit_super) {
+                diagnostics_.error(
+                    import_loc.l,
+                    import_loc.c,
+                    import_loc.file,
+                    "Invalid module name. 'super' is a reserved keyword and cannot be used as a file or folder name.");
+                continue;
+            }
+        }
+
+        Module_id target_mod_id{0};
+        std::vector<ast::Stmt_id> parsed_stmts;
+
+        // 4. Check if it is a native FFI module
         if (ffi_registry.contains(raw_os_path)) {
-            Module_id target_mod_id{0};
             if (!loaded_modules.contains(raw_os_path)) {
                 ffi_registry[raw_os_path](ctx.type_env);
                 loaded_modules.insert(raw_os_path);
@@ -67,7 +174,7 @@ err::Engine Module_resolver::resolve_imports(Module_id current_module, const std
             std::string local_name = local_alias.empty() ? path_back : local_alias;
             ctx.workspace.get_module(current_module).add_private_import(local_name, target_mod_id);
         }
-        // 3. Check if it is a source module or a directory
+        // 5. Check if it is a source module or a directory
         else {
             auto &current_mod = ctx.workspace.get_module(current_module);
             std::filesystem::path final_file_path;
@@ -75,8 +182,8 @@ err::Engine Module_resolver::resolve_imports(Module_id current_module, const std
             bool is_dir = false;
             std::string final_vm_namespace = raw_vm_namespace;
 
-            // Attempt A: Relative Lookup (if current module is not root/main)
-            if (!current_mod.logical_namespace.empty() && current_mod.logical_namespace != "main") {
+            // Attempt A: Relative Lookup (Skipped if user manually used 'super')
+            if (!is_explicit_super && !current_mod.logical_namespace.empty() && current_mod.logical_namespace != "main") {
                 std::filesystem::path rel_dir = current_mod.os_path.parent_path();
                 std::filesystem::path rel_file = rel_dir / (raw_os_path + ".phos");
                 std::filesystem::path rel_folder = rel_dir / raw_os_path;
@@ -95,7 +202,7 @@ err::Engine Module_resolver::resolve_imports(Module_id current_module, const std
                 }
             }
 
-            // Attempt B: Absolute Lookup
+            // Attempt B: Absolute Lookup (Acts as root fallback if super generated an absolute path)
             if (final_file_path.empty() && !is_dir) {
                 std::filesystem::path abs_file = root_dir / (raw_os_path + ".phos");
                 std::filesystem::path abs_folder = root_dir / raw_os_path;
@@ -160,7 +267,7 @@ err::Engine Module_resolver::resolve_imports(Module_id current_module, const std
                 return new_mod_id;
             };
 
-            // 4. Bulk Directory Import vs Standard Import
+            // 6. Bulk Directory Import vs Standard Import
             if (is_dir) {
                 for (const auto &entry : std::filesystem::directory_iterator(target_dir)) {
                     if (entry.is_regular_file() && entry.path().extension() == ".phos") {

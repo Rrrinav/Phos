@@ -530,12 +530,13 @@ err::Engine Semantic_checker::check_workspace()
         hoist_globals(module.id);
     }
 
-    for (const auto &module : ctx.workspace.modules) {
-        if (checked_modules.contains(module.id)) {
+    std::vector<Module_id> build_order = ctx.workspace.get_topological_order();
+    for (Module_id mod_id : build_order) {
+        if (checked_modules.contains(mod_id)) {
             continue;
         }
-        checked_modules.insert(module.id);
-        check_module(module.id);
+        checked_modules.insert(mod_id);
+        check_module(mod_id);
     }
 
     return diagnostics_;
