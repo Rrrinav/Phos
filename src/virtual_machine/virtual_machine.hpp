@@ -2,6 +2,8 @@
 
 #include "core/arena.hpp"
 #include "core/value/value.hpp"
+#include "virtual_machine/garbage_collector/gc_heap.hpp"
+#include "virtual_machine/vm_context.hpp"
 
 #include <cstdlib>
 #include <format>
@@ -15,6 +17,8 @@ namespace phos::vm {
 class Virtual_machine
 {
 public:
+    static constexpr size_t FRAME_REGISTER_WINDOW = vm::Vm_context::FRAME_REGISTER_WINDOW;
+
     struct Config
     {
         std::ostream *out = &std::cout;
@@ -26,6 +30,7 @@ public:
     Config cfg;
 
 private:
+    gc::Gc_heap& gc;
     mem::Arena &arena;
 
     // The templated inner loop.
@@ -36,7 +41,7 @@ private:
 public:
     std::vector<Value> globals;
 
-    Virtual_machine(phos::mem::Arena &arena_) : arena(arena_)
+    Virtual_machine(gc::Gc_heap &gc_, phos::mem::Arena &arena_) : gc(gc_), arena(arena_)
     {
         cfg.panic_handler = [this](const std::string &s) {
             std::println(*this->cfg.err, "{}", s);
@@ -65,6 +70,8 @@ public:
             execute_loop<false>(thread);
         }
     }
+
+    gc::Gc_heap& gc_ref() noexcept { return gc; }
 
     auto bini64_op(int64_t a, int64_t b, Opcode op) -> int64_t;
     auto binu64_op(uint64_t a, uint64_t b, Opcode op) -> uint64_t;
