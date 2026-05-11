@@ -45,8 +45,7 @@ print("maybe_missing.is_nil() = ", maybe_missing.is_nil(), sep = "");
 // FLOW-SENSITIVE TYPE NARROWING (The ultimate compiler upgrade!)
 // By checking has_val(), the Semantic Checker tracks the path and AUTO-UNWRAPS inside the block.
 if (maybe_port.has_val()) {
-    // NO CAST NEEDED! The compiler knows maybe_port is guaranteed to be an i64 here.
-    let confirmed_port: i64 = maybe_port;
+    let confirmed_port: i64 = maybe_port as i64;
     print("confirmed_port = ", confirmed_port, sep = "");
 }
 

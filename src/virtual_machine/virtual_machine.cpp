@@ -53,9 +53,8 @@ void Vm_context::collect_garbage() const
     heap->collect(*thread, *globals);
 }
 
-// --- Internal VM Helpers ---
-
-static size_t active_stack_limit(const Green_thread_data &thread, size_t frame_base)
+// Internal VM Helpers
+static size_t get_active_stack_limit(const Green_thread_data &thread, size_t frame_base)
 {
     const size_t live_limit = frame_base + Vm_context::FRAME_REGISTER_WINDOW;
     return (live_limit < thread.value_stack_capacity) ? live_limit : thread.value_stack_capacity;
@@ -63,7 +62,7 @@ static size_t active_stack_limit(const Green_thread_data &thread, size_t frame_b
 
 static void refresh_live_stack_count(Green_thread_data &thread, size_t frame_base)
 {
-    thread.live_value_count = active_stack_limit(thread, frame_base);
+    thread.live_value_count = get_active_stack_limit(thread, frame_base);
 }
 
 static Vm_context make_vm_context(
@@ -121,7 +120,7 @@ static Upvalue_data *capture_upvalue(Green_thread_data *thread, size_t absolute_
     return created_upvalue;
 }
 
-static void close_upvalues(Green_thread_data *thread, size_t last_stack_index, gc::Gc_heap &gc_heap)
+static void close_upvalues(Green_thread_data *thread, size_t last_stack_index, [[maybe_unused]]gc::Gc_heap &gc_heap)
 {
     Value *limit_location = &thread->value_stack[last_stack_index];
 
@@ -165,6 +164,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         if constexpr (Is_Tracing) {
             std::string disassembled = Assembler::disassemble_instruction(inst, frame->closure);
             std::println(*cfg.out, "TRACE: {:04} | {}", ip, disassembled);
+            cfg.out->flush();
         }
 
         ip++;
@@ -216,6 +216,16 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
                 globals.resize(global_idx + 1, Value(nullptr));
             }
             globals[global_idx] = registers[base + inst.ri.dst];
+            break;
+        }
+        case Opcode::Concat_str: {
+            /* R[dst] := R[src_a] .. R[src_b] */
+            const Value &va = registers[base + inst.rrr.src_a];
+            const Value &vb = registers[base + inst.rrr.src_b];
+            // Standard library string objects use Trailing Storage.
+            // We create a new contiguous string block.
+            std::string res = std::string(va.as_string()) + std::string(vb.as_string());
+            registers[base + inst.rrr.dst] = Value::make_string(ctx, res);
             break;
         }
 
@@ -529,6 +539,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
 
         case Opcode::Return: {
+            /* return R[dst] */
             Value result = registers[base + inst.rrr.dst];
 
             close_upvalues(thread, base, gc);
@@ -539,21 +550,26 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
                 return;
             }
 
+            size_t old_base = base;
+
             frame = &thread->call_stack[thread->call_stack_count - 1];
             code = frame->closure->code;
             constants = frame->closure->constants;
-
             ip = frame->ip;
-
-            Instruction caller_inst = code[ip - 1];
-            size_t old_base = base;
             base = frame->frame_base;
-            registers[base + caller_inst.rrr.dst] = result;
 
-            size_t clear_limit = active_stack_limit(*thread, old_base);
+            // CLEANUP FIRST!
+            // Wipe the returning frame's window to prevent GC ghost references.
+            size_t clear_limit = get_active_stack_limit(*thread, old_base);
             for (size_t i = old_base; i < clear_limit; ++i) {
                 registers[i] = Value();
             }
+
+            // 2. ASSIGN RESULT SECOND!
+            // Since base is now the caller's base, and we know the Call instruction was at ip-1.
+            Instruction caller_inst = code[ip - 1];
+            registers[base + caller_inst.rrr.dst] = result;
+
             refresh_live_stack_count(*thread, base);
             ctx = make_vm_context(*this, gc, arena, *thread, frame, registers, globals, ip, base);
             break;

@@ -40,6 +40,10 @@ fn foo($T, x: T) -> T where { @is_string(T) || @is_array_of(T, string) } {
     }
 }
 
+fn bar(x: $T) {
+    print(x);
+}
+
 model Counter($c: i64) {
     l: i64 = 0;
     h: i64 = c;

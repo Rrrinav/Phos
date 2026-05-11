@@ -46,9 +46,9 @@ static void free_payload(Gc_heap &heap, Gc_cell *cell)
             std::free(m->fields);
         }
     } else if (tag == phos::Value_tag::Union) {
-        auto *u = static_cast<phos::Union_data *>(cell->payload());
+        // auto *u = static_cast<phos::Union_data *>(cell->payload());
         heap.remove_external_bytes(sizeof(phos::Value));
-        std::free(u->payload);
+        //std::free(u->payload);
     } else if (tag == phos::Value_tag::Closure) {
         auto *c = static_cast<phos::Closure_data *>(cell->payload());
         if (!c->is_prototype && c->upvalues != nullptr) {

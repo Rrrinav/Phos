@@ -49,6 +49,8 @@ enum class Opcode : uint8_t {
 
     Load_global, Store_global,
 
+    Concat_str,
+
     // Arithmetic
     Add_i64, Add_u64, Add_f64, Sub_i64, Sub_u64, Sub_f64, // dst, src_a, src_b
     Mul_i64, Mul_u64, Mul_f64, Div_i64, Div_u64, Div_f64, // dst, src_a, src_b

@@ -12,6 +12,7 @@ std::string phos::vm::opcode_to_string(Opcode code)
     case Opcode::Move:               return "Move";
     case Opcode::Load_global:        return "Load_global";
     case Opcode::Store_global:       return "Store_global";
+    case Opcode::Concat_str:         return "Concat_str";
     case Opcode::Add_i64:            return "Add_i64";
     case Opcode::Add_u64:            return "Add_u64";
     case Opcode::Add_f64:            return "Add_f64";
@@ -131,6 +132,9 @@ phos::vm::Opcode phos::vm::string_to_opcode(std::string code)
     }
     if (code == "Store_global") {
         return Opcode::Store_global;
+    }
+    if (code == "Concat_str") {
+        return Opcode::Concat_str;
     }
     if (code == "Add_i64") {
         return Opcode::Add_i64;

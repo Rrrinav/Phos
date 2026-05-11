@@ -31,3 +31,5 @@ let x, y : i32, f64    = 10, 10.01;
 // this? So here we have to check that control flow always resorts to returning x and y (no other
 // variable even ) and no other way to get out of the the function other than maybe, noreturns?
 // but this only applies to one with default values and not ones with just names.. No idea, will have to think about it.
+
+// but all this only after we introduce notion of proc and fn

@@ -325,15 +325,15 @@ void Type_environment::register_core_methods()
     define_native("parse_f64", std::vector<std::string>{"string"}, "f64?", vm::numerical::parse_f64);
 
     // --- String Methods ---
-    define_native("string::substr", std::vector<std::string>{"string", "i64", "i64"}, "string", vm::string_methods::substr);
-    define_native("string::starts_with", std::vector<std::string>{"string", "string"}, "bool", vm::string_methods::starts_with);
-    define_native("string::ends_with", std::vector<std::string>{"string", "string"}, "bool", vm::string_methods::ends_with);
-    define_native("string::trim", std::vector<std::string>{"string"}, "string", vm::string_methods::trim);
-    define_native("string::to_upper", std::vector<std::string>{"string"}, "string", vm::string_methods::to_upper);
-    define_native("string::to_lower", std::vector<std::string>{"string"}, "string", vm::string_methods::to_lower);
-    define_native("string::split", std::vector<std::string>{"string", "string"}, "string[]", vm::string_methods::split);
-    define_native("string::repeat", std::vector<std::string>{"string", "i64"}, "string", vm::string_methods::repeat);
-    define_native("string::index_of", std::vector<std::string>{"string", "string"}, "i64?", vm::string_methods::index_of);
+    define_native("String::substr", std::vector<std::string>{"string", "i64", "i64"}, "string", vm::string_methods::substr);
+    define_native("String::starts_with", std::vector<std::string>{"string", "string"}, "bool", vm::string_methods::starts_with);
+    define_native("String::ends_with", std::vector<std::string>{"string", "string"}, "bool", vm::string_methods::ends_with);
+    define_native("String::trim", std::vector<std::string>{"string"}, "string", vm::string_methods::trim);
+    define_native("String::to_upper", std::vector<std::string>{"string"}, "string", vm::string_methods::to_upper);
+    define_native("String::to_lower", std::vector<std::string>{"string"}, "string", vm::string_methods::to_lower);
+    define_native("String::split", std::vector<std::string>{"string", "string"}, "string[]", vm::string_methods::split);
+    define_native("String::repeat", std::vector<std::string>{"string", "i64"}, "string", vm::string_methods::repeat);
+    define_native("String::index_of", std::vector<std::string>{"string", "string"}, "i64?", vm::string_methods::index_of);
 
     // --- Array Methods ---
     define_native("Array::len", std::vector<std::string>{"any[]"}, "i64", vm::array_methods::len);

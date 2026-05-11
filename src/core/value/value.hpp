@@ -189,7 +189,7 @@ private:
     } as;
 
     Value_tag tag_ = Value_tag::Nil;
-    uint8_t option_depth_ = 1;
+    uint8_t option_depth_ = 0;
     bool is_gc_managed_ = false;
 
     Value(String_data *s, uint8_t d, bool gc) : tag_(Value_tag::String), option_depth_(d), is_gc_managed_(gc)

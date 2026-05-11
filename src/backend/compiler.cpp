@@ -1301,6 +1301,13 @@ uint8_t Compiler::compile_expr_node(const ast::Binary_expr &expr)
     types::Type_id left_type = ast::get_type(ctx.tree.get(expr.left).node);
     types::Type_id right_type = ast::get_type(ctx.tree.get(expr.right).node);
 
+    if (expr.op == lex::TokenType::Plus) {
+        if (ctx.tt.is_string(left_type) && ctx.tt.is_string(right_type)) {
+            emit(vm::Instruction::make_rrr(vm::Opcode::Concat_str, dest_reg, reg_a, reg_b));
+            return dest_reg;
+        }
+    }
+
     vm::Opcode opcode = vm::Opcode::Move;
     switch (expr.op) {
     case lex::TokenType::Plus:

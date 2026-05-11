@@ -1,6 +1,5 @@
 #include "core/value/value.hpp"
 
-#include "frontend/environment/type_environment.hpp"
 #include "virtual_machine/vm_context.hpp"
 
 #include <charconv>
