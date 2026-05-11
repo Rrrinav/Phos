@@ -1,5 +1,7 @@
 #include "type_environment.hpp"
 
+#include "frontend/core_library/std_lib.hpp"
+
 namespace phos {
 
 Type_environment::Type_environment(types::Type_table &tt) : tt(tt)
@@ -265,10 +267,7 @@ std::optional<Value> Type_environment::get_enum_variant_value(const std::string 
     return std::nullopt;
 }
 
-// ============================================================================
 // NATIVE FFI REGISTRATION
-// ============================================================================
-
 void Type_environment::define_native(const std::string &name, const std::vector<std::string> &params, const std::string &ret, Native_fn func)
 {
     std::vector<Native_param> native_params;
@@ -314,7 +313,38 @@ const std::vector<Native_sig> *Type_environment::get_native_signatures(const std
 
 void Type_environment::register_core_methods()
 {
-    // Implement your core standard library injection here later!
+    // --- Core Engine Operations ---
+    define_native("clock", std::vector<std::string>{}, "f64", vm::core::native_clock);
+    define_native("is_same", std::vector<std::string>{"any", "any"}, "bool", vm::core::native_is_same);
+    define_native("exit", std::vector<std::string>{"i32"}, "void", vm::core::exit);
+    define_native("len", std::vector<std::string>{"any"}, "i64", vm::core::native_len);
+
+    // --- Numerical Methods ---
+    define_native("to_string", std::vector<std::string>{"any"}, "string", vm::numerical::to_string);
+    define_native("parse_i64", std::vector<std::string>{"string"}, "i64?", vm::numerical::parse_i64);
+    define_native("parse_f64", std::vector<std::string>{"string"}, "f64?", vm::numerical::parse_f64);
+
+    // --- String Methods ---
+    define_native("string::substr", std::vector<std::string>{"string", "i64", "i64"}, "string", vm::string_methods::substr);
+    define_native("string::starts_with", std::vector<std::string>{"string", "string"}, "bool", vm::string_methods::starts_with);
+    define_native("string::ends_with", std::vector<std::string>{"string", "string"}, "bool", vm::string_methods::ends_with);
+    define_native("string::trim", std::vector<std::string>{"string"}, "string", vm::string_methods::trim);
+    define_native("string::to_upper", std::vector<std::string>{"string"}, "string", vm::string_methods::to_upper);
+    define_native("string::to_lower", std::vector<std::string>{"string"}, "string", vm::string_methods::to_lower);
+    define_native("string::split", std::vector<std::string>{"string", "string"}, "string[]", vm::string_methods::split);
+    define_native("string::repeat", std::vector<std::string>{"string", "i64"}, "string", vm::string_methods::repeat);
+    define_native("string::index_of", std::vector<std::string>{"string", "string"}, "i64?", vm::string_methods::index_of);
+
+    // --- Array Methods ---
+    define_native("Array::len", std::vector<std::string>{"any[]"}, "i64", vm::array_methods::len);
+    define_native("Array::is_empty", std::vector<std::string>{"any[]"}, "bool", vm::array_methods::is_empty);
+    define_native("Array::clear", std::vector<std::string>{"any[]"}, "void", vm::array_methods::clear);
+    define_native("Array::push", std::vector<std::string>{"any[]", "any"}, "void", vm::array_methods::push);
+    define_native("Array::pop", std::vector<std::string>{"any[]"}, "any?", vm::array_methods::pop);
+    define_native("Array::insert", std::vector<std::string>{"any[]", "i64", "any"}, "void", vm::array_methods::insert);
+    define_native("Array::remove_at", std::vector<std::string>{"any[]", "i64"}, "any?", vm::array_methods::remove_at);
+    define_native("Array::u_remove_at", std::vector<std::string>{"any[]", "i64"}, "any?", vm::array_methods::u_remove_at);
+    define_native("Array::reverse", std::vector<std::string>{"any[]"}, "void", vm::array_methods::reverse);
 }
 
 } // namespace phos

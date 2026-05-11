@@ -117,6 +117,7 @@ public:
     bool is_native_defined(const std::string &name) const;
     const std::vector<Native_sig> *get_native_signatures(const std::string &name) const;
 
+    // Defined in "src/frontend/core_library/std_lib.hpp"
     void register_core_methods();
 };
 

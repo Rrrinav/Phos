@@ -5,14 +5,59 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
-#include <limits>
 #include <utility>
 
 namespace phos::vm {
 
+// --- VM Context Implementations ---
+phos::Green_thread_data &Vm_context::current_thread() const noexcept
+{
+    return *thread;
+}
+Call_frame &Vm_context::current_frame() const noexcept
+{
+    return *frame;
+}
+std::vector<phos::Value> &Vm_context::global_values() const noexcept
+{
+    return *globals;
+}
+phos::Value &Vm_context::register_at(size_t slot) const noexcept
+{
+    return registers[*frame_base + slot];
+}
+size_t Vm_context::instruction_pointer() const noexcept
+{
+    return *ip;
+}
+size_t Vm_context::current_base() const noexcept
+{
+    return *frame_base;
+}
+
+size_t Vm_context::active_stack_limit() const noexcept
+{
+    const size_t live_limit = *frame_base + FRAME_REGISTER_WINDOW;
+    return (live_limit < thread->value_stack_capacity) ? live_limit : thread->value_stack_capacity;
+}
+
+bool Vm_context::should_collect() const noexcept
+{
+    return heap->needs_gc();
+}
+
+void Vm_context::collect_garbage() const
+{
+    frame->ip = *ip;
+    thread->live_value_count = active_stack_limit();
+    heap->collect(*thread, *globals);
+}
+
+// --- Internal VM Helpers ---
+
 static size_t active_stack_limit(const Green_thread_data &thread, size_t frame_base)
 {
-    const size_t live_limit = frame_base + Virtual_machine::FRAME_REGISTER_WINDOW;
+    const size_t live_limit = frame_base + Vm_context::FRAME_REGISTER_WINDOW;
     return (live_limit < thread.value_stack_capacity) ? live_limit : thread.value_stack_capacity;
 }
 
@@ -50,21 +95,17 @@ static Upvalue_data *capture_upvalue(Green_thread_data *thread, size_t absolute_
     Upvalue_data *prev_upvalue = nullptr;
     Upvalue_data *upvalue = thread->open_upvalues;
 
-    // Get the physical memory address of the register
     Value *target_location = &thread->value_stack[absolute_stack_index];
 
-    // Traverse the linked list to keep it sorted by stack address
     while (upvalue != nullptr && upvalue->location > target_location) {
         prev_upvalue = upvalue;
         upvalue = upvalue->next;
     }
 
-    // Reuse existing upvalue if already captured
     if (upvalue != nullptr && upvalue->location == target_location) {
         return upvalue;
     }
 
-    // Allocate a new open upvalue on the GC Heap and point it at the stack
     Upvalue_data *created_upvalue = ctx.alloc<Upvalue_data>(sizeof(Upvalue_data), static_cast<uint8_t>(Value_tag::Upvalue));
     new (created_upvalue) Upvalue_data();
 
@@ -87,21 +128,10 @@ static void close_upvalues(Green_thread_data *thread, size_t last_stack_index, g
     while (thread->open_upvalues != nullptr && thread->open_upvalues->location >= limit_location) {
         Upvalue_data *upvalue = thread->open_upvalues;
 
-        // Allocate a permanent 16-byte home using raw memory (Swept by GC later)
-        Value *permanent_home = static_cast<Value *>(std::malloc(sizeof(Value)));
-        if (permanent_home == nullptr) {
-            throw std::bad_alloc{};
-        }
-        gc_heap.add_allocated_bytes(sizeof(Value));
+        upvalue->closed = *(upvalue->location);
+        upvalue->location = &upvalue->closed;
+        upvalue->is_closed = true;
 
-        // Copy the physical data from the stack into the heap
-        *permanent_home = *(upvalue->location);
-
-        // Reroute the pointer to the heap
-        upvalue->location = permanent_home;
-        upvalue->is_closed = true; // Signals the GC sweep to free the location buffer
-
-        // Advance the list
         thread->open_upvalues = upvalue->next;
     }
 }
@@ -185,7 +215,6 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             if (global_idx >= globals.size()) {
                 globals.resize(global_idx + 1, Value(nullptr));
             }
-            // Note: For Store_global, inst.ri.dst actually holds our SOURCE register
             globals[global_idx] = registers[base + inst.ri.dst];
             break;
         }
@@ -200,7 +229,6 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         case Opcode::BitXor_i64:
         case Opcode::Shl_i64:
         case Opcode::Shr_i64: {
-            /* R[dst] := R[src_a] OP R[src_b] */
             int64_t a = registers[base + inst.rrr.src_a].as_int();
             int64_t b = registers[base + inst.rrr.src_b].as_int();
 
@@ -223,8 +251,6 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         case Opcode::BitXor_u64:
         case Opcode::Shl_u64:
         case Opcode::Shr_u64: {
-
-            /* R[dst] := R[src_a] OP R[src_b] */
             uint64_t a = registers[base + inst.rrr.src_a].as_uint();
             uint64_t b = registers[base + inst.rrr.src_b].as_uint();
 
@@ -242,7 +268,6 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         case Opcode::Mul_f64:
         case Opcode::Div_f64:
         case Opcode::Mod_f64: {
-            /* R[dst] := R[src_a] OP R[src_b] */
             double a = registers[base + inst.rrr.src_a].as_float();
             double b = registers[base + inst.rrr.src_b].as_float();
 
@@ -266,7 +291,6 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         case Opcode::Cast_f16:
         case Opcode::Cast_f32:
         case Opcode::Cast_f64: {
-            /* R[dst] := (Target_Type) R[dst] */
             types::Primitive_kind target_kind = types::Primitive_kind::I64;
             switch (inst.rrr.op) {
             case Opcode::Cast_i8:
@@ -320,7 +344,6 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         case Opcode::Lte_i64:
         case Opcode::Gt_i64:
         case Opcode::Gte_i64: {
-            /* R[dst] := (R[src_a] OP R[src_b]) */
             int64_t a = registers[base + inst.rrr.src_a].as_int();
             int64_t b = registers[base + inst.rrr.src_b].as_int();
 
@@ -357,7 +380,6 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         case Opcode::Lte_u64:
         case Opcode::Gt_u64:
         case Opcode::Gte_u64: {
-            /* R[dst] := (R[src_a] OP R[src_b]) */
             uint64_t a = registers[base + inst.rrr.src_a].as_uint();
             uint64_t b = registers[base + inst.rrr.src_b].as_uint();
 
@@ -394,7 +416,6 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         case Opcode::Lte_f64:
         case Opcode::Gt_f64:
         case Opcode::Gte_f64: {
-            /* R[dst] := (R[src_a] OP R[src_b]) */
             double a = registers[base + inst.rrr.src_a].as_float();
             double b = registers[base + inst.rrr.src_b].as_float();
 
@@ -453,13 +474,11 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
 
         case Opcode::Jump: {
-            /* IP := imm */
             ip = inst.i.imm;
             break;
         }
 
         case Opcode::Jump_if_false: {
-            /* if (!R[dst]) IP := imm */
             if (!registers[base + inst.ri.dst].as_bool()) {
                 ip = inst.ri.imm;
             }
@@ -467,7 +486,6 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
 
         case Opcode::Call: {
-            /* R[dst] := call R[src_a](args...) */
             Value callee = registers[base + inst.rrr.src_a];
             uint8_t arg_count = inst.rrr.src_b;
 
@@ -494,8 +512,8 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
 
             frame->ip = ip;
             size_t new_base = base + inst.rrr.src_a + 1;
-            if (new_base + FRAME_REGISTER_WINDOW > thread->value_stack_capacity) {
-                panic("Register stack overflow! Need {} slots, have {}.", new_base + FRAME_REGISTER_WINDOW, thread->value_stack_capacity);
+            if (new_base + Vm_context::FRAME_REGISTER_WINDOW > thread->value_stack_capacity) {
+                panic("Register stack overflow! Need {} slots, have {}.", new_base + Vm_context::FRAME_REGISTER_WINDOW, thread->value_stack_capacity);
             }
 
             thread->call_stack[thread->call_stack_count++] = Call_frame(target_closure, new_base);
@@ -511,7 +529,6 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
 
         case Opcode::Return: {
-            /* return R[dst] */
             Value result = registers[base + inst.rrr.dst];
 
             close_upvalues(thread, base, gc);
@@ -519,7 +536,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
 
             if (thread->call_stack_count == 0) {
                 thread->is_completed = true;
-                return; // Replaced break with return to actually exit execution loop
+                return;
             }
 
             frame = &thread->call_stack[thread->call_stack_count - 1];
@@ -528,13 +545,11 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
 
             ip = frame->ip;
 
-            // Route the return value to the caller's destination register
             Instruction caller_inst = code[ip - 1];
             size_t old_base = base;
             base = frame->frame_base;
             registers[base + caller_inst.rrr.dst] = result;
 
-            // Clear the dead frame's registers to prevent the GC from tracing ghost references
             size_t clear_limit = active_stack_limit(*thread, old_base);
             for (size_t i = old_base; i < clear_limit; ++i) {
                 registers[i] = Value();
@@ -545,7 +560,6 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
 
         case Opcode::Print: {
-            /* Output(R[dst]) -> Stream(src_a) */
             Value result = registers[base + inst.rrr.dst];
             uint8_t stream_flag = inst.rrr.src_a;
 
@@ -558,27 +572,24 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
 
         case Opcode::Get_upvalue: {
-            /* R[dst] := Upvalue[src_a] */
             Upvalue_data *uv = frame->closure->upvalues[inst.rrr.src_a];
             registers[base + inst.rrr.dst] = *(uv->location);
             break;
         }
 
         case Opcode::Set_upvalue: {
-            /* Upvalue[dst] := R[src_a] */
             Upvalue_data *uv = frame->closure->upvalues[inst.rrr.dst];
             *(uv->location) = registers[base + inst.rrr.src_a];
             break;
         }
 
         case Opcode::Make_closure: {
-            /* R[dst] := Closure(K[imm], routing...) */
             Value prototype_val = frame->closure->constants[inst.ri.imm];
             Closure_data *prototype = prototype_val.as_closure();
 
             Closure_data *instance = ctx.alloc<Closure_data>(sizeof(Closure_data), static_cast<uint8_t>(Value_tag::Closure));
             *instance = *prototype;
-            instance->is_prototype = false; // Extremely important! Marks it for GC cleanup
+            instance->is_prototype = false;
             Value instance_val = Value::make_closure(instance, 0);
             auto guard = ctx.protect(&instance_val);
 
@@ -589,10 +600,9 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
                     throw std::bad_alloc{};
                 }
                 std::memset(instance->upvalues, 0, alloc_bytes);
-                gc.add_allocated_bytes(alloc_bytes);
+                gc.add_external_bytes(alloc_bytes);
             }
 
-            // Wire up the upvalues based on following routing instructions
             for (std::size_t i = 0; i < instance->upvalue_count; ++i) {
                 Instruction route = code[ip++];
                 bool is_local = (route.rrr.src_a == 1);
@@ -892,6 +902,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
                 default:
                     std::unreachable();
                 }
+
                 registers[base + inst.rrr.dst] = val.wrap_optional(1);
             }
             break;
@@ -1007,7 +1018,6 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             break;
         }
         default: {
-            /* ??? */
             panic("Unrecognized or unimplemented Opcode: {}", opcode_to_string(inst.rrr.op));
             break;
         }

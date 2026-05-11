@@ -1,0 +1,7 @@
+import constants;
+import state;
+
+fn apply_gravity(velocity: f64, time: f64) -> f64 {
+    state::advance_steps(1);
+    return velocity - (constants::GRAVITY * time);
+}

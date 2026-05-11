@@ -1,0 +1,6 @@
+// 'const' is evaluated at compile-time. The VM does not allocate memory for this; 
+// the bytecode compiler directly substitutes '9.81' wherever 'GRAVITY' is used.
+const GRAVITY := 9.81;
+
+// 'static' allocates a dedicated slot in the VM's global memory array.
+static engine_name := "Phos Physics v2.0";

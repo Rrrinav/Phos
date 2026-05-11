@@ -522,6 +522,24 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
 
 err::Engine Semantic_checker::check_workspace()
 {
+    for (const auto &[name, sigs] : ctx.type_env.native_signatures) {
+        if (!ctx.registry.lookup_global(name)) {
+            Symbol sym{
+                .id = Symbol_id{0},
+                .name = name,
+                .kind = Symbol_kind::Native_func,
+                .type = ctx.tt.get_unknown(),
+                .owner_module = Module_id{0},
+                .is_public = true,
+                .const_value = std::nullopt,
+                .global_index = std::nullopt,
+                .stack_offset = std::nullopt,
+                .ffi_index = std::nullopt,
+                .declaration = ast::Stmt_id::null()
+            };
+            ctx.registry.create_symbol(std::move(sym));
+        }
+    }
     for (const auto &module : ctx.workspace.modules) {
         if (hoisted_modules.contains(module.id)) {
             continue;
@@ -563,6 +581,25 @@ void Semantic_checker::check_module(Module_id mod_id)
 err::Engine Semantic_checker::check(const std::vector<ast::Stmt_id> &statements)
 {
     (void)statements;
+
+    for (const auto &[name, sigs] : ctx.type_env.native_signatures) {
+        if (!ctx.registry.lookup_global(name)) {
+            Symbol sym{
+                .id = Symbol_id{0},
+                .name = name,
+                .kind = Symbol_kind::Native_func,
+                .type = ctx.tt.get_unknown(),
+                .owner_module = Module_id{0},
+                .is_public = true,
+                .const_value = std::nullopt,
+                .global_index = std::nullopt,
+                .stack_offset = std::nullopt,
+                .ffi_index = std::nullopt,
+                .declaration = ast::Stmt_id::null()
+            };
+            ctx.registry.create_symbol(std::move(sym));
+        }
+    }
 
     for (const auto &module : ctx.workspace.modules) {
         hoist_globals(module.id);

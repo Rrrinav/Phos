@@ -1,0 +1,11 @@
+static mut simulation_steps := 0;
+
+fn get_steps() -> i64 {
+    return simulation_steps as i64;
+}
+
+fn advance_steps(amount: i64) {
+    // This parses cleanly as a Variable_expr, and the semantic checker allows it 
+    // because the mutation is happening INSIDE the module that owns the variable!
+    simulation_steps = (simulation_steps + amount) as i32;
+}

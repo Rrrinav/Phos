@@ -12,6 +12,7 @@
 #include <string>
 #include <string_view>
 
+// Completely removes gc_context ambiguity!
 namespace phos::vm {
 struct Vm_context;
 }
@@ -54,6 +55,7 @@ struct Value;
 // Forward declaration needed because Value holds a pointer to it,
 // but Iterator_data holds Value by-value.
 struct Iterator_data;
+struct Upvalue_data;
 
 using Native_fn = Value (*)(vm::Vm_context &, std::span<Value> args);
 
@@ -76,6 +78,7 @@ struct Array_data
 {
     uint32_t capacity;
     uint32_t count;
+    bool elements_on_heap{false};
     struct Value *elements;
 };
 
@@ -83,6 +86,7 @@ struct Model_data
 {
     types::Model_type signature;
     uint32_t field_count;
+    bool fields_on_heap{false};
     struct Value *fields;
 };
 
@@ -91,13 +95,6 @@ struct Union_data
     String_data *union_name;
     String_data *variant_name;
     struct Value *payload;
-};
-
-struct Upvalue_data
-{
-    struct Value *location;
-    Upvalue_data *next;
-    bool is_closed{false}; // tells gc to free the location
 };
 
 struct Closure_data
@@ -488,7 +485,14 @@ public:
 
 static_assert(sizeof(Value) == 16, "Value struct must be exactly 16 bytes for L1 Cache alignment.");
 
-// Placed here so Value is fully defined before it is embedded in Iterator_data
+struct Upvalue_data
+{
+    struct Value *location;
+    Upvalue_data *next;
+    Value closed;
+    bool is_closed{false}; // tells gc to free the location
+};
+
 struct Iterator_data
 {
     enum class State_type : uint8_t { Empty, Singleton, Interval, Array, String };

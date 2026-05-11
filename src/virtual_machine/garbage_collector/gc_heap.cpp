@@ -35,28 +35,28 @@ static void free_payload(Gc_heap &heap, Gc_cell *cell)
     auto tag = static_cast<phos::Value_tag>(cell->kind);
     if (tag == phos::Value_tag::Array) {
         auto *arr = static_cast<phos::Array_data *>(cell->payload());
-        heap.remove_allocated_bytes(arr->capacity * sizeof(phos::Value));
-        std::free(arr->elements);
+        if (arr->elements_on_heap) {
+            heap.remove_external_bytes(arr->capacity * sizeof(phos::Value));
+            std::free(arr->elements);
+        }
     } else if (tag == phos::Value_tag::Model) {
         auto *m = static_cast<phos::Model_data *>(cell->payload());
-        heap.remove_allocated_bytes(m->field_count * sizeof(phos::Value));
-        std::free(m->fields);
+        if (m->fields_on_heap) {
+            heap.remove_external_bytes(m->field_count * sizeof(phos::Value));
+            std::free(m->fields);
+        }
     } else if (tag == phos::Value_tag::Union) {
         auto *u = static_cast<phos::Union_data *>(cell->payload());
-        heap.remove_allocated_bytes(sizeof(phos::Value));
+        heap.remove_external_bytes(sizeof(phos::Value));
         std::free(u->payload);
     } else if (tag == phos::Value_tag::Closure) {
         auto *c = static_cast<phos::Closure_data *>(cell->payload());
         if (!c->is_prototype && c->upvalues != nullptr) {
-            heap.remove_allocated_bytes(c->upvalue_count * sizeof(phos::Upvalue_data *));
+            heap.remove_external_bytes(c->upvalue_count * sizeof(phos::Upvalue_data *));
         }
         std::free(c->upvalues);
     } else if (tag == phos::Value_tag::Upvalue) {
-        auto *uv = static_cast<phos::Upvalue_data *>(cell->payload());
-        if (uv->is_closed) {
-            heap.remove_allocated_bytes(sizeof(phos::Value));
-            std::free(uv->location);
-        }
+        (void)cell;
     }
 }
 
@@ -103,7 +103,6 @@ void Gc_heap::collect(phos::Green_thread_data &thread, std::vector<phos::Value> 
 
 void Gc_heap::mark_value(phos::Value &v)
 {
-    // O(1) Check! If the object lives in the Arena, immediately skip it!
     if (!v.is_gc()) {
         return;
     }

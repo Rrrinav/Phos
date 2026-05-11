@@ -1,0 +1,59 @@
+import io;
+
+enum errt {
+    out_of_memory,
+    unknown_fault,
+
+    enum io {
+        would_block,
+        not_found,
+        permission_denied,
+    }
+
+    enum bounds {
+        overflow,
+        underflow,
+        index_out_of_range,
+    }
+}
+
+model err($T = errt) {
+    t: T;
+    msg: string;
+}
+
+fn read_config(path: string) data: string = "", e: err(errt::io)? {
+    if path == "" {
+        return "", .{ .not_found, "Config file path is empty." };
+    }
+
+    return "host=localhost;port=8080", nil;
+}
+
+fn parse_port(data: string) port: i32 = 0, e: err(errt::bounds)? {
+    let p = data.to_i32();
+    if p > 65535 {
+        return 0, .{ .overflow, "Port number cannot exceed 65535." };
+    }
+    return p, nil;
+}
+
+fn initialize_server() config: string, port: i32, e: err? {
+    let config_data := or_return(read_config("server.conf"));
+
+    let port_num := or_return(parse_port("80000"));
+
+    return config_data, port_num, nil;
+}
+
+fn main() {
+    let cfg, prt, final_err := initialize_server();
+
+    if final_err.is_val() {
+        let actual_error = final_err.get();
+        io::print("Server boot failed. Type: {}, Message: {}", actual_error.t, actual_error.msg);
+        return;
+    }
+
+    io::printf("Server booted on port {}", prt);
+}

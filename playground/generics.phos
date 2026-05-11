@@ -1,6 +1,4 @@
-// This is a playground to save the desired syntax for implementation in future.
-
-model[T: Type] vec {
+model vec($T) {
     @if @is_integral(T) {
         x: T;
         y: T;
@@ -10,40 +8,92 @@ model[T: Type] vec {
     } @else {
         @error("This type is not supported by vec");
     }
-};
+}
 
-model[T] vec
+model vec($T)
 where { @is_integral(T) || @is_floating(T) }
 error { "vectors can only contain magnitudes i.e numbers" } {
     x: T;
     y: T;
-};
+}
 
-
-model[@numerical(T)] vec {
+model vec($T: @numerical) {
     x: T;
     y: T;
-};
+}
 
-fn foo[T](x: T) -> T where { @is_string(T) || @is_array_of(T, string) } {
+fn foo($T, x: T) -> T where { @is_string(T) || @is_array_of(T, string) } {
     @match T {
         string => {
             return x + "foo";
         },
         string[] => {
-            y = clone(x);
+            let y = clone(x);
             y.push("f");
             y.push("o");
             y.push("o");
             return y;
+        },
+        _ => {
+            @error("Unsupported type");
         }
-        _ => { @error("Unsupported type"); }
     }
 }
 
-model[c: i64] Counter {
-    l :i64 = 0;
-    h :i64 = c;
+model Counter($c: i64) {
+    l: i64 = 0;
+    h: i64 = c;
 }
 
-vec[u8] v = {};
+fn main() {
+    let v: vec(u8) = .{ x: 0, y: 0 };
+    let count: Counter(10) = .{};
+
+    let s = foo("hello");
+    let arr = foo(["a", "b"]);
+
+    let s2 = foo(string, "hello");
+}
+
+fn default_hash($T, x: T) -> i64;
+
+fn default_hash(x: string) -> i64 {
+    return fnv1a(x);
+}
+
+model hash_map($key = string, $val = i32, $resize_factor: f32 = 0.7) {
+    !hash : fn(key) -> i64 = default_hash;
+    !bucket : val?[];
+    count := 0;
+}
+
+bind hash_map($key, $val) {
+    fn put(x: key, y: val) -> i64 {
+        if this.needs_resize() {
+            resize();
+        }
+
+        let i := this.hash(x) % len(bucket);
+        if bucket[x].is_val() {
+            i = probe(i);
+            bucket[i] = y;
+        } else {
+            bucket[x] = y;
+        }
+        return i;
+    }
+
+    fn get(x: key) {
+        @ast {
+            (@name_of(this).bucket[@name_of(this).index_or_add_def(x)])
+        }
+    }
+
+    fn operator[](x: key) {
+        @ast {
+            (@name_of(this).bucket[@name_of(this).index_or_add_def(x)])
+        }
+    }
+}
+
+let map : hash_map(int, hash_map(int, int)) = .{};

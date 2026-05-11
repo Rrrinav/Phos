@@ -1,0 +1,21 @@
+import physics.kinematics;
+import physics.constants;
+import physics.state;
+import math.shapes.circle;
+
+print("Testing", constants::engine_name);
+
+let initial_velocity := 50.0;
+let time := 2.5;
+
+print("Initial velocity:", initial_velocity);
+let current_velocity := kinematics::apply_gravity(initial_velocity, time);
+print("Velocity after", time, "seconds:", current_velocity);
+
+// Modifying global state safely using the exposed module function!
+state::advance_steps(10);
+print("Total simulation steps:", state::get_steps());
+
+print("\nTesting Math & Geometry");
+let my_circle : circle::Circle = .{ radius: 10.0 };
+print("Circle area:", my_circle.area());

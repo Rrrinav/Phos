@@ -4,15 +4,25 @@
 #include "virtual_machine/vm_context.hpp"
 
 #include <charconv>
-#include <cstring>
-#include <limits>
-#include <format>
-#include <type_traits>
 #include <cstdlib>
+#include <cstring>
+#include <format>
+#include <limits>
 #include <memory>
-#include <new>
+#include <type_traits>
 
 namespace phos {
+
+namespace {
+
+template <typename T, typename Element>
+Element *trailing_storage(T *base)
+{
+    auto *raw = reinterpret_cast<char *>(base) + sizeof(T);
+    return reinterpret_cast<Element *>(raw);
+}
+
+} // namespace
 
 template <typename Allocator>
 Value Value::make_string(Allocator &alloc, std::string_view text, uint8_t depth)
@@ -41,28 +51,28 @@ Value Value::make_array(Allocator &alloc, uint32_t capacity, uint8_t depth)
 {
     Array_data *arr = nullptr;
     bool is_gc = std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>;
+    const size_t total_size = sizeof(Array_data) + (static_cast<size_t>(capacity) * sizeof(Value));
 
     if constexpr (std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>) {
-        arr = alloc.template alloc<Array_data>(sizeof(Array_data), static_cast<uint8_t>(Value_tag::Array));
+        arr = alloc.template alloc<Array_data>(total_size, static_cast<uint8_t>(Value_tag::Array));
         new (arr) Array_data();
         arr->capacity = capacity;
         arr->count = 0;
+        arr->elements_on_heap = false; // Trailing natively!
 
         if (capacity > 0) {
-            arr->elements = static_cast<Value *>(std::malloc(capacity * sizeof(Value)));
-            if (arr->elements == nullptr) {
-                throw std::bad_alloc{};
-            }
+            arr->elements = trailing_storage<Array_data, Value>(arr);
             std::uninitialized_fill_n(arr->elements, capacity, Value());
-            alloc.gc_heap().add_allocated_bytes(capacity * sizeof(Value));
         } else {
             arr->elements = nullptr;
         }
     } else {
+        // Fallback for Arena (can't easily do trailing without manual memory blocks)
         arr = alloc.template allocate<Array_data>();
         new (arr) Array_data();
         arr->capacity = capacity;
         arr->count = 0;
+        arr->elements_on_heap = true;
 
         if (capacity > 0) {
             arr->elements = alloc.template allocate<Value>(capacity);
@@ -80,20 +90,18 @@ Value Value::make_model(Allocator &alloc, types::Model_type sig, uint32_t field_
 {
     Model_data *model = nullptr;
     bool is_gc = std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>;
+    const size_t total_size = sizeof(Model_data) + (static_cast<size_t>(field_count) * sizeof(Value));
 
     if constexpr (std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>) {
-        model = alloc.template alloc<Model_data>(sizeof(Model_data), static_cast<uint8_t>(Value_tag::Model));
+        model = alloc.template alloc<Model_data>(total_size, static_cast<uint8_t>(Value_tag::Model));
         new (model) Model_data();
         model->signature = std::move(sig);
         model->field_count = field_count;
+        model->fields_on_heap = false; // Trailing!
 
         if (field_count > 0) {
-            model->fields = static_cast<Value *>(std::malloc(field_count * sizeof(Value)));
-            if (model->fields == nullptr) {
-                throw std::bad_alloc{};
-            }
+            model->fields = trailing_storage<Model_data, Value>(model);
             std::uninitialized_fill_n(model->fields, field_count, Value());
-            alloc.gc_heap().add_allocated_bytes(field_count * sizeof(Value));
         } else {
             model->fields = nullptr;
         }
@@ -102,6 +110,7 @@ Value Value::make_model(Allocator &alloc, types::Model_type sig, uint32_t field_
         new (model) Model_data();
         model->signature = std::move(sig);
         model->field_count = field_count;
+        model->fields_on_heap = true;
 
         if (field_count > 0) {
             model->fields = alloc.template allocate<Value>(field_count);
@@ -121,17 +130,14 @@ Value Value::make_union(Allocator &alloc, String_data *u_name, String_data *v_na
     bool is_gc = std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>;
 
     if constexpr (std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>) {
-        un = alloc.template alloc<Union_data>(sizeof(Union_data), static_cast<uint8_t>(Value_tag::Union));
+        const size_t total_size = sizeof(Union_data) + sizeof(Value);
+        un = alloc.template alloc<Union_data>(total_size, static_cast<uint8_t>(Value_tag::Union));
         new (un) Union_data();
         un->union_name = u_name;
         un->variant_name = v_name;
 
-        un->payload = static_cast<Value *>(std::malloc(sizeof(Value)));
-        if (un->payload == nullptr) {
-            throw std::bad_alloc{};
-        }
+        un->payload = trailing_storage<Union_data, Value>(un);
         *(un->payload) = payload;
-        alloc.gc_heap().add_allocated_bytes(sizeof(Value));
     } else {
         un = alloc.template allocate<Union_data>();
         new (un) Union_data();
@@ -193,21 +199,20 @@ Value Value::make_iterator(Allocator &alloc, uint8_t depth)
 // -----------------------------------------------------------------------------
 
 // Arena Instantiations (Compile-time)
-template Value Value::make_string(mem::Arena&, std::string_view, uint8_t);
-template Value Value::make_array(mem::Arena&, uint32_t, uint8_t);
-template Value Value::make_model(mem::Arena&, types::Model_type, uint32_t, uint8_t);
-template Value Value::make_union(mem::Arena&, String_data*, String_data*, Value, uint8_t);
-template Value Value::make_closure_native(mem::Arena&, String_data*, size_t, types::Function_type, Native_fn, uint8_t);
-template Value Value::make_iterator(mem::Arena&, uint8_t);
+template Value Value::make_string(mem::Arena &, std::string_view, uint8_t);
+template Value Value::make_array(mem::Arena &, uint32_t, uint8_t);
+template Value Value::make_model(mem::Arena &, types::Model_type, uint32_t, uint8_t);
+template Value Value::make_union(mem::Arena &, String_data *, String_data *, Value, uint8_t);
+template Value Value::make_closure_native(mem::Arena &, String_data *, size_t, types::Function_type, Native_fn, uint8_t);
+template Value Value::make_iterator(mem::Arena &, uint8_t);
 
-// GC Context Instantiations (Runtime)
-template Value Value::make_string(vm::Vm_context&, std::string_view, uint8_t);
-template Value Value::make_array(vm::Vm_context&, uint32_t, uint8_t);
-template Value Value::make_model(vm::Vm_context&, types::Model_type, uint32_t, uint8_t);
-template Value Value::make_union(vm::Vm_context&, String_data*, String_data*, Value, uint8_t);
-template Value Value::make_closure_native(vm::Vm_context&, String_data*, size_t, types::Function_type, Native_fn, uint8_t);
-template Value Value::make_iterator(vm::Vm_context&, uint8_t);
-
+// VM Context Instantiations (Runtime) - THESE FIX THE LINKER ERRORS!
+template Value Value::make_string(vm::Vm_context &, std::string_view, uint8_t);
+template Value Value::make_array(vm::Vm_context &, uint32_t, uint8_t);
+template Value Value::make_model(vm::Vm_context &, types::Model_type, uint32_t, uint8_t);
+template Value Value::make_union(vm::Vm_context &, String_data *, String_data *, Value, uint8_t);
+template Value Value::make_closure_native(vm::Vm_context &, String_data *, size_t, types::Function_type, Native_fn, uint8_t);
+template Value Value::make_iterator(vm::Vm_context &, uint8_t);
 
 // Numeric Getters with Implicit Upcasting
 int64_t Value::as_int() const
@@ -604,7 +609,8 @@ bool Value::operator==(const Value &other) const
     return false;
 }
 
-types::Primitive_kind numeric_type_of(const Value& literal) {
+types::Primitive_kind numeric_type_of(const Value &literal)
+{
     if (literal.is_float()) {
         return types::Primitive_kind::F64;
     }

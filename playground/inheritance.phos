@@ -1,0 +1,14 @@
+model person {
+    name: string;
+    uid: i64;
+}
+
+model employee : person as p {
+    type: string;
+}
+
+x : employee = .{ p: { name: "hoi", uid: 10 }, type: "janitor" };
+x : person::employee = .{ p: { name: "hoi", uid: 10 }, type: "janitor" };
+print(x.p.name, x.p.uid);
+print(x.p);
+print(x as person);

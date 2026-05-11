@@ -1,13 +1,18 @@
 #pragma once
 
-#include "core/arena.hpp"
-#include "core/value/value.hpp"
 #include "virtual_machine/garbage_collector/gc_heap.hpp"
 
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <vector>
+
+namespace phos {
+struct Value;
+struct Green_thread_data;
+} // namespace phos
+namespace phos::mem {
+class Arena;
+}
 
 namespace phos::vm {
 
@@ -51,14 +56,9 @@ struct Root_guard
     }
 };
 
-// VM-aware execution context passed to native functions.
-//
-// It exposes the GC heap and scratch arena like the old GC context, but it
-// also carries the currently executing VM state so FFI can inspect and mutate
-// runtime state intentionally when needed.
 struct Vm_context
 {
-    static constexpr size_t FRAME_REGISTER_WINDOW = static_cast<size_t>(std::numeric_limits<uint8_t>::max()) + 1;
+    static constexpr size_t FRAME_REGISTER_WINDOW = 256;
 
     Virtual_machine *machine = nullptr;
     gc::Gc_heap *heap = nullptr;
@@ -75,74 +75,40 @@ struct Vm_context
         return Root_guard{*heap, value};
     }
 
-    template<typename T>
+    template <typename T>
     [[nodiscard]] T *alloc(size_t payload_bytes, uint8_t kind) const
     {
         return static_cast<T *>(heap->alloc(payload_bytes, kind));
+    }
+
+    void add_external_bytes(size_t bytes) const
+    {
+        heap->add_external_bytes(bytes);
     }
 
     [[nodiscard]] Virtual_machine &vm() const noexcept
     {
         return *machine;
     }
-
     [[nodiscard]] gc::Gc_heap &gc_heap() const noexcept
     {
         return *heap;
     }
-
     [[nodiscard]] mem::Arena &scratch_arena() const noexcept
     {
         return *scratch;
     }
 
-    [[nodiscard]] phos::Green_thread_data &current_thread() const noexcept
-    {
-        return *thread;
-    }
-
-    [[nodiscard]] Call_frame &current_frame() const noexcept
-    {
-        return *frame;
-    }
-
-    [[nodiscard]] std::vector<phos::Value> &global_values() const noexcept
-    {
-        return *globals;
-    }
-
-    [[nodiscard]] phos::Value &register_at(size_t slot) const noexcept
-    {
-        return registers[*frame_base + slot];
-    }
-
-    [[nodiscard]] size_t instruction_pointer() const noexcept
-    {
-        return *ip;
-    }
-
-    [[nodiscard]] size_t current_base() const noexcept
-    {
-        return *frame_base;
-    }
-
-    [[nodiscard]] size_t active_stack_limit() const noexcept
-    {
-        const size_t live_limit = *frame_base + FRAME_REGISTER_WINDOW;
-        return (live_limit < thread->value_stack_capacity) ? live_limit : thread->value_stack_capacity;
-    }
-
-    [[nodiscard]] bool should_collect() const noexcept
-    {
-        return heap->needs_gc();
-    }
-
-    void collect_garbage() const
-    {
-        frame->ip = *ip;
-        thread->live_value_count = active_stack_limit();
-        heap->collect(*thread, *globals);
-    }
+    // Method Declarations (Implementations moved to .cpp to fix incomplete types)
+    [[nodiscard]] phos::Green_thread_data &current_thread() const noexcept;
+    [[nodiscard]] Call_frame &current_frame() const noexcept;
+    [[nodiscard]] std::vector<phos::Value> &global_values() const noexcept;
+    [[nodiscard]] phos::Value &register_at(size_t slot) const noexcept;
+    [[nodiscard]] size_t instruction_pointer() const noexcept;
+    [[nodiscard]] size_t current_base() const noexcept;
+    [[nodiscard]] size_t active_stack_limit() const noexcept;
+    [[nodiscard]] bool should_collect() const noexcept;
+    void collect_garbage() const;
 };
 
 } // namespace phos::vm

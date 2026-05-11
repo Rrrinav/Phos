@@ -2,7 +2,6 @@
 
 #include "core/value/value.hpp"
 #include "frontend/environment/type_environment.hpp"
-#include "virtual_machine/garbage_collector/gc_context.hpp"
 
 #include <algorithm>
 #include <cmath>
