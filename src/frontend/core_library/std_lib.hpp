@@ -1,21 +1,27 @@
 #include "core/value/value.hpp"
 
+#include "virtual_machine/vm_context.hpp"
+
+#include <charconv>
 #include <chrono>
-#include <iostream>
-#include <utility>
+#include <cstdlib>
+#include <cstring>
 #include <print>
+#include <utility>
 
 namespace phos::vm {
 
+using Ctx = vm::Vm_context;
+
 struct core
 {
-    static phos::Value native_clock(mem::Arena &, std::span<phos::Value> args)
+    static phos::Value native_clock(Ctx &, std::span<phos::Value>)
     {
         auto now = std::chrono::steady_clock::now().time_since_epoch();
         return phos::Value(std::chrono::duration<double>(now).count());
     }
 
-    static phos::Value native_is_same(mem::Arena &, std::span<phos::Value> args)
+    static phos::Value native_is_same(Ctx &, std::span<phos::Value> args)
     {
         if (args.size() < 2) {
             return phos::Value(false);
@@ -54,17 +60,16 @@ struct core
             return phos::Value(a.as_upvalue() == b.as_upvalue());
 
         default:
-            // primitives (numbers, bool, nil)
             return phos::Value(a == b);
         }
     }
 
-    [[noreturn]] static phos::Value exit(mem::Arena &, std::span<phos::Value> args)
+    [[noreturn]] static phos::Value exit(Ctx &, std::span<phos::Value> args)
     {
         std::exit(args[0].as_int());
     }
 
-    static phos::Value native_len(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value native_len(Ctx &, std::span<phos::Value> args)
     {
         const phos::Value &val = args[0];
 
@@ -81,13 +86,13 @@ struct core
 
 struct numerical
 {
-    static Value to_string(mem::Arena &arena, std::span<phos::Value> args)
+    static Value to_string(Ctx &ctx, std::span<phos::Value> args)
     {
         std::string str_val = args[0].to_string();
-        return phos::Value::make_string(arena, str_val);
+        return phos::Value::make_string(ctx, str_val);
     }
 
-    static phos::Value parse_i64(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value parse_i64(Ctx &, std::span<phos::Value> args)
     {
         std::string_view str = args[0].as_string();
 
@@ -98,7 +103,6 @@ struct numerical
         str = str.substr(start);
 
         int64_t result = 0;
-
         auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), result);
 
         if (ec == std::errc()) {
@@ -108,7 +112,7 @@ struct numerical
         return phos::Value();
     }
 
-    static phos::Value parse_f64(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value parse_f64(Ctx &, std::span<phos::Value> args)
     {
         std::string_view str = args[0].as_string();
 
@@ -119,7 +123,6 @@ struct numerical
         str = str.substr(start);
 
         double result = 0.0;
-
         auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), result);
 
         if (ec == std::errc()) {
@@ -132,11 +135,10 @@ struct numerical
 
 struct string_methods
 {
-    static phos::Value substr(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value substr(Ctx &ctx, std::span<phos::Value> args)
     {
         std::string_view str = args[0].as_string();
 
-        // 1. Safely extract start index
         size_t start = 0;
         if (auto opt_u = args[1].try_as_u64(); opt_u) {
             start = static_cast<size_t>(*opt_u);
@@ -144,7 +146,6 @@ struct string_methods
             start = *opt_i < 0 ? 0 : static_cast<size_t>(*opt_i);
         }
 
-        // 2. Safely extract length
         size_t length = 0;
         if (auto opt_u = args[2].try_as_u64(); opt_u) {
             length = static_cast<size_t>(*opt_u);
@@ -152,45 +153,43 @@ struct string_methods
             length = *opt_i < 0 ? 0 : static_cast<size_t>(*opt_i);
         }
 
-        // 3. Strict bounds checking to prevent host VM crashes
         if (start >= str.length() || length == 0) {
-            return phos::Value::make_string(arena, "");
+            return phos::Value::make_string(ctx, "");
         }
 
         if (start + length > str.length()) {
             length = str.length() - start;
         }
 
-        return phos::Value::make_string(arena, str.substr(start, length));
+        return phos::Value::make_string(ctx, str.substr(start, length));
     }
 
-    static phos::Value starts_with(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value starts_with(Ctx &, std::span<phos::Value> args)
     {
         return phos::Value(args[0].as_string().starts_with(args[1].as_string()));
     }
 
-    static phos::Value ends_with(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value ends_with(Ctx &, std::span<phos::Value> args)
     {
         return phos::Value(args[0].as_string().ends_with(args[1].as_string()));
     }
 
-    static phos::Value trim(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value trim(Ctx &ctx, std::span<phos::Value> args)
     {
         std::string_view str = args[0].as_string();
         size_t first = str.find_first_not_of(" \t\r\n");
 
         if (first == std::string_view::npos) {
-            return phos::Value::make_string(arena, ""); // Entirely whitespace
+            return phos::Value::make_string(ctx, "");
         }
 
         size_t last = str.find_last_not_of(" \t\r\n");
         std::string_view trimmed = str.substr(first, (last - first + 1));
 
-        // Allocate the trimmed view into the Arena
-        return phos::Value::make_string(arena, trimmed);
+        return phos::Value::make_string(ctx, trimmed);
     }
 
-    static phos::Value to_upper(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value to_upper(Ctx &ctx, std::span<phos::Value> args)
     {
         std::string_view str = args[0].as_string();
         std::string upper_str(str);
@@ -199,10 +198,10 @@ struct string_methods
             c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
         }
 
-        return phos::Value::make_string(arena, upper_str);
+        return phos::Value::make_string(ctx, upper_str);
     }
 
-    static phos::Value to_lower(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value to_lower(Ctx &ctx, std::span<phos::Value> args)
     {
         std::string_view str = args[0].as_string();
         std::string lower_str(str);
@@ -211,15 +210,14 @@ struct string_methods
             c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         }
 
-        return phos::Value::make_string(arena, lower_str);
+        return phos::Value::make_string(ctx, lower_str);
     }
 
-    static phos::Value split(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value split(Ctx &ctx, std::span<phos::Value> args)
     {
         std::string_view str = args[0].as_string();
         std::string_view delim = args[1].as_string();
 
-        // 1. Collect the split views into a temporary vector so we know the exact count
         std::vector<std::string_view> temp_parts;
 
         if (delim.empty()) {
@@ -233,24 +231,24 @@ struct string_methods
                 temp_parts.push_back(str.substr(start, end - start));
                 start = end + delim.length();
             }
-            // Push the final chunk
             temp_parts.push_back(str.substr(start));
         }
 
-        // 2. Allocate the exact capacity needed in the Arena using your make_array
         uint32_t capacity = static_cast<uint32_t>(temp_parts.size());
-        phos::Value arr_val = phos::Value::make_array(arena, capacity);
+        phos::Value arr_val = phos::Value::make_array(ctx, capacity);
         auto *arr = arr_val.as_array();
 
-        // 3. Populate the raw pointer array and set the final count
+        auto guard = ctx.protect(&arr_val);
+
         for (uint32_t i = 0; i < capacity; ++i) {
-            arr->elements[i] = phos::Value::make_string(arena, temp_parts[i]);
+            arr->elements[i] = phos::Value::make_string(ctx, temp_parts[i]);
+            arr->count = i + 1;
         }
-        arr->count = capacity;
 
         return arr_val;
     }
-    static phos::Value repeat(mem::Arena &arena, std::span<phos::Value> args)
+
+    static phos::Value repeat(Ctx &ctx, std::span<phos::Value> args)
     {
         if (args.size() < 2 || !args[0].is_string() || !args[1].is_integer()) {
             return phos::Value();
@@ -260,10 +258,9 @@ struct string_methods
         int64_t count = args[1].as_int();
 
         if (count <= 0 || str.empty()) {
-            return phos::Value::make_string(arena, "");
+            return phos::Value::make_string(ctx, "");
         }
 
-        // Pre-allocate the exact memory needed to avoid reallocations
         std::string result;
         result.reserve(str.length() * static_cast<size_t>(count));
 
@@ -271,10 +268,10 @@ struct string_methods
             result.append(str);
         }
 
-        return phos::Value::make_string(arena, result);
+        return phos::Value::make_string(ctx, result);
     }
 
-    static phos::Value index_of(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value index_of(Ctx &, std::span<phos::Value> args)
     {
         if (args.size() < 2 || !args[0].is_string() || !args[1].is_string()) {
             return phos::Value();
@@ -286,7 +283,7 @@ struct string_methods
         size_t pos = haystack.find(needle);
 
         if (pos == std::string_view::npos) {
-            return phos::Value(); // Returns monadic nil (Depth 0)
+            return phos::Value(); 
         }
 
         return phos::Value(static_cast<int64_t>(pos));
@@ -295,82 +292,99 @@ struct string_methods
 
 struct array_methods
 {
-    static phos::Value len(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value len(Ctx &, std::span<phos::Value> args)
     {
         return phos::Value(static_cast<int64_t>(args[0].as_array()->count));
     }
 
-    static phos::Value is_empty(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value is_empty(Ctx &, std::span<phos::Value> args)
     {
         return phos::Value(args[0].as_array()->count == 0);
     }
 
-    static phos::Value clear(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value clear(Ctx &, std::span<phos::Value> args)
     {
         args[0].as_array()->count = 0;
         return phos::Value();
     }
 
-    static phos::Value push(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value push(Ctx &ctx, std::span<phos::Value> args)
     {
         auto *arr = args[0].as_array();
 
-        // 1. Check if we need to resize
         if (arr->count >= arr->capacity) {
             uint32_t new_cap = arr->capacity == 0 ? 8 : arr->capacity * 2;
-            phos::Value *new_elems = arena.allocate<phos::Value>(new_cap);
+            phos::Value *new_elems = nullptr;
 
-            // 2. Copy old elements to the new arena block
-            if (arr->elements) {
-                for (uint32_t i = 0; i < arr->count; ++i) {
-                    new_elems[i] = arr->elements[i];
+            if (arr->elements_on_heap) {
+                new_elems = static_cast<phos::Value *>(std::realloc(arr->elements, sizeof(phos::Value) * new_cap));
+                if (!new_elems) throw std::bad_alloc{};
+                ctx.add_external_bytes((new_cap - arr->capacity) * sizeof(phos::Value));
+            } else {
+                new_elems = static_cast<phos::Value *>(std::malloc(sizeof(phos::Value) * new_cap));
+                if (!new_elems) throw std::bad_alloc{};
+
+                if (arr->elements && arr->count > 0) {
+                    std::memcpy(new_elems, arr->elements, arr->count * sizeof(phos::Value));
                 }
+
+                ctx.add_external_bytes(new_cap * sizeof(phos::Value));
+                arr->elements_on_heap = true;
             }
 
+            std::uninitialized_fill_n(new_elems + arr->capacity, new_cap - arr->capacity, phos::Value());
             arr->elements = new_elems;
             arr->capacity = new_cap;
         }
 
-        // 3. Append the new value
         arr->elements[arr->count++] = args[1];
         return phos::Value();
     }
 
-    static phos::Value pop(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value pop(Ctx &, std::span<phos::Value> args)
     {
         auto *arr = args[0].as_array();
         if (arr->count == 0) {
-            return phos::Value(); // Return monadic nil
+            return phos::Value();
         }
 
-        // Just decrement count and return the value that is now "out of bounds"
         return arr->elements[--arr->count];
     }
 
-    static phos::Value insert(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value insert(Ctx &ctx, std::span<phos::Value> args)
     {
         auto *arr = args[0].as_array();
         int64_t idx = args[1].as_int();
 
         if (idx < 0 || idx > static_cast<int64_t>(arr->count)) {
-            return phos::Value(); // Out of bounds
+            return phos::Value(); 
         }
 
-        // Resize if at capacity
         if (arr->count >= arr->capacity) {
             uint32_t new_cap = arr->capacity == 0 ? 8 : arr->capacity * 2;
-            phos::Value *new_elems = arena.allocate<phos::Value>(new_cap);
+            phos::Value *new_elems = nullptr;
 
-            if (arr->elements) {
-                for (uint32_t i = 0; i < arr->count; ++i) {
-                    new_elems[i] = arr->elements[i];
+            if (arr->elements_on_heap) {
+                new_elems = static_cast<phos::Value *>(std::realloc(arr->elements, sizeof(phos::Value) * new_cap));
+                if (!new_elems) throw std::bad_alloc{};
+                ctx.add_external_bytes((new_cap - arr->capacity) * sizeof(phos::Value));
+            } else {
+                new_elems = static_cast<phos::Value *>(std::malloc(sizeof(phos::Value) * new_cap));
+                if (!new_elems) throw std::bad_alloc{};
+
+                if (arr->elements && arr->count > 0) {
+                    std::memcpy(new_elems, arr->elements, arr->count * sizeof(phos::Value));
                 }
+
+                ctx.add_external_bytes(new_cap * sizeof(phos::Value));
+                arr->elements_on_heap = true;
             }
+
+            std::uninitialized_fill_n(new_elems + arr->capacity, new_cap - arr->capacity, phos::Value());
             arr->elements = new_elems;
             arr->capacity = new_cap;
         }
 
-        // Shift elements right to make room
         for (uint32_t i = arr->count; i > static_cast<uint32_t>(idx); --i) {
             arr->elements[i] = arr->elements[i - 1];
         }
@@ -381,18 +395,17 @@ struct array_methods
         return phos::Value();
     }
 
-    static phos::Value remove_at(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value remove_at(Ctx &, std::span<phos::Value> args)
     {
         auto *arr = args[0].as_array();
         int64_t idx = args[1].as_int();
 
         if (idx < 0 || idx >= static_cast<int64_t>(arr->count)) {
-            return phos::Value(); // Out of bounds
+            return phos::Value(); 
         }
 
         phos::Value removed = arr->elements[idx];
 
-        // Shift elements left to fill the gap
         for (uint32_t i = static_cast<uint32_t>(idx); i < arr->count - 1; ++i) {
             arr->elements[i] = arr->elements[i + 1];
         }
@@ -401,13 +414,13 @@ struct array_methods
         return removed;
     }
 
-    static phos::Value u_remove_at(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value u_remove_at(Ctx &, std::span<phos::Value> args)
     {
         auto *arr = args[0].as_array();
         int64_t idx = args[1].as_int();
 
         if (idx < 0 || idx >= static_cast<int64_t>(arr->count)) {
-            return phos::Value(); // Out of bounds
+            return phos::Value(); 
         }
         phos::Value removed = arr->elements[idx];
         arr->elements[idx] = arr->elements[arr->count - 1];
@@ -415,7 +428,7 @@ struct array_methods
         return removed;
     }
 
-    static phos::Value reverse(mem::Arena &arena, std::span<phos::Value> args)
+    static phos::Value reverse(Ctx &, std::span<phos::Value> args)
     {
         auto *arr = args[0].as_array();
 
@@ -428,4 +441,9 @@ struct array_methods
         return phos::Value();
     }
 };
+
 } // namespace phos::vm
+
+
+namespace phos {
+} // namespace phos

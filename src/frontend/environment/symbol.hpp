@@ -75,4 +75,31 @@ struct formatter<phos::Symbol_kind, char>
     }
 };
 
+template <>
+struct formatter<phos::Symbol, char>
+{
+    constexpr auto parse(format_parse_context &ctx)
+    {
+        return ctx.begin();
+    }
+
+    template <typename FormatContext>
+    auto format(const phos::Symbol &sym, FormatContext &ctx) const
+    {
+        return format_to(
+            ctx.out(),
+            "Symbol{{ id: {}, name: \"{}\", kind: {}, type: {}, owner_module: {}, "
+            "is_public: {}, global_index: {}, stack_offset: {}, ffi_index: {} }}",
+            sym.id,
+            sym.name,
+            sym.kind,
+            sym.type.value,
+            sym.owner_module,
+            sym.is_public,
+            sym.global_index ? std::format("{}", *sym.global_index) : "null",
+            sym.stack_offset ? std::format("{}", *sym.stack_offset) : "null",
+            sym.ffi_index ? std::format("{}", *sym.ffi_index) : "null");
+    }
+};
+
 } // namespace std

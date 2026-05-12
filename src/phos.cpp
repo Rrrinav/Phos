@@ -16,8 +16,9 @@
 
 namespace phos {
 
+// Updated constructor to explicitly initialize gc_heap and pass it to vm
 Phos_engine::Phos_engine(size_t memory_size_bytes, std::ostream *out, std::ostream *err)
-    : arena(memory_size_bytes), ctx(arena), vm(arena), out_stream(out), err_stream(err)
+    : arena(memory_size_bytes), ctx(arena), gc_heap(), vm(gc_heap, arena), out_stream(out), err_stream(err)
 {}
 
 bool Phos_engine::compile_file(const std::filesystem::path &file_path)
@@ -34,20 +35,17 @@ bool Phos_engine::compile_file(const std::filesystem::path &file_path)
     std::string source = buffer.str();
     file.close();
 
-    // Raw IR Loader (The Assembler)
     if (file_path.extension() == ".phosasm") {
         main_function = vm::Assembler::deserialize(source, arena);
         return true;
     }
 
-    // Standard Source Compiler
     std::filesystem::path root_dir = file_path.parent_path();
     return compile_source(source, file_path.string(), root_dir);
 }
 
 bool Phos_engine::compile_source(const std::string &source, const std::string &logical_name, const std::filesystem::path &root_dir)
 {
-    // 1. Parse the main file string into the unified AST
     lex::Lexer lexer(source, arena, logical_name);
     auto lexed = lexer.tokenize();
     if (!lexed.diagnostics.empty()) {
@@ -61,7 +59,7 @@ bool Phos_engine::compile_source(const std::string &source, const std::string &l
         parse_result.diagnostics.print(*err_stream);
         return false;
     }
-    // 2. Register main module in workspace
+
     Module_id main_mod = ctx.workspace.create_module("main", logical_name);
     main_statements = parse_result.statements;
 
@@ -71,7 +69,6 @@ bool Phos_engine::compile_source(const std::string &source, const std::string &l
 
     ctx.type_env.register_core_methods();
 
-    // 3. Resolve all imports recursively
     Module_resolver module_resolver(ctx, root_dir);
     module_resolver.register_ffi("math", [](Type_environment &env) { vm::modules::register_math(env); });
     module_resolver.register_ffi("time", [](Type_environment &env) { vm::modules::register_time(env); });
@@ -82,14 +79,13 @@ bool Phos_engine::compile_source(const std::string &source, const std::string &l
         return false;
     }
 
-    // PHASE 3 & 4: Hoist and Semantic Check
     Semantic_checker checker(ctx);
     auto checked = checker.check_workspace();
     if (!checked.empty()) {
         checked.print(*err_stream);
         return false;
     }
-    // PHASE 5 & 6: Code Generation
+
     vm::Compiler compiler(ctx);
     main_function = compiler.compile_workspace(main_mod);
 
@@ -98,17 +94,20 @@ bool Phos_engine::compile_source(const std::string &source, const std::string &l
 
 void Phos_engine::execute()
 {
-    vm::Call_frame frames[10];
+    constexpr size_t call_stack_capacity = 256;
+
+    std::vector<vm::Call_frame> frames(call_stack_capacity);
     frames[0] = vm::Call_frame(&main_function, 0);
 
-    std::vector<Value> thread_memory(256);
+    std::vector<Value> thread_memory(call_stack_capacity * vm::Virtual_machine::FRAME_REGISTER_WINDOW);
 
     Green_thread_data main_thread{};
-    main_thread.call_stack = frames;
+    main_thread.call_stack = frames.data();
     main_thread.call_stack_count = 1;
-    main_thread.call_stack_capacity = 10;
+    main_thread.call_stack_capacity = frames.size();
     main_thread.value_stack = thread_memory.data();
     main_thread.value_stack_capacity = thread_memory.size();
+    main_thread.live_value_count = vm::Virtual_machine::FRAME_REGISTER_WINDOW;
     main_thread.is_completed = false;
 
     vm.execute(&main_thread);
@@ -116,7 +115,6 @@ void Phos_engine::execute()
 
 std::string Phos_engine::dump_ir() const
 {
-    // The Disassembler
     return vm::Assembler::serialize(main_function);
 }
 

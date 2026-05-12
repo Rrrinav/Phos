@@ -166,7 +166,54 @@ err::Engine Module_resolver::resolve_imports(Module_id current_module, const std
                 loaded_modules.insert(raw_os_path);
 
                 target_mod_id = ctx.workspace.create_module(raw_vm_namespace, raw_os_path);
-                ctx.workspace.get_module(target_mod_id).is_native = true;
+                auto &native_module = ctx.workspace.get_module(target_mod_id);
+                native_module.is_native = true;
+
+                auto publish_native_symbol = [&](const std::string &canonical_name, Symbol_kind kind, std::optional<Value> const_value) {
+                    const std::string prefix = raw_vm_namespace + "::";
+                    if (!canonical_name.starts_with(prefix)) {
+                        return;
+                    }
+
+                    const std::string exported_name = canonical_name.substr(prefix.size());
+                    Symbol_id sym_id{};
+
+                    if (auto existing = ctx.registry.lookup_global(canonical_name)) {
+                        auto &sym = ctx.registry.get_symbol(*existing);
+                        sym.kind = kind;
+                        sym.owner_module = target_mod_id;
+                        sym.is_public = true;
+                        sym.const_value = std::move(const_value);
+                        sym_id = *existing;
+                    } else {
+                        Symbol sym{
+                            .id = Symbol_id{0},
+                            .name = canonical_name,
+                            .kind = kind,
+                            .type = ctx.tt.get_unknown(),
+                            .owner_module = target_mod_id,
+                            .is_public = true,
+                            .const_value = std::move(const_value),
+                            .global_index = std::nullopt,
+                            .stack_offset = std::nullopt,
+                            .ffi_index = std::nullopt,
+                            .declaration = ast::Stmt_id::null(),
+                        };
+                        sym_id = ctx.registry.create_symbol(std::move(sym));
+                    }
+
+                    native_module.add_public_symbol(exported_name, sym_id);
+                };
+
+                for (const auto &[name, sigs] : ctx.type_env.native_signatures) {
+                    if (!sigs.empty() && sigs.front().func != nullptr) {
+                        publish_native_symbol(name, Symbol_kind::Native_func, std::nullopt);
+                    }
+                }
+
+                for (const auto &[name, value] : ctx.type_env.native_constants) {
+                    publish_native_symbol(name, Symbol_kind::Native_const, value);
+                }
             } else {
                 target_mod_id = *ctx.workspace.get_module_by_path(raw_os_path);
             }

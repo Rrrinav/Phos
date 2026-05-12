@@ -3,6 +3,7 @@
 #include "core/arena.hpp"
 #include "core/value/value.hpp"
 #include "frontend/environment/compiler_context.hpp"
+#include "virtual_machine/garbage_collector/gc_heap.hpp"
 #include "virtual_machine/virtual_machine.hpp"
 
 #include <filesystem>
@@ -17,27 +18,27 @@ class Phos_engine
 public:
     mem::Arena arena;
     Compiler_context ctx;
+
+    // The newly added runtime Garbage Collected Heap
+    gc::Gc_heap gc_heap;
+
     vm::Virtual_machine vm;
-    Closure_data main_function;
 
-    std::ostream* out_stream;
-    std::ostream* err_stream;
+    std::ostream *out_stream;
+    std::ostream *err_stream;
 
-    // Cache the top-level AST so we can print it later if requested
+    Closure_data main_function{};
     std::vector<ast::Stmt_id> main_statements;
 
-    explicit Phos_engine(size_t memory_size_bytes = 10 * 1024 * 1024, std::ostream *out = &std::cout, std::ostream *err = &std::cerr);
+    Phos_engine(size_t memory_size_bytes = 1024 * 1024 * 10, std::ostream *out = &std::cout, std::ostream *err = &std::cerr);
+    ~Phos_engine() = default;
 
-    // Pipeline entry points
     bool compile_file(const std::filesystem::path &file_path);
     bool compile_source(const std::string &source, const std::string &logical_name, const std::filesystem::path &root_dir);
-
-    // Execution
     void execute();
 
-    // Diagnostics & Tooling
     std::string dump_ir() const;
-    std::string dump_ast(bool use_unicode = true) const;
+    std::string dump_ast(bool use_unicode = false) const;
 };
 
 } // namespace phos

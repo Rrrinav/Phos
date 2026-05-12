@@ -1,78 +1,172 @@
 #include "./value.hpp"
 
 #include "core/arena.hpp"
+#include "virtual_machine/vm_context.hpp"
 
 #include <charconv>
+#include <cstdlib>
 #include <cstring>
-#include <limits>
 #include <format>
+#include <limits>
+#include <memory>
+#include <type_traits>
 
 namespace phos {
 
-// Arena Factories
-Value Value::make_string(mem::Arena &arena, std::string_view text, uint8_t depth)
+namespace {
+
+template <typename T, typename Element>
+Element *trailing_storage(T *base)
+{
+    auto *raw = reinterpret_cast<char *>(base) + sizeof(T);
+    return reinterpret_cast<Element *>(raw);
+}
+
+} // namespace
+
+template <typename Allocator>
+Value Value::make_string(Allocator &alloc, std::string_view text, uint8_t depth)
 {
     size_t total_size = sizeof(String_data) + text.length() + 1;
-    void *raw_mem = arena.allocate_bytes(total_size, alignof(String_data));
+    String_data *str = nullptr;
+    bool is_gc = std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>;
 
-    String_data *str = new (raw_mem) String_data();
+    if constexpr (std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>) {
+        str = alloc.template alloc<String_data>(total_size, static_cast<uint8_t>(Value_tag::String));
+        new (str) String_data();
+    } else {
+        void *raw_mem = alloc.allocate_bytes(total_size, alignof(String_data));
+        str = new (raw_mem) String_data();
+    }
+
     str->length = static_cast<uint32_t>(text.length());
     std::memcpy(str->chars, text.data(), text.length());
     str->chars[text.length()] = '\0';
 
-    return Value(str, depth);
+    return Value(str, depth, is_gc);
 }
 
-Value Value::make_array(mem::Arena &arena, uint32_t capacity, uint8_t depth)
+template <typename Allocator>
+Value Value::make_array(Allocator &alloc, uint32_t capacity, uint8_t depth)
 {
-    Array_data *arr = arena.allocate<Array_data>();
-    new (arr) Array_data();
-    arr->capacity = capacity;
-    arr->count = 0;
+    Array_data *arr = nullptr;
+    bool is_gc = std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>;
+    const size_t total_size = sizeof(Array_data) + (static_cast<size_t>(capacity) * sizeof(Value));
 
-    if (capacity > 0) {
-        arr->elements = arena.allocate<Value>(capacity);
+    if constexpr (std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>) {
+        arr = alloc.template alloc<Array_data>(total_size, static_cast<uint8_t>(Value_tag::Array));
+        new (arr) Array_data();
+        arr->capacity = capacity;
+        arr->count = 0;
+        arr->elements_on_heap = false; // Trailing natively!
+
+        if (capacity > 0) {
+            arr->elements = trailing_storage<Array_data, Value>(arr);
+            std::uninitialized_fill_n(arr->elements, capacity, Value());
+        } else {
+            arr->elements = nullptr;
+        }
     } else {
-        arr->elements = nullptr;
+        // Fallback for Arena (can't easily do trailing without manual memory blocks)
+        arr = alloc.template allocate<Array_data>();
+        new (arr) Array_data();
+        arr->capacity = capacity;
+        arr->count = 0;
+        arr->elements_on_heap = true;
+
+        if (capacity > 0) {
+            arr->elements = alloc.template allocate<Value>(capacity);
+            std::uninitialized_fill_n(arr->elements, capacity, Value());
+        } else {
+            arr->elements = nullptr;
+        }
     }
 
-    return Value(arr, depth);
+    return Value(arr, depth, is_gc);
 }
 
-Value Value::make_model(mem::Arena &arena, types::Model_type sig, uint32_t field_count, uint8_t depth)
+template <typename Allocator>
+Value Value::make_model(Allocator &alloc, types::Model_type sig, uint32_t field_count, uint8_t depth)
 {
-    Model_data *model = arena.allocate<Model_data>();
-    new (model) Model_data();
-    model->signature = std::move(sig);
-    model->field_count = field_count;
+    Model_data *model = nullptr;
+    bool is_gc = std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>;
+    const size_t total_size = sizeof(Model_data) + (static_cast<size_t>(field_count) * sizeof(Value));
 
-    if (field_count > 0) {
-        model->fields = arena.allocate<Value>(field_count);
+    if constexpr (std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>) {
+        model = alloc.template alloc<Model_data>(total_size, static_cast<uint8_t>(Value_tag::Model));
+        new (model) Model_data();
+        model->signature = std::move(sig);
+        model->field_count = field_count;
+        model->fields_on_heap = false; // Trailing!
+
+        if (field_count > 0) {
+            model->fields = trailing_storage<Model_data, Value>(model);
+            std::uninitialized_fill_n(model->fields, field_count, Value());
+        } else {
+            model->fields = nullptr;
+        }
     } else {
-        model->fields = nullptr;
+        model = alloc.template allocate<Model_data>();
+        new (model) Model_data();
+        model->signature = std::move(sig);
+        model->field_count = field_count;
+        model->fields_on_heap = true;
+
+        if (field_count > 0) {
+            model->fields = alloc.template allocate<Value>(field_count);
+            std::uninitialized_fill_n(model->fields, field_count, Value());
+        } else {
+            model->fields = nullptr;
+        }
     }
 
-    return Value(model, depth);
+    return Value(model, depth, is_gc);
 }
 
-Value Value::make_union(mem::Arena &arena, String_data *u_name, String_data *v_name, Value payload, uint8_t depth)
+template <typename Allocator>
+Value Value::make_union(Allocator &alloc, String_data *u_name, String_data *v_name, Value payload, uint8_t depth)
 {
-    Union_data *un = arena.allocate<Union_data>();
-    new (un) Union_data();
-    un->union_name = u_name;
-    un->variant_name = v_name;
+    Union_data *un = nullptr;
+    bool is_gc = std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>;
 
-    un->payload = arena.allocate<Value>();
-    *(un->payload) = payload;
+    if constexpr (std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>) {
+        const size_t total_size = sizeof(Union_data) + sizeof(Value);
+        un = alloc.template alloc<Union_data>(total_size, static_cast<uint8_t>(Value_tag::Union));
+        new (un) Union_data();
+        un->union_name = u_name;
+        un->variant_name = v_name;
 
-    return Value(un, depth);
+        un->payload = trailing_storage<Union_data, Value>(un);
+        *(un->payload) = payload;
+    } else {
+        un = alloc.template allocate<Union_data>();
+        new (un) Union_data();
+        un->union_name = u_name;
+        un->variant_name = v_name;
+
+        un->payload = alloc.template allocate<Value>();
+        *(un->payload) = payload;
+    }
+
+    return Value(un, depth, is_gc);
 }
 
-Value Value::make_closure_native(
-    mem::Arena &arena, String_data *name, size_t arity, types::Function_type sig, Native_fn func, uint8_t depth)
+template <typename Allocator>
+Value Value::make_closure_native(Allocator &alloc, String_data *name, size_t arity, types::Function_type sig, Native_fn func, uint8_t depth)
 {
-    Closure_data *closure = arena.allocate<Closure_data>();
-    new (closure) Closure_data();
+    Closure_data *closure = nullptr;
+    bool is_gc = std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>;
+
+    if constexpr (std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>) {
+        closure = alloc.template alloc<Closure_data>(sizeof(Closure_data), static_cast<uint8_t>(Value_tag::Closure));
+        new (closure) Closure_data();
+        closure->is_prototype = false;
+    } else {
+        closure = alloc.template allocate<Closure_data>();
+        new (closure) Closure_data();
+        closure->is_prototype = true;
+    }
+
     closure->name = name;
     closure->arity = arity;
     closure->signature = std::move(sig);
@@ -80,19 +174,45 @@ Value Value::make_closure_native(
     closure->upvalue_count = 0;
     closure->upvalues = nullptr;
 
-    return Value(closure, depth);
+    return Value(closure, depth, is_gc);
 }
 
-Value Value::make_iterator(mem::Arena &arena, uint8_t depth)
+template <typename Allocator>
+Value Value::make_iterator(Allocator &alloc, uint8_t depth)
 {
-    Iterator_data *iter = arena.allocate<Iterator_data>();
-    new (iter) Iterator_data();
+    Iterator_data *iter = nullptr;
+    bool is_gc = std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>;
 
-    // We don't initialize the specific union state here because
-    // the Virtual Machine's Make_iter opcode handles populating it!
+    if constexpr (std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>) {
+        iter = alloc.template alloc<Iterator_data>(sizeof(Iterator_data), static_cast<uint8_t>(Value_tag::Iterator));
+        new (iter) Iterator_data();
+    } else {
+        iter = alloc.template allocate<Iterator_data>();
+        new (iter) Iterator_data();
+    }
 
-    return Value(iter, depth);
+    return Value(iter, depth, is_gc);
 }
+
+// -----------------------------------------------------------------------------
+// EXPLICIT TEMPLATE INSTANTIATIONS
+// -----------------------------------------------------------------------------
+
+// Arena Instantiations (Compile-time)
+template Value Value::make_string(mem::Arena &, std::string_view, uint8_t);
+template Value Value::make_array(mem::Arena &, uint32_t, uint8_t);
+template Value Value::make_model(mem::Arena &, types::Model_type, uint32_t, uint8_t);
+template Value Value::make_union(mem::Arena &, String_data *, String_data *, Value, uint8_t);
+template Value Value::make_closure_native(mem::Arena &, String_data *, size_t, types::Function_type, Native_fn, uint8_t);
+template Value Value::make_iterator(mem::Arena &, uint8_t);
+
+// VM Context Instantiations (Runtime) - THESE FIX THE LINKER ERRORS!
+template Value Value::make_string(vm::Vm_context &, std::string_view, uint8_t);
+template Value Value::make_array(vm::Vm_context &, uint32_t, uint8_t);
+template Value Value::make_model(vm::Vm_context &, types::Model_type, uint32_t, uint8_t);
+template Value Value::make_union(vm::Vm_context &, String_data *, String_data *, Value, uint8_t);
+template Value Value::make_closure_native(vm::Vm_context &, String_data *, size_t, types::Function_type, Native_fn, uint8_t);
+template Value Value::make_iterator(vm::Vm_context &, uint8_t);
 
 // Numeric Getters with Implicit Upcasting
 int64_t Value::as_int() const
@@ -113,7 +233,6 @@ int64_t Value::as_int() const
     case Value_tag::U32:
         return static_cast<int64_t>(as.u32);
     case Value_tag::U64: {
-        // TODO: Use ffi panic method
         if (as.u64 > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
             throw std::overflow_error("Phos VM Panic: Unsigned 64-bit integer overflowed when cast to Signed 64-bit.");
         }
@@ -376,7 +495,6 @@ std::string Value::to_debug_string(bool is_nested) const
         res = "[";
         auto elements = as_array_elements();
         for (size_t i = 0; i < elements.size(); ++i) {
-            // Pass true to indicate children are nested
             res += elements[i].to_debug_string(true);
             if (i != elements.size() - 1) {
                 res += ", ";
@@ -393,16 +511,13 @@ std::string Value::to_debug_string(bool is_nested) const
         }
 
         for (uint32_t i = 0; i < as.model->field_count; ++i) {
-            // Grab the field name from the type signature if it exists
             if (i < as.model->signature.fields.size()) {
                 std::string f_name = as.model->signature.fields[i].first;
-                // If it's a positional anonymous field, f_name will be empty, so we skip the label
                 if (!f_name.empty()) {
                     res += f_name + ": ";
                 }
             }
 
-            // Recursively print the nested value
             res += as.model->fields[i].to_debug_string(true);
 
             if (i != as.model->field_count - 1) {
@@ -416,12 +531,10 @@ std::string Value::to_debug_string(bool is_nested) const
 
         res = std::format("{}::{}", u_name, v_name);
 
-        // If the union has a valid payload (not a void/nil variant), print it
         if (as.un->payload && !as.un->payload->is_nil()) {
             res += std::format("({})", as.un->payload->to_debug_string(true));
         }
     } else {
-        // Fallback for iterators/closures/green threads
         res = to_string();
     }
 
@@ -478,7 +591,6 @@ bool Value::operator==(const Value &other) const
     case Value_tag::String:
         return as_string() == other.as_string();
 
-    // Fast Pointer Equality for heap structures
     case Value_tag::Array:
         return as.arr == other.as.arr;
     case Value_tag::Model:
@@ -497,8 +609,8 @@ bool Value::operator==(const Value &other) const
     return false;
 }
 
-
-types::Primitive_kind numeric_type_of(const Value& literal) {
+types::Primitive_kind numeric_type_of(const Value &literal)
+{
     if (literal.is_float()) {
         return types::Primitive_kind::F64;
     }
@@ -514,7 +626,6 @@ std::optional<Value> coerce_numeric_literal(const Value &literal, types::Primiti
         case types::Primitive_kind::F64:
             return literal.cast_numeric(target_type);
         default:
-            // Reject implicit float-to-int narrowing (e.g., 10.5i32 is banned)
             return std::nullopt;
         }
     }
@@ -523,7 +634,6 @@ std::optional<Value> coerce_numeric_literal(const Value &literal, types::Primiti
         int64_t raw_val = literal.as_int();
 
         switch (target_type) {
-        // Integer-to-Integer bounds checking
         case types::Primitive_kind::I8:
             if (raw_val >= std::numeric_limits<int8_t>::min() && raw_val <= std::numeric_limits<int8_t>::max()) {
                 return Value(static_cast<int8_t>(raw_val));

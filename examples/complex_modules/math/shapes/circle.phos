@@ -1,0 +1,11 @@
+import super.core;
+
+model Circle {
+    radius: f64;
+}
+
+bind Circle {
+    fn area() -> f64 {
+        return core::PI * core::square(this.radius);
+    }
+}

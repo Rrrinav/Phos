@@ -313,7 +313,11 @@ std::string Assembler::disassemble_instruction(Instruction inst, const Closure_d
     case Opcode::Cast_f64:
         asm_str = std::format("{:<14} %r{}", name, inst.rrr.dst);
         break;
-
+    case Opcode::Cast_str_to_arr:
+    case Opcode::Cast_arr_to_str:
+        return std::format("{} %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a);
+    case Opcode::Concat_str:
+        return std::format("{} %r{}, %r{}, %r{}", name, inst.rrr.dst, inst.rrr.src_a, inst.rrr.src_b);
     default:
         asm_str = std::format("{:<14} ???", name);
         break;
