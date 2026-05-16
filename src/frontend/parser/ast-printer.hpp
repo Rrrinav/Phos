@@ -60,6 +60,7 @@ private:
     void print_node(const Model_stmt &node);
     void print_node(const Union_stmt &node);
     void print_node(const Var_stmt &node);
+    void print_node(const Multi_var_stmt &node);
     void print_node(const Print_stmt &node);
     void print_node(const Expr_stmt &node);
     void print_node(const Block_stmt &node);
@@ -132,6 +133,7 @@ public:
     std::string print_node(const Model_stmt &node);
     std::string print_node(const Union_stmt &node);
     std::string print_node(const Var_stmt &node);
+    std::string print_node(const Multi_var_stmt &node);
     std::string print_node(const Print_stmt &node);
     std::string print_node(const Expr_stmt &node);
     std::string print_node(const Block_stmt &node);

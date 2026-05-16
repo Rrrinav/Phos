@@ -178,8 +178,26 @@ void Resolver::resolve_type(types::Type_id &id, const ast::Source_location &loc)
         for (auto &p : func.params) {
             resolve_type(p, loc);
         }
-        resolve_type(func.ret, loc);
-        id = ctx_.type_env.tt.function(func.params, func.ret);
+        for (auto &ret : func.returns) {
+            resolve_type(ret, loc);
+        }
+        id = ctx_.type_env.tt.function(func.params, func.returns);
+    } else if (ctx_.type_env.tt.is_iterator(id)) {
+        types::Type_id elem = ctx_.type_env.tt.get_iter_elem(id);
+        resolve_type(elem, loc);
+        id = ctx_.type_env.tt.iterator(elem);
+    } else if (ctx_.type_env.tt.is_model(id)) {
+        const auto &model = ctx_.type_env.tt.get(id).as<types::Model_type>();
+        if (!model.name.empty()) {
+            return;
+        }
+
+        std::vector<std::pair<std::string, types::Type_id>> fields = model.fields;
+        for (auto &[_, field_type] : fields) {
+            resolve_type(field_type, loc);
+        }
+
+        id = ctx_.type_env.tt.model("", fields);
     }
     // if `id` is `Unknown` or any other concrete type, we just exit immediately!
 }
@@ -196,10 +214,13 @@ void Resolver::resolve_stmt(ast::Stmt_id stmt_id)
             using T = std::decay_t<decltype(s)>;
 
             if constexpr (std::is_same_v<T, ast::Function_stmt>) {
-                resolve_type(s.return_type, s.loc);
                 for (auto &param : s.parameters) {
                     resolve_type(param.type, s.loc);
                     resolve_expr(param.default_value);
+                }
+                for (auto &ret : s.returns) {
+                    resolve_type(ret.type, ret.loc);
+                    resolve_expr(ret.default_value);
                 }
                 resolve_stmt(s.body);
 
@@ -229,6 +250,13 @@ void Resolver::resolve_stmt(ast::Stmt_id stmt_id)
             } else if constexpr (std::is_same_v<T, ast::Var_stmt>) {
                 resolve_type(s.type, s.loc);
                 resolve_expr(s.initializer);
+            } else if constexpr (std::is_same_v<T, ast::Multi_var_stmt>) {
+                for (auto &type : s.types) {
+                    resolve_type(type, s.loc);
+                }
+                for (auto expr : s.initializers) {
+                    resolve_expr(expr);
+                }
 
             } else if constexpr (std::is_same_v<T, ast::Print_stmt>) {
                 for (auto ex : s.expressions) {
@@ -265,7 +293,9 @@ void Resolver::resolve_stmt(ast::Stmt_id stmt_id)
                 }
 
             } else if constexpr (std::is_same_v<T, ast::Return_stmt>) {
-                resolve_expr(s.expression);
+                for (auto expr : s.expressions) {
+                    resolve_expr(expr);
+                }
             }
         },
         stmt_var);
@@ -286,16 +316,23 @@ void Resolver::resolve_expr(ast::Expr_id expr_id)
                 resolve_expr(e.expression);
                 resolve_type(e.target_type, e.loc);
             } else if constexpr (std::is_same_v<T, ast::Closure_expr>) {
-                resolve_type(e.return_type, e.loc);
                 std::vector<types::Type_id> param_types;
                 for (auto &param : e.parameters) {
                     resolve_type(param.type, e.loc);
                     resolve_expr(param.default_value);
                     param_types.push_back(param.type);
                 }
+
+                std::vector<types::Type_id> return_types;
+                for (auto &ret : e.returns) {
+                    resolve_type(ret.type, e.loc);
+                    resolve_expr(ret.default_value);
+                    return_types.push_back(ret.type);
+                }
+
                 resolve_stmt(e.body);
                 // Rebuild the closure's functional type wrapper with the resolved internal types!
-                e.type = ctx_.type_env.tt.function(param_types, e.return_type);
+                e.type = ctx_.type_env.tt.function(param_types, return_types);
             } else if constexpr (std::is_same_v<T, ast::Variable_expr>) {
                 // Note: Variable expression types are Unknown here! The Checker resolves them.
             } else if constexpr (std::is_same_v<T, ast::Binary_expr>) {
@@ -402,7 +439,12 @@ void Resolver::populate_signatures(const std::vector<ast::Stmt_id> &statements)
                 for (const auto &param : method_ast->parameters) {
                     param_types.push_back(param.type);
                 }
-                types::Function_type method_type{param_types, method_ast->return_type};
+                std::vector<types::Type_id> return_types;
+                return_types.reserve(method_ast->returns.size());
+                for (const auto &ret : method_ast->returns) {
+                    return_types.push_back(ret.type);
+                }
+                types::Function_type method_type{param_types, return_types};
 
                 if (method_ast->is_static) {
                     ctx_.type_env.model_data[model_stmt->name].static_methods[method_ast->name] = {method_id};
@@ -492,13 +534,18 @@ void Resolver::populate_signatures(const std::vector<ast::Stmt_id> &statements)
             for (const auto &param : func_stmt->parameters) {
                 param_types.push_back(param.type);
             }
+            std::vector<types::Type_id> return_types;
+            return_types.reserve(func_stmt->returns.size());
+            for (const auto &ret : func_stmt->returns) {
+                return_types.push_back(ret.type);
+            }
 
             publish_symbol(
                 ctx_,
                 find_owner_module(ctx_.workspace, stmt_id),
                 func_stmt->name,
                 Symbol_kind::Phos_func,
-                ctx_.type_env.tt.function(param_types, func_stmt->return_type),
+                ctx_.type_env.tt.function(param_types, return_types),
                 stmt_id);
         }
     }

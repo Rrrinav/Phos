@@ -15,15 +15,15 @@ model User {
     is_active: bool;
 }
 
-fn find_first(users: User?[], predicate: (|User| -> bool)?) -> User? {
+fn find_first(users: User?[], predicate: ((fn(User) -> bool)?)) -> User? {
 
-    let mut actual_p: |User| -> bool = |u: User| -> bool { return u.is_active; };
+    let mut actual_p := fn(u: User) -> bool { return u.is_active; };
 
     if predicate != nil {
-        actual_p = predicate as (|User| -> bool);
+        actual_p = predicate as fn(User) -> bool;
     }
 
-    for i in 0..len(users) {
+    for i in 0..(len(users) as i32) {
         if users[i] != nil {
             let user := users[i].get();
             if actual_p(user) {
@@ -35,10 +35,9 @@ fn find_first(users: User?[], predicate: (|User| -> bool)?) -> User? {
     return nil;
 }
 
-fn foo() -> (|| -> void) {
+fn foo() -> (fn() -> void) {
     let x := "x from function.";
-    // Replaced string concatenation with variadic arguments
-    return || -> void { print("Hello from function, this is:", x); };
+    return fn() -> void { print("Hello from function, this is:", x); };
 }
 
 let user_list: User?[] = [

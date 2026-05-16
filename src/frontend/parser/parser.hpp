@@ -34,6 +34,7 @@ private:
     std::vector<lex::Token> tokens_;
     std::string source_name_;
     size_t current_ = 0;
+    size_t synthetic_name_counter_ = 0;
     std::string stage_ = "parser";
     err::Engine diagnostics_{"parser"};
 
@@ -67,6 +68,7 @@ private:
     Result<types::Type_id> parse_type();
     Result<ast::Function_param> parse_function_parameter(bool allow_default_value);
     Result<std::vector<ast::Call_argument>> parse_call_arguments();
+    Result<ast::Function_param> parse_return_parameter();
 
     Result<std::optional<ast::Stmt_id>> declaration();
     Result<ast::Stmt_id> function_declaration();

@@ -57,6 +57,7 @@ enum class TokenType : uint8_t {
 
     //  Declarations
     Fn,
+    Proc,
     Static,
     Model,
     Union,
@@ -180,6 +181,7 @@ static const std::unordered_map<std::string_view, TokenType> token_keywords = {
 
     // declarations
     {"fn", TokenType::Fn},
+    {"proc", TokenType::Proc},
     {"static", TokenType::Static},
     {"model", TokenType::Model},
     {"union", TokenType::Union},

@@ -4,6 +4,18 @@
 
 namespace phos::types {
 
+namespace {
+
+std::vector<Type_id> normalize_function_returns(std::vector<Type_id> returns, const Type_table &tt)
+{
+    if (returns.size() == 1 && tt.is_void(returns.front())) {
+        returns.clear();
+    }
+    return returns;
+}
+
+} // namespace
+
 Type_table::Type_table()
 {
     // Has to be first, so Type_id is default initialized to 'unknown'
@@ -86,17 +98,26 @@ Type_id Type_table::union_(const std::string &name, const std::vector<std::pair<
     return id;
 }
 
-Type_id Type_table::function(const std::vector<Type_id> &params, Type_id ret)
+Type_id Type_table::function(const std::vector<Type_id> &params, const std::vector<Type_id> &returns)
 {
-    Fn_key k{params, ret};
+    auto normalized_returns = normalize_function_returns(returns, *this);
+    Fn_key k{params, normalized_returns};
     auto it = fn_cache_.find(k);
     if (it != fn_cache_.end()) {
         return it->second;
     }
     Type_id id{(uint32_t)types_.size()};
-    types_.push_back(Type{Function_type{params, ret}});
+    types_.push_back(Type{Function_type{params, normalized_returns}});
     fn_cache_[k] = id;
     return id;
+}
+
+Type_id Type_table::function(const std::vector<Type_id> &params, Type_id ret)
+{
+    if (is_void(ret)) {
+        return function(params, std::vector<Type_id>{});
+    }
+    return function(params, std::vector<Type_id>{ret});
 }
 
 Type_id Type_table::enum_(const std::string &name, Type_id base)
@@ -361,7 +382,20 @@ std::string Type_table::to_string(Type_id id) const
                 s += ", ";
             }
         }
-        return s + ") -> " + to_string(f.ret);
+        s += ")";
+
+        if (f.returns.empty()) {
+            return s;
+        }
+
+        s += " -> ";
+        for (size_t i = 0; i < f.returns.size(); ++i) {
+            s += to_string(f.returns[i]);
+            if (i + 1 < f.returns.size()) {
+                s += ", ";
+            }
+        }
+        return s;
     }
 
     if (std::holds_alternative<Model_type>(t.data)) {

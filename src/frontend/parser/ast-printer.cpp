@@ -345,14 +345,10 @@ void Tree_printer::print_node(const Model_literal_expr &node)
 void Tree_printer::print_node(const Closure_expr &node)
 {
     indent();
-    print_str("Closure");
+    print_str(std::string("Closure (") + "fn" + ")");
     with_child(true, [&] {
         indent();
         print_str("Type: " + tt.to_string(node.type));
-    });
-    with_child(true, [&] {
-        indent();
-        print_str("Return Type: " + tt.to_string(node.return_type));
     });
     with_child(true, [&] {
         indent();
@@ -366,6 +362,18 @@ void Tree_printer::print_node(const Closure_expr &node)
                     Sexpr_printer inline_printer(tree, tt);
                     text += " = " + inline_printer.print_expr(node.parameters[i].default_value);
                 }
+                print_str(text);
+            });
+        }
+    });
+    with_child(true, [&] {
+        indent();
+        print_str("Returns");
+        for (size_t i = 0; i < node.returns.size(); ++i) {
+            with_child(i + 1 < node.returns.size(), [&] {
+                indent();
+                std::string text = node.returns[i].name.empty() ? tt.to_string(node.returns[i].type)
+                                                                : node.returns[i].name + " : " + tt.to_string(node.returns[i].type);
                 print_str(text);
             });
         }
@@ -519,8 +527,8 @@ void Tree_printer::print_node(const Return_stmt &node)
 {
     indent();
     print_str("Return");
-    if (!node.expression.is_null()) {
-        with_child(false, [&] { visit(node.expression); });
+    for (size_t i = 0; i < node.expressions.size(); ++i) {
+        with_child(i + 1 < node.expressions.size(), [&] { visit(node.expressions[i]); });
     }
 }
 
@@ -546,7 +554,15 @@ void Tree_printer::print_node(const Function_stmt &node)
     });
     with_child(true, [&] {
         indent();
-        print_str("Return type: " + tt.to_string(node.return_type));
+        print_str("Returns");
+        for (size_t i = 0; i < node.returns.size(); ++i) {
+            with_child(i + 1 < node.returns.size(), [&] {
+                indent();
+                std::string text = node.returns[i].name.empty() ? tt.to_string(node.returns[i].type)
+                                                                : node.returns[i].name + " : " + tt.to_string(node.returns[i].type);
+                print_str(text);
+            });
+        }
     });
     with_child(false, [&] {
         indent();
@@ -671,6 +687,34 @@ void Tree_printer::print_node(const Var_stmt &node)
             with_child(false, [&] { visit(node.initializer); });
         });
     }
+}
+
+void Tree_printer::print_node(const Multi_var_stmt &node)
+{
+    indent();
+    std::string kw{};
+    switch (node.kind) {
+        case ast::Var_kind::Let: kw = ""; break;
+        case ast::Var_kind::Mut: kw = "mut"; break;
+        case ast::Var_kind::Const: kw = "const"; break;
+        case ast::Var_kind::Static: kw = "static"; break;
+        case ast::Var_kind::Static_mut: kw = "static mut"; break;
+    }
+    print_str("Multi Var: " + kw);
+    with_child(true, [&] {
+        indent();
+        print_str("Names");
+        for (size_t i = 0; i < node.names.size(); ++i) {
+            with_child(i + 1 < node.names.size(), [&] { indent(); print_str(node.names[i]); });
+        }
+    });
+    with_child(!node.initializers.empty(), [&] {
+        indent();
+        print_str("Initializers");
+        for (size_t i = 0; i < node.initializers.size(); ++i) {
+            with_child(i + 1 < node.initializers.size(), [&] { visit(node.initializers[i]); });
+        }
+    });
 }
 
 void Tree_printer::print_node(const Print_stmt &node)
@@ -1046,8 +1090,12 @@ std::string Sexpr_printer::print_node(const Anon_model_literal_expr &node)
 // TODO: Add types everywhere.
 std::string Sexpr_printer::print_node(const Return_stmt &node)
 {
-    if (!node.expression.is_null()) {
-        return "(return " + print_expr(node.expression) + ")";
+    if (!node.expressions.empty()) {
+        std::string out = "(return";
+        for (auto expr : node.expressions) {
+            out += " " + print_expr(expr);
+        }
+        return out + ")";
     }
     return "(return)";
 }
@@ -1102,6 +1150,26 @@ std::string Sexpr_printer::print_node(const Var_stmt &node)
         return "(" + kw + " " + node.name + " " + print_expr(node.initializer) + ")";
     }
     return "(" + kw + " " + node.name + ")";
+}
+
+std::string Sexpr_printer::print_node(const Multi_var_stmt &node)
+{
+    std::string kw{};
+    switch (node.kind) {
+        case ast::Var_kind::Let: kw = ""; break;
+        case ast::Var_kind::Mut: kw = "mut"; break;
+        case ast::Var_kind::Const: kw = "const"; break;
+        case ast::Var_kind::Static: kw = "static"; break;
+        case ast::Var_kind::Static_mut: kw = "static mut"; break;
+    }
+    std::string out = "(multi-var " + kw;
+    for (const auto &name : node.names) {
+        out += " " + name;
+    }
+    for (auto expr : node.initializers) {
+        out += " " + print_expr(expr);
+    }
+    return out + ")";
 }
 
 std::string Sexpr_printer::print_node(const Print_stmt &node)

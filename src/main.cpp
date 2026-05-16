@@ -9,7 +9,7 @@ int main(int argc, char *argv[])
 {
     if (argc == 1) {
         phos::cli::print_help();
-        return 1;
+        return EXIT_FAILURE;
     }
 
     auto [config, success, err_msg] = phos::cli::parse_args(argc, argv);
@@ -22,7 +22,7 @@ int main(int argc, char *argv[])
 
     if (config.help) {
         phos::cli::print_help();
-        return 0;
+        return EXIT_SUCCESS;
     }
 
     phos::Phos_engine engine;
@@ -44,10 +44,10 @@ int main(int argc, char *argv[])
         if (out_file.is_open()) {
             out_file << engine.dump_ir();
         }
-        return 0;
+        return EXIT_SUCCESS;
     }
 
     engine.execute();
 
-    return 0;
+    return EXIT_SUCCESS;
 }

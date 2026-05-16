@@ -205,6 +205,26 @@ err::Engine Module_resolver::resolve_imports(Module_id current_module, const std
                     native_module.add_public_symbol(exported_name, sym_id);
                 };
 
+                for (const auto &[name, type_id] : ctx.type_env.global_types) {
+                    const std::string prefix = raw_vm_namespace + "::";
+                    if (!name.starts_with(prefix)) {
+                        continue;
+                    }
+
+                    Symbol_kind kind = Symbol_kind::Model_def;
+                    if (ctx.tt.is_union(type_id)) {
+                        kind = Symbol_kind::Union_def;
+                    } else if (ctx.tt.is_enum(type_id)) {
+                        kind = Symbol_kind::Enum_def;
+                    }
+
+                    publish_native_symbol(name, kind, std::nullopt);
+
+                    if (auto sym_id = native_module.resolve_exported_symbol(name.substr(prefix.size()))) {
+                        ctx.registry.get_symbol(*sym_id).type = type_id;
+                    }
+                }
+
                 for (const auto &[name, sigs] : ctx.type_env.native_signatures) {
                     if (!sigs.empty() && sigs.front().func != nullptr) {
                         publish_native_symbol(name, Symbol_kind::Native_func, std::nullopt);
