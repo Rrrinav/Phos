@@ -1,7 +1,7 @@
 // 04_functions_and_closures.phos
 //
 // This file covers function declarations, return types, default arguments,
-// named arguments, and closures.
+// named arguments, closures, and multiple return values.
 
 // A function with an explicit return type.
 fn add_pair(left: i64, right: i64) -> i64 {
@@ -43,3 +43,43 @@ let tripled := apply_once(7, fn(input: i64) -> i64 {
 });
 
 print("tripled = ", tripled, sep = "");
+
+// Functions can return multiple values by defining multiple return parameters.
+fn divide_with_remainder(numerator: i64, denominator: i64) -> quotient: i64, remainder: i64 {
+    return numerator / denominator, numerator % denominator;
+}
+
+// You can unpack the results directly into multiple variables.
+let q, r := divide_with_remainder(10, 3);
+print("10 / 3 = ", q, " with remainder ", r, sep="");
+
+// Named return parameters can have default values, enabling naked returns.
+fn get_coordinates() -> x: i64 = 10, y: i64 = 20 {
+    // Because x and y have defaults, we can just say 'return;'
+    // We can also modify them before returning.
+    x = 15;
+    return;
+}
+
+let cx, cy := get_coordinates();
+print("Coordinates: x = ", cx, ", y = ", cy, sep="");
+
+// Closures fully support multiple return values as well.
+let min_max := fn(a: i64, b: i64) -> min: i64, max: i64 {
+    if (a < b) {
+        return a, b;
+    }
+    return b, a;
+};
+
+let minimum, maximum := min_max(42, 17);
+print("Min: ", minimum, ", Max: ", maximum, sep="");
+
+let coord := get_coordinates();
+// Multi return is actually just an anonymous model
+print(coord, coord._0, coord._1, sep = " ");
+
+// This means you can destructure a model like this too
+model Point { x: i32; y: i32; }
+let px, py := Point.{10, 20};
+print(px, " ", py,);

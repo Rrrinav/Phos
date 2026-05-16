@@ -280,6 +280,37 @@ void internal_log(Log_type type, const std::string &msg);
 // Logging function for users
 void log(bld::Log_type type, const std::string &msg);
 
+namespace logger {
+
+template <typename... Args>
+void i(std::format_string<Args...> fmt, Args &&...args)
+{
+    std::string message = std::format(fmt, std::forward<Args>(args)...);
+    log(bld::Log_type::INFO, message);
+}
+
+template <typename... Args>
+void e(std::format_string<Args...> fmt, Args &&...args)
+{
+    std::string message = std::format(fmt, std::forward<Args>(args)...);
+    log(bld::Log_type::ERR, message);
+}
+
+template <typename... Args>
+void w(std::format_string<Args...> fmt, Args &&...args)
+{
+    std::string message = std::format(fmt, std::forward<Args>(args)...);
+    log(bld::Log_type::WARNING, message);
+}
+
+template <typename... Args>
+void d(std::format_string<Args...> fmt, Args &&...args)
+{
+    std::string message = std::format(fmt, std::forward<Args>(args)...);
+    log(bld::Log_type::DEBUG, message);
+}
+} // namespace logger
+
 // Struct to hold command parts
 struct Command
 {

@@ -188,10 +188,7 @@ int Compiler::resolve_upvalue(Function_context *fctx, const std::string &name)
     return -1;
 }
 
-// =============================================================================
 // MAIN COMPILATION FLOW
-// =============================================================================
-
 Closure_data Compiler::compile_workspace([[maybe_unused]] Module_id main_mod)
 {
     Function_context global_ctx;
@@ -334,10 +331,7 @@ Closure_data Compiler::compile(const std::vector<ast::Stmt_id> &statements)
     return data;
 }
 
-// =============================================================================
 // BYTECODE & REGISTER HELPERS
-// =============================================================================
-
 uint8_t Compiler::allocate_register()
 {
     if (current_ctx_->current_register >= 255) {
@@ -514,10 +508,7 @@ vm::Opcode Compiler::bitwise_opcode_for(lex::TokenType op, types::Type_id type) 
     }
 }
 
-// =============================================================================
 // STATEMENTS
-// =============================================================================
-
 void Compiler::compile_stmt(ast::Stmt_id stmt_id)
 {
     if (stmt_id.is_null()) {
@@ -1123,7 +1114,6 @@ void Compiler::compile_stmt_node(const ast::Match_stmt &stmt)
 }
 
 // Expressions
-
 uint8_t Compiler::compile_expr(ast::Expr_id expr_id)
 {
     if (expr_id.is_null()) {
