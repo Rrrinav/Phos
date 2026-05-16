@@ -359,38 +359,42 @@ const std::vector<Native_sig> *Type_environment::get_native_signatures(const std
 
 void Type_environment::register_core_methods()
 {
+    using params_t = std::vector<std::string>;
+    define_native("env::__argv_impl", std::vector<Native_param>{}, "string[]", vm::env_native::argv_impl);
+    define_native("env::cwd", std::vector<Native_param>{}, "string", vm::env_native::cwd);
+
     // --- Core Engine Operations ---
-    define_native("clock", std::vector<std::string>{}, "f64", vm::core::native_clock);
-    define_native("is_same", std::vector<std::string>{"any", "any"}, "bool", vm::core::native_is_same);
-    define_native("exit", std::vector<std::string>{"i32"}, "void", vm::core::exit);
-    define_native("len", std::vector<std::string>{"any"}, "i64", vm::core::native_len);
+    define_native("clock",   params_t{}, "f64", vm::core::native_clock);
+    define_native("is_same", params_t{"any", "any"}, "bool", vm::core::native_is_same);
+    define_native("exit",    params_t{"i32"}, "void", vm::core::exit);
+    define_native("len",     params_t{"any"}, "i64", vm::core::native_len);
 
     // --- Numerical Methods ---
-    define_native("to_string", std::vector<std::string>{"any"}, "string", vm::numerical::to_string);
-    define_native("parse_i64", std::vector<std::string>{"string"}, "i64?", vm::numerical::parse_i64);
-    define_native("parse_f64", std::vector<std::string>{"string"}, "f64?", vm::numerical::parse_f64);
+    define_native("to_string", params_t{"any"}, "string", vm::numerical::to_string);
+    define_native("parse_i64", params_t{"string"}, "i64?", vm::numerical::parse_i64);
+    define_native("parse_f64", params_t{"string"}, "f64?", vm::numerical::parse_f64);
 
     // --- String Methods ---
-    define_native("String::substr", std::vector<std::string>{"string", "i64", "i64"}, "string", vm::string_methods::substr);
-    define_native("String::starts_with", std::vector<std::string>{"string", "string"}, "bool", vm::string_methods::starts_with);
-    define_native("String::ends_with", std::vector<std::string>{"string", "string"}, "bool", vm::string_methods::ends_with);
-    define_native("String::trim", std::vector<std::string>{"string"}, "string", vm::string_methods::trim);
-    define_native("String::to_upper", std::vector<std::string>{"string"}, "string", vm::string_methods::to_upper);
-    define_native("String::to_lower", std::vector<std::string>{"string"}, "string", vm::string_methods::to_lower);
-    define_native("String::split", std::vector<std::string>{"string", "string"}, "string[]", vm::string_methods::split);
-    define_native("String::repeat", std::vector<std::string>{"string", "i64"}, "string", vm::string_methods::repeat);
-    define_native("String::index_of", std::vector<std::string>{"string", "string"}, "i64?", vm::string_methods::index_of);
+    define_native("String::substr", params_t{"string", "i64", "i64"}, "string", vm::string_methods::substr);
+    define_native("String::starts_with", params_t{"string", "string"}, "bool", vm::string_methods::starts_with);
+    define_native("String::ends_with", params_t{"string", "string"}, "bool", vm::string_methods::ends_with);
+    define_native("String::trim", params_t{"string"}, "string", vm::string_methods::trim);
+    define_native("String::to_upper", params_t{"string"}, "string", vm::string_methods::to_upper);
+    define_native("String::to_lower", params_t{"string"}, "string", vm::string_methods::to_lower);
+    define_native("String::split", params_t{"string", "string"}, "string[]", vm::string_methods::split);
+    define_native("String::repeat", params_t{"string", "i64"}, "string", vm::string_methods::repeat);
+    define_native("String::index_of", params_t{"string", "string"}, "i64?", vm::string_methods::index_of);
 
     // --- Array Methods ---
-    define_native("Array::len", std::vector<std::string>{"any[]"}, "i64", vm::array_methods::len);
-    define_native("Array::is_empty", std::vector<std::string>{"any[]"}, "bool", vm::array_methods::is_empty);
-    define_native("Array::clear", std::vector<std::string>{"any[]"}, "void", vm::array_methods::clear);
-    define_native("Array::push", std::vector<std::string>{"any[]", "any"}, "void", vm::array_methods::push);
-    define_native("Array::pop", std::vector<std::string>{"any[]"}, "any?", vm::array_methods::pop);
-    define_native("Array::insert", std::vector<std::string>{"any[]", "i64", "any"}, "void", vm::array_methods::insert);
-    define_native("Array::remove_at", std::vector<std::string>{"any[]", "i64"}, "any?", vm::array_methods::remove_at);
-    define_native("Array::u_remove_at", std::vector<std::string>{"any[]", "i64"}, "any?", vm::array_methods::u_remove_at);
-    define_native("Array::reverse", std::vector<std::string>{"any[]"}, "void", vm::array_methods::reverse);
+    define_native("Array::len", params_t{"T[]"}, "u64", vm::array_methods::len);
+    define_native("Array::is_empty", params_t{"T[]"}, "bool", vm::array_methods::is_empty);
+    define_native("Array::clear", params_t{"T[]"}, "void", vm::array_methods::clear);
+    define_native("Array::push", params_t{"T[]", "T"}, "void", vm::array_methods::push);
+    define_native("Array::pop", params_t{"T[]"}, "T?", vm::array_methods::pop);
+    define_native("Array::insert", params_t{"T[]", "i64", "T"}, "void", vm::array_methods::insert);
+    define_native("Array::remove_at", params_t{"T[]", "i64"}, "T?", vm::array_methods::remove_at);
+    define_native("Array::u_remove_at", params_t{"T[]", "i64"}, "T?", vm::array_methods::u_remove_at);
+    define_native("Array::reverse", params_t{"T[]"}, "void", vm::array_methods::reverse);
 }
 
 } // namespace phos

@@ -90,7 +90,7 @@ inline Parse_result parse_args(int argc, char *argv[])
             }
         } else if (arg == "--trace_vm") {
             cfg.trace_vm = true;
-        } else if (arg == "--") {
+        } else if (arg == "--args" || arg == "--") {
             // Everything after '--' gets forwarded to the running Phos program
             for (size_t j = i + 1; j < args.size(); ++j) {
                 cfg.program_args.push_back(std::string(args[j]));

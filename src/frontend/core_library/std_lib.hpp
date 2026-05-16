@@ -6,12 +6,34 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
-#include <print>
+#include <filesystem>
 #include <utility>
 
 namespace phos::vm {
 
 using Ctx = vm::Vm_context;
+
+struct env_native
+{
+    static Value argv_impl(Ctx &ctx, std::span<Value>)
+    {
+        uint32_t count = static_cast<uint32_t>(ctx.cmd_args.size());
+        Value arr_val = Value::make_array(ctx, count);
+        auto *arr = arr_val.as_array();
+        arr->count = count;
+
+        for (uint32_t i = 0; i < count; ++i) {
+            arr->elements[i] = Value::make_string(ctx, ctx.cmd_args[i]);
+        }
+        return arr_val;
+    }
+
+    static Value cwd(Ctx &ctx, std::span<Value>)
+    {
+        std::string path = std::filesystem::current_path().string();
+        return Value::make_string(ctx, path);
+    }
+};
 
 struct core
 {

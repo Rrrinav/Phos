@@ -86,6 +86,7 @@ static Vm_context make_vm_context(
         .globals = &globals,
         .ip = &ip,
         .frame_base = &frame_base,
+        .cmd_args = machine.cmd_args
     };
 }
 

@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cctype>
 #include <format>
-#include <sstream>
 
 namespace phos {
 
@@ -3605,6 +3604,26 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
     auto loc = get_node<ast::Static_path_expr>(ctx.tree, expr_id).loc;
 
     auto &expr = get_node<ast::Static_path_expr>(ctx.tree, expr_id);
+
+    if (auto *base_var = std::get_if<ast::Variable_expr>(&ctx.tree.get(expr.base).node)) {
+        if (base_var->name == "env") {
+            if (expr.member.lexeme == "line") {
+                return ctx.tt.get_i64();
+            }
+            if (expr.member.lexeme == "file") {
+                return ctx.tt.get_string();
+            }
+            if (expr.member.lexeme == "func") {
+                return ctx.tt.get_string();
+            }
+            if (expr.member.lexeme == "module") {
+                return ctx.tt.get_string();
+            }
+            if (expr.member.lexeme == "argv") {
+                return ctx.tt.array(ctx.tt.get_string());
+            }
+        }
+    }
 
     std::optional<Module_id> base_module_id;
 

@@ -377,6 +377,16 @@ void Resolver::resolve_expr(ast::Expr_id expr_id)
                 resolve_expr(e.array);
                 resolve_expr(e.index);
             } else if constexpr (std::is_same_v<T, ast::Static_path_expr>) {
+                if (auto *base_var = std::get_if<ast::Variable_expr>(&ctx_.tree.get(e.base).node)) {
+                    if (base_var->name == "env"
+                        && (e.member.lexeme == "line" ||
+                            e.member.lexeme == "file" ||
+                            e.member.lexeme == "func" ||
+                            e.member.lexeme == "module" ||
+                            e.member.lexeme == "argv")) {
+                        return;
+                    }
+                }
                 resolve_expr(e.base);
             } else if constexpr (std::is_same_v<T, ast::Range_expr>) {
                 resolve_expr(e.start);

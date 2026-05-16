@@ -30,6 +30,7 @@ int main(int argc, char *argv[])
 
     engine.vm.cfg.out = &std::cout;
     engine.vm.cfg.out = &std::cerr;
+    engine.vm.cmd_args = config.program_args;
 
     if (!engine.compile_file(config.input_file)) {
         return EXIT_FAILURE;

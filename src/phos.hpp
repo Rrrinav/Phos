@@ -35,6 +35,7 @@ public:
 
     bool compile_file(const std::filesystem::path &file_path);
     bool compile_source(const std::string &source, const std::string &logical_name, const std::filesystem::path &root_dir);
+    void set_program_args(const std::vector<std::string>& args);
     void execute();
 
     std::string dump_ir() const;

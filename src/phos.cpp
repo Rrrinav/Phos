@@ -125,5 +125,4 @@ std::string Phos_engine::dump_ast(bool use_unicode) const
     ast::Tree_printer printer(ctx.tree, ctx.tt, use_unicode);
     return printer.print_statements(main_statements);
 }
-
 } // namespace phos

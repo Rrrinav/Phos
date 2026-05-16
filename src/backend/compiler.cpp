@@ -776,6 +776,10 @@ void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
     const bool can_reuse_hoisted_slot = (current_ctx_->enclosing == nullptr);
     const auto *saved_returns = current_function_returns_;
 
+    // 1. Track function name for env::func intrinsic
+    std::string prev_func_name = current_function_name_;
+    current_function_name_ = stmt.name;
+
     Function_context fn_ctx;
     fn_ctx.current_register = 0;
     push_context(&fn_ctx);
@@ -884,7 +888,9 @@ void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
     current_function_returns_ = saved_returns;
 
     if (can_reuse_hoisted_slot && closure->upvalue_count == 0) {
-        return; // Already pre-allocated and safely registered in function_locations_
+        // Restore before early exit!
+        current_function_name_ = prev_func_name;
+        return;
     }
 
     // Lazy load the closure into the LOCAL constant pool of the current scope!
@@ -902,6 +908,9 @@ void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
     }
 
     current_ctx_->locals.push_back({stmt.name, dst_reg});
+
+    // 2. Restore function name state after block ends
+    current_function_name_ = prev_func_name;
 }
 
 void Compiler::compile_stmt_node(const ast::Return_stmt &stmt)
@@ -1307,6 +1316,49 @@ uint8_t Compiler::compile_expr_node(const ast::Enum_member_expr &expr)
 
 uint8_t Compiler::compile_expr_node(const ast::Static_path_expr &expr)
 {
+    if (auto *base_var = std::get_if<ast::Variable_expr>(&ctx.tree.get(expr.base).node)) {
+        if (base_var->name == "env") {
+            if (expr.member.lexeme == "argv") {
+                if (auto sym_id = ctx.registry.lookup_global("env::__argv_impl")) {
+                    uint8_t func_reg = allocate_register();
+                    Closure_data *closure = function_locations_.at(*sym_id);
+                    uint16_t const_idx = add_constant(Value::make_closure(closure));
+                    emit(vm::Instruction::make_ri(vm::Opcode::Load_const, func_reg, const_idx));
+
+                    uint8_t call_base = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base, func_reg, 0));
+
+                    uint8_t dest_reg = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Call, dest_reg, call_base, 0));
+
+                    return dest_reg;
+                } else {
+                    std::println(std::cerr, "Compiler Bug: env::__argv_impl native function not found.");
+                    std::exit(EXIT_FAILURE);
+                }
+            }
+
+            if (expr.member.lexeme == "line" || expr.member.lexeme == "file" || expr.member.lexeme == "func" || expr.member.lexeme == "module") {
+
+                uint8_t target_reg = allocate_register();
+                uint16_t const_idx = 0;
+
+                if (expr.member.lexeme == "line") {
+                    const_idx = add_constant(Value(static_cast<int64_t>(expr.loc.l)));
+                } else if (expr.member.lexeme == "file") {
+                    const_idx = add_constant(Value::make_string(ctx.arena, expr.loc.file));
+                } else if (expr.member.lexeme == "func") {
+                    const_idx = add_constant(Value::make_string(ctx.arena, current_function_name_));
+                } else if (expr.member.lexeme == "module") {
+                    const_idx = add_constant(Value::make_string(ctx.arena, current_module_ns_));
+                }
+
+                emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
+                return target_reg;
+            }
+        }
+    }
+
     if (expr.resolved_symbol) {
         const auto &sym = ctx.registry.get_symbol(*expr.resolved_symbol);
 
@@ -1424,18 +1476,23 @@ uint8_t Compiler::compile_expr_node(const ast::Cast_expr &expr)
 uint8_t Compiler::compile_expr_node(const ast::Closure_expr &expr)
 {
     const auto *saved_returns = current_function_returns_;
+
+    // 1. Track function name for env::func intrinsic
+    std::string prev_func_name = current_function_name_;
+    current_function_name_ = "<anonymous>";
+
     Function_context fn_ctx;
     fn_ctx.current_register = 0;
     push_context(&fn_ctx);
     current_function_returns_ = &expr.returns;
 
-    // 1. Inject Parameters
+    // 2. Inject Parameters
     for (const auto &param : expr.parameters) {
         uint8_t reg = allocate_register();
         current_ctx_->locals.push_back({param.name, reg});
     }
 
-    // 2. Inject Named Returns & Evaluate Defaults
+    // 3. Inject Named Returns & Evaluate Defaults
     for (const auto &ret : expr.returns) {
         if (ret.name.empty()) {
             continue;
@@ -1454,12 +1511,12 @@ uint8_t Compiler::compile_expr_node(const ast::Closure_expr &expr)
         current_ctx_->locals.push_back({ret.name, reg});
     }
 
-    // 3. Compile Body
+    // 4. Compile Body
     if (!expr.body.is_null()) {
         compile_stmt(expr.body);
     }
 
-    // 4. Safely pack implicit drop-off returns
+    // 5. Safely pack implicit drop-off returns
     auto normalized_returns = declared_return_types(expr.returns, ctx.tt);
     if (normalized_returns.empty()) {
         uint8_t nil_reg = allocate_register();
@@ -1506,7 +1563,7 @@ uint8_t Compiler::compile_expr_node(const ast::Closure_expr &expr)
         emit(vm::Instruction::make_rrr(vm::Opcode::Return, packed_reg, 0, 0));
     }
 
-    // 5. Construct Closure Object
+    // 6. Construct Closure Object
     Closure_data *closure = ctx.arena.allocate<Closure_data>();
     new (closure) Closure_data();
 
@@ -1550,6 +1607,9 @@ uint8_t Compiler::compile_expr_node(const ast::Closure_expr &expr)
         route.rrr.dst = 0;
         emit(route);
     }
+
+    // 7. Restore function name state after closure ends
+    current_function_name_ = prev_func_name;
 
     return dst_reg;
 }

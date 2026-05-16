@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <vector>
+#include <string>
 
 namespace phos {
 struct Value;
@@ -69,6 +70,7 @@ struct Vm_context
     std::vector<phos::Value> *globals = nullptr;
     size_t *ip = nullptr;
     size_t *frame_base = nullptr;
+    std::vector<std::string> cmd_args;
 
     [[nodiscard]] Root_guard protect(phos::Value *value) const
     {

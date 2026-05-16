@@ -48,6 +48,7 @@ class Compiler
 
     std::unordered_map<Symbol_id, Closure_data*> function_locations_;
     std::string current_module_ns_;
+    std::string current_function_name_ = "<top_level>";
     const std::vector<ast::Function_param> *current_function_returns_{nullptr};
 
     // Helper to grab the active block

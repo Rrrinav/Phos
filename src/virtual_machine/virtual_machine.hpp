@@ -39,6 +39,7 @@ private:
     void execute_loop(Green_thread_data *thread);
 
 public:
+    std::vector<std::string> cmd_args{};
     std::vector<Value> globals;
 
     Virtual_machine(gc::Gc_heap &gc_, phos::mem::Arena &arena_) : gc(gc_), arena(arena_)
