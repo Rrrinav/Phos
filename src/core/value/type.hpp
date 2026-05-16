@@ -55,16 +55,19 @@ enum class Primitive_kind : uint8_t { I8, I16, I32, I64, U8, U16, U32, U64, F16,
 struct Function_type
 {
     std::vector<Type_id> params;
-    Type_id ret;
+    std::vector<Type_id> returns;
 };
+
 struct Array_type
 {
     Type_id elem;
 };
+
 struct Optional_type
 {
     Type_id base;
 };
+
 struct Iterator_type
 {
     Type_id elem;
@@ -73,14 +76,14 @@ struct Iterator_type
 struct Model_type
 {
     std::string name;
-    std::vector<std::pair<std::string, Type_id>> fields;
-    std::unordered_map<std::string, uint32_t> field_indices;
-    std::vector<std::pair<std::string, Type_id>> static_fields;
-    std::unordered_map<std::string, uint32_t> static_field_indices;
+    std::vector<std::pair<std::string, Type_id>>       fields;
+    std::unordered_map<std::string, uint32_t>          field_indices;
+    std::vector<std::pair<std::string, Type_id>>       static_fields;
+    std::unordered_map<std::string, uint32_t>          static_field_indices;
     std::vector<std::pair<std::string, Function_type>> methods;
-    std::unordered_map<std::string, uint32_t> method_indices;
+    std::unordered_map<std::string, uint32_t>          method_indices;
     std::vector<std::pair<std::string, Function_type>> static_methods;
-    std::unordered_map<std::string, uint32_t> static_method_indices;
+    std::unordered_map<std::string, uint32_t>          static_method_indices;
 };
 
 struct Union_type
@@ -133,15 +136,16 @@ public:
     Type_table();
 
     // Pre-interned Primitives
-    Type_id t_i8, t_i16, t_i32, t_i64;
-    Type_id t_u8, t_u16, t_u32, t_u64;
-    Type_id t_f16, t_f32, t_f64;
+    Type_id t_i8  , t_i16   , t_i32 , t_i64;
+    Type_id t_u8  , t_u16   , t_u32 , t_u64;
+    Type_id t_f16 , t_f32   , t_f64;
     Type_id t_bool, t_string, t_void, t_any, t_nil, t_unknown;
 
     // intern
     Type_id primitive(Primitive_kind p);
     Type_id array(Type_id elem);
     Type_id optional(Type_id base);
+    Type_id function(const std::vector<Type_id> &params, const std::vector<Type_id> &returns);
     Type_id function(const std::vector<Type_id> &params, Type_id ret);
     Type_id model(const std::string &name);
     Type_id model(const std::string &name, const std::vector<std::pair<std::string, Type_id>> &fields);
@@ -373,10 +377,10 @@ public:
     struct Fn_key
     {
         std::vector<Type_id> params;
-        Type_id ret;
+        std::vector<Type_id> returns;
         bool operator==(const Fn_key &o) const
         {
-            return params == o.params && ret == o.ret;
+            return params == o.params && returns == o.returns;
         }
     };
     // AI generated
@@ -384,9 +388,15 @@ public:
     {
         size_t operator()(const Fn_key &k) const
         {
-            size_t h = std::hash<uint32_t>{}(k.ret.value);
+            std::size_t h = 0;
+            auto combine = [&](Type_id id) {
+                h ^= std::hash<uint32_t>{}(id.value) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            };
             for (auto p : k.params) {
-                h ^= std::hash<uint32_t>{}(p.value) + 0x9e3779b9 + (h << 6) + (h >> 2);
+                combine(p);
+            }
+            for (auto r : k.returns) {
+                combine(r);
             }
             return h;
         }

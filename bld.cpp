@@ -1,9 +1,6 @@
-#include <atomic>
 #include <cstdlib>
 #include <filesystem>
 #include <format>
-#include <mutex>
-#include <print>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -12,65 +9,20 @@
 
 #define B_LDR_IMPLEMENTATION
 #define BLD_USE_CONFIG
-#define BLD_NO_COLORS
 #include "b_ldr.hpp"
 
 inline auto &cfg = bld::Config::get();
 
 const std::string SRC = "./src/";
 const std::string BIN = "./bin/";
+const std::string BIN_META = BIN + "meta/";
 const std::string TARGET = BIN + "phos";
 
-const std::vector<std::string> COMMON_FLAGS = {"--std=c++23", "-pthread", "-I./src" , "-Wall", "-Wpedantic"};
-const std::vector<std::string> DEBUG_FLAGS = {"-ggdb", "-O0",  "-fsanitize=address", "-fsanitize=undefined" };
-const std::vector<std::string> RELEASE_FLAGS = {"-O2", "-DNDEBUG"};
-
-struct Progress
-{
-    std::mutex mtx;
-    size_t total{0};
-    std::atomic<size_t> done{0};
-
-    void init(size_t n)
-    {
-        total = n;
-        done = 0;
-    }
-
-    void tick(const std::string &label = "")
-    {
-        size_t cur = ++done;
-        std::lock_guard<std::mutex> lk(mtx);
-        print(cur, label);
-    }
-
-    void print(size_t cur, const std::string &label = "") const
-    {
-        if (total == 0) {
-            return;
-        }
-        constexpr int BAR = 40;
-        int filled = static_cast<int>((cur * BAR) / total);
-        int pct = static_cast<int>((cur * 100) / total);
-
-        std::string bar(filled, '=');
-        if (filled < BAR) {
-            bar += '>';
-        }
-        bar.resize(BAR, ' ');
-
-        std::string lbl = label.size() > 30 ? "..." + label.substr(label.size() - 27) : label;
-
-        std::fprintf(stderr, "\r  [%s] %3d%% (%zu/%zu)  %-33s", bar.c_str(), pct, cur, total, lbl.c_str());
-        std::fflush(stderr);
-
-        if (cur >= total) {
-            std::fprintf(stderr, "\n");
-        }
-    }
-};
-
-static Progress progress;
+const std::vector<std::string> COMMON_FLAGS      = {"--std=c++23", "-pthread", "-I./src", "-Wpedantic", "-Wall", "-Wextra"};
+const std::vector<std::string> DEBUG_FLAGS       = {"-ggdb", "-O0"};
+const std::vector<std::string> RELEASE_FLAGS     = {"-O2", "-DNDEBUG"};
+const std::vector<std::string> SANITIZER_FLAGS   = {"-fsanitize=address", "-fsanitize=undefined"};
+const std::vector<std::string> META_FILES_TO_RUN = {"basic_meta.cpp"};
 
 static std::string string_diff(const std::string &got, const std::string &expected)
 {
@@ -89,141 +41,147 @@ static std::string string_diff(const std::string &got, const std::string &expect
     return out.str();
 }
 
+static std::string object_root(bool release)
+{
+    return BIN + (release ? "release/" : "debug/");
+}
+
 static void add_mode_flags(bld::Command &cmd, bool release)
 {
-    for (auto &f : COMMON_FLAGS) {
+    for (const auto &f : COMMON_FLAGS) {
         cmd.add_parts(f);
     }
     if (release) {
-        for (auto &f : RELEASE_FLAGS) {
+        for (const auto &f : RELEASE_FLAGS) {
             cmd.add_parts(f);
         }
     } else {
-        for (auto &f : DEBUG_FLAGS) {
+        for (const auto &f : DEBUG_FLAGS) {
             cmd.add_parts(f);
+        }
+        if (static_cast<bool>(cfg["san"])) {
+            for (const auto &f : SANITIZER_FLAGS) {
+                cmd.add_parts(f);
+            }
         }
     }
 }
 
-void build_interpreter(bool release = false, bool force = false)
+static void build_core_library(bld::Dep_graph &graph, const std::string &obj_root, bool release, bool force)
 {
-    using namespace std::filesystem;
-
-    bld::fs::create_dir_if_not_exists(BIN);
-
     auto cpp_files = bld::fs::get_all_files_with_extensions(SRC, {"cpp"}, true);
     auto hpp_files = bld::fs::get_all_files_with_extensions(SRC, {"hpp"}, true);
 
-    std::vector<std::string> objs;
-    std::vector<std::string> files_to_build;
+    std::vector<std::string> core_objs;
 
-    for (auto &f : cpp_files) {
-
-        std::string out_p = bld::fs::get_stem(bld::str::replace(f, SRC, BIN), true) + ".o";
-        objs.push_back(out_p);
-
-        bld::fs::create_dir_if_not_exists(path(out_p).parent_path().string());
-
-        if (force) {
-            files_to_build.push_back(f);
+    for (const auto &f : cpp_files) {
+        if (f.find("main.cpp") != std::string::npos) {
             continue;
         }
 
-        bool needs = bld::is_executable_outdated(f, out_p);
+        std::string out_p = bld::fs::get_stem(bld::str::replace(f, SRC, obj_root), true) + ".o";
+        core_objs.push_back(out_p);
+        bld::fs::create_dir_if_not_exists(std::filesystem::path(out_p).parent_path().string());
 
-        if (!needs) {
-            // main.cpp: check all headers; others: check paired header only
-            if (f.find("main.cpp") != std::string::npos) {
-                for (auto &h : hpp_files) {
-                    if (bld::is_executable_outdated(h, out_p)) {
-                        needs = true;
-                        break;
-                    }
-                }
-            } else {
-                std::string hdr = bld::str::replace(f, ".cpp", ".hpp");
-                if (exists(hdr) && bld::is_executable_outdated(hdr, out_p)) {
-                    needs = true;
-                }
-            }
+        if (force && std::filesystem::exists(out_p)) {
+            std::filesystem::remove(out_p);
         }
 
-        if (needs) {
-            files_to_build.push_back(f);
+        std::vector<std::string> deps = {f};
+        std::string hdr = bld::str::replace(f, ".cpp", ".hpp");
+        if (std::filesystem::exists(hdr)) {
+            deps.push_back(hdr);
         }
+
+        bld::Command cmd = {"g++", "-c", f, "-o", out_p};
+        add_mode_flags(cmd, release);
+        graph.add_dep(bld::Dep(out_p, deps, cmd));
     }
 
-    if (files_to_build.empty()) {
-        bld::log(bld::Log_type::INFO, "Nothing to rebuild.");
-    } else {
-        bld::log(bld::Log_type::INFO, std::format("Compiling {} file(s) [{}] ...", files_to_build.size(), release ? "release" : "debug"));
-
-        progress.init(files_to_build.size());
-
-        std::vector<bld::Proc> procs;
-        std::vector<std::string> labels;
-        procs.reserve(files_to_build.size());
-        labels.reserve(files_to_build.size());
-
-        for (auto &f : files_to_build) {
-            std::string out_p = bld::fs::get_stem(bld::str::replace(f, SRC, BIN), true) + ".o";
-
-            bld::Command cmd = {"g++", "-c", f, "-o", out_p};
-            add_mode_flags(cmd, release);
-
-            auto p = bld::execute_async(cmd);
-            if (p) {
-                procs.push_back(p);
-                labels.push_back(bld::fs::get_file_name(f));
-            } else {
-                bld::log(bld::Log_type::ERR, "Failed to start: " + f);
-            }
-        }
-
-        std::vector<bool> done(procs.size(), false);
-        size_t remaining = procs.size();
-        while (remaining > 0) {
-            for (size_t i = 0; i < procs.size(); ++i) {
-                if (done[i]) {
-                    continue;
-                }
-                auto ws = bld::try_wait_nb(procs[i]);
-                if (ws.exited) {
-                    done[i] = true;
-                    --remaining;
-                    progress.tick(labels[i]);
-                    if (!ws.normal || ws.exit_code != 0) {
-                        bld::log(bld::Log_type::ERR, "Compilation failed: " + files_to_build[i]);
-                    }
-                    bld::cleanup_process(procs[i]);
-                }
-            }
-            if (remaining > 0) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            }
-        }
+    const std::string lib_path = BIN + "libphos.a";
+    if (force && std::filesystem::exists(lib_path)) {
+        std::filesystem::remove(lib_path);
     }
 
-    bld::log(bld::Log_type::INFO, "Linking -> " + TARGET);
-    bld::Command link_cmd = {"g++", "-o", TARGET};
-    for (auto &o : objs) {
+    bld::Command ar_cmd = {"ar", "rcs", lib_path};
+    for (const auto &o : core_objs) {
+        ar_cmd.add_parts(o);
+    }
+
+    graph.add_dep(bld::Dep(lib_path, core_objs, ar_cmd));
+}
+
+static void link_and_build(
+    bld::Dep_graph &graph,
+    const std::string &target_bin,
+    const std::vector<std::string> &objs,
+    bool release,
+    bool force,
+    const std::string &build_label)
+{
+    bld::Command link_cmd = {"g++", "-o", target_bin};
+    for (const auto &o : objs) {
         link_cmd.add_parts(o);
     }
     add_mode_flags(link_cmd, release);
 
-    if (!bld::execute(link_cmd)) {
-        bld::log(bld::Log_type::ERR, "Linking failed.");
+    if (force && std::filesystem::exists(target_bin)) {
+        std::filesystem::remove(target_bin);
+    }
+
+    graph.add_dep(bld::Dep(target_bin, objs, link_cmd));
+
+    bld::log(bld::Log_type::INFO, std::format("Building {} [{}] ...", build_label, release ? "release" : "debug"));
+
+    size_t threads = cfg["threads"].as_int();
+    if (threads == 0) {
+        threads = std::thread::hardware_concurrency();
+    }
+
+    if (!graph.build_parallel(target_bin, threads)) {
+        bld::log(bld::Log_type::ERR, build_label + " build failed.");
         std::exit(EXIT_FAILURE);
     }
 
-    bld::log(bld::Log_type::INFO, "Build complete -> " + TARGET);
+    bld::log(bld::Log_type::INFO, build_label + " build complete -> " + target_bin);
+}
+
+void build_interpreter(bool release = false, bool force = false)
+{
+    bld::fs::create_dir_if_not_exists(BIN);
+    const std::string obj_root = object_root(release);
+    bld::fs::create_dir_if_not_exists(obj_root);
+
+    bld::Dep_graph graph;
+
+    build_core_library(graph, obj_root, release, force);
+    const std::string lib_path = BIN + "libphos.a";
+
+    std::string main_src = SRC + "main.cpp";
+    std::string main_obj = obj_root + "main.o";
+    bld::fs::create_dir_if_not_exists(std::filesystem::path(main_obj).parent_path().string());
+
+    if (force && std::filesystem::exists(main_obj)) {
+        std::filesystem::remove(main_obj);
+    }
+
+    bld::Command main_cmd = {"g++", "-c", main_src, "-o", main_obj};
+    add_mode_flags(main_cmd, release);
+
+    auto hpp_files = bld::fs::get_all_files_with_extensions(SRC, {"hpp"}, true);
+    std::vector<std::string> main_deps = {main_src};
+    main_deps.insert(main_deps.end(), hpp_files.begin(), hpp_files.end());
+
+    graph.add_dep(bld::Dep(main_obj, main_deps, main_cmd));
+
+    link_and_build(graph, TARGET, {main_obj, lib_path}, release, force, "standard interpreter");
 }
 
 void build_custom_interpreter(bool release = false, bool force = false)
 {
-    using namespace std::filesystem;
-
     bld::fs::create_dir_if_not_exists(BIN);
+    const std::string obj_root = object_root(release);
+    bld::fs::create_dir_if_not_exists(obj_root);
 
     std::string objs_val = cfg["objs"];
     if (objs_val.empty()) {
@@ -231,85 +189,43 @@ void build_custom_interpreter(bool release = false, bool force = false)
         std::exit(EXIT_FAILURE);
     }
 
-    auto requested = bld::str::chop_by_delimiter(objs_val, ",");
+    bld::Dep_graph graph;
+    build_core_library(graph, obj_root, release, force);
+    const std::string lib_path = BIN + "libphos.a";
 
+    auto requested = bld::str::chop_by_delimiter(objs_val, ",");
     std::vector<std::string> objs_to_link;
-    std::vector<bld::Proc> procs;
-    std::vector<std::string> labels;
 
     for (auto req : requested) {
-        req = bld::str::trim(req); // trim the local copy
+        req = bld::str::trim(req);
         std::string src_file = SRC + req;
-        std::string out_p = bld::fs::get_stem(bld::str::replace(src_file, SRC, BIN), true) + ".o";
+        std::string out_p = bld::fs::get_stem(bld::str::replace(src_file, SRC, obj_root), true) + ".o";
 
-        bld::fs::create_dir_if_not_exists(path(out_p).parent_path().string());
+        bld::fs::create_dir_if_not_exists(std::filesystem::path(out_p).parent_path().string());
         objs_to_link.push_back(out_p);
 
-        bool needs = force || bld::is_executable_outdated(src_file, out_p);
-        if (!needs) {
-            std::string hdr = bld::str::replace(src_file, ".cpp", ".hpp");
-            if (exists(hdr) && bld::is_executable_outdated(hdr, out_p)) {
-                needs = true;
-            }
+        if (force && std::filesystem::exists(out_p)) {
+            std::filesystem::remove(out_p);
         }
 
-        if (needs) {
-            bld::Command cmd = {"g++", "-c", src_file, "-o", out_p};
-            add_mode_flags(cmd, release);
-            auto p = bld::execute_async(cmd);
-            if (p) {
-                procs.push_back(p);
-                labels.push_back(req);
-            }
+        std::vector<std::string> deps = {src_file};
+        std::string hdr = bld::str::replace(src_file, ".cpp", ".hpp");
+        if (std::filesystem::exists(hdr)) {
+            deps.push_back(hdr);
         }
+
+        bld::Command cmd = {"g++", "-c", src_file, "-o", out_p};
+        add_mode_flags(cmd, release);
+        graph.add_dep(bld::Dep(out_p, deps, cmd));
     }
 
-    if (!procs.empty()) {
-        bld::log(bld::Log_type::INFO, std::format("Compiling {} file(s) [custom, {}] ...", procs.size(), release ? "release" : "debug"));
-        progress.init(procs.size());
+    objs_to_link.push_back(lib_path);
 
-        std::vector<bool> done(procs.size(), false);
-        size_t remaining = procs.size();
-        while (remaining > 0) {
-            for (size_t i = 0; i < procs.size(); ++i) {
-                if (done[i]) {
-                    continue;
-                }
-                auto ws = bld::try_wait_nb(procs[i]);
-                if (ws.exited) {
-                    done[i] = true;
-                    --remaining;
-                    progress.tick(labels[i]);
-                    if (!ws.normal || ws.exit_code != 0) {
-                        bld::log(bld::Log_type::ERR, "Compilation failed: " + labels[i]);
-                    }
-                    bld::cleanup_process(procs[i]);
-                }
-            }
-            if (remaining > 0) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            }
-        }
-    }
-
-    bld::log(bld::Log_type::INFO, "Linking -> " + TARGET);
-    bld::Command link_cmd = {"g++", "-o", TARGET};
-    for (auto &o : objs_to_link) {
-        link_cmd.add_parts(o);
-    }
-    add_mode_flags(link_cmd, release);
-
-    if (!bld::execute(link_cmd)) {
-        bld::log(bld::Log_type::ERR, "Custom linking failed.");
-        std::exit(EXIT_FAILURE);
-    }
-
-    bld::log(bld::Log_type::INFO, "Custom build complete -> " + TARGET);
+    link_and_build(graph, TARGET, objs_to_link, release, force, "custom interpreter");
 }
 
-std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::string>>> run_tests()
+std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::string>>> run_tests(bool release)
 {
-    // cfg["test"] holds the directory value (e.g. -test=./tests)
     std::string dir = cfg["test"];
     if (dir.empty()) {
         bld::log(bld::Log_type::ERR, "Provide test directory with -test=<dir>");
@@ -317,7 +233,7 @@ std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::str
     }
 
     if (!std::filesystem::exists(TARGET)) {
-        build_interpreter();
+        build_interpreter(release);
     }
 
     auto files = bld::fs::get_all_files_with_extensions(dir, {"phos"});
@@ -328,14 +244,14 @@ std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::str
     }
 
     bld::log(bld::Log_type::INFO, std::format("Running {} test(s) ...", files.size()));
-    progress.init(files.size());
 
     std::vector<std::pair<std::string, std::string>> failed;
     std::vector<std::string> passed;
 
-    for (auto &f : files) {
+    for (const auto &f : files) {
         std::string output{};
         bld::Command run_cmd = {TARGET, f};
+
         if (!bld::read_process_output(run_cmd, output)) {
             bld::log(bld::Log_type::ERR, "Failed to run interpreter on: " + f);
             std::exit(EXIT_FAILURE);
@@ -353,43 +269,25 @@ std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::str
         } else {
             failed.push_back({f, string_diff(output, expected)});
         }
-
-        progress.tick(bld::fs::get_file_name(f));
     }
 
     return {passed, failed};
 }
 
-auto compile_custom(std::string ip, std::string op = "./new")
+auto compile_custom(std::string ip, std::string op, bool release)
 {
-    namespace stdfs = std::filesystem;
+    const std::string lib_path = BIN + "libphos.a";
 
-    // std::filesystem::equivalent only works if those files exist;
+    if (!std::filesystem::exists(lib_path)) {
+        bld::log(bld::Log_type::ERR, "Core library not found. Build the interpreter first.");
+        return false;
+    }
+
     bld::fs::write_entire_file(op, "");
 
     bld::Command cmd;
-    // ADDED: "-I./src" so custom compilation also respects the path mappings
-    cmd.add_parts("g++", "-o", op, ip, "-Wall", "--std=c++23", "-I./src", "-lm", "-pthread", "-ggdb", "-O0");
-
-    bld::fs::walk_directory(BIN, [ip, op, &cmd](bld::fs::Walk_fn_opt &opt) -> bool {
-        if (stdfs::is_directory(opt.path)) {
-            return true;
-        }
-        if (stdfs::equivalent(opt.path, "./bin/main.o")) {
-            return true;
-        }
-        if (stdfs::equivalent(opt.path, "./bin/phos")) {
-            return true;
-        }
-        if (stdfs::equivalent(opt.path, "./bin/new")) {
-            return true;
-        }
-        if (stdfs::equivalent(opt.path, op)) {
-            return true;
-        }
-        cmd.add_parts(opt.path.string());
-        return true;
-    });
+    cmd.add_parts("g++", "-o", op, ip, lib_path, "-lm");
+    add_mode_flags(cmd, release);
 
     if (!bld::execute(cmd)) {
         bld::fs::remove(op);
@@ -398,25 +296,64 @@ auto compile_custom(std::string ip, std::string op = "./new")
     return true;
 }
 
+auto build_meta()
+{
+    bld::fs::create_dirs_if_not_exists(BIN_META);
+    std::vector<bld::Proc> procs;
+
+    bld::fs::walk_directory("./meta", [&](bld::fs::Walk_fn_opt &opt) -> bool {
+        bld::Command cmd{};
+        cmd.add_parts("g++");
+        cmd.add_parts(opt.path.string());
+        cmd.add_parts("-o", BIN_META + bld::fs::get_stem(opt.path.filename().string()));
+        cmd.add_parts("-O2");
+        cmd.append({"--std=c++26", "-pthread", "-Wpedantic", "-Wall", "-freflection"});
+
+        procs.push_back(bld::execute_async(cmd));
+        return true;
+    });
+
+    auto result = bld::wait_procs(procs, true);
+    if (!result.failed_indices.empty()) {
+        bld::log(bld::Log_type::ERR, "Meta build failed for one or more files.");
+        std::exit(EXIT_FAILURE);
+    }
+}
+
 int main(int argc, char *argv[])
 {
     BLD_REBUILD_AND_ARGS();
 
-    // register custom flags so they're recognised by parse_args
     cfg.add_flag("rel", "Release build (-O2 -DNDEBUG)");
+    cfg.add_flag("san", "Enable ASan/UBSan in debug builds");
     cfg.add_flag("force", "Force rebuild of all files");
     cfg.add_flag("clean", "Remove build directory");
+    cfg.add_flag("count", "count number of lines, files, etc.");
 
     cfg.add_option("test", "", "Run tests in given directory (e.g. -test=./tests)");
     cfg.add_option("objs", "", "Comma-separated source files for custom build");
+    cfg.add_option("compile", "", "Compile a custom source file alongside the VM");
+    cfg.add_option("o", "", "Output executable name for custom compile");
 
     bool release = static_cast<bool>(cfg["rel"]);
     bool force = static_cast<bool>(cfg["force"]);
+
+    if (cfg["h"] || cfg["help"]) {
+        cfg.show_help(true);
+        return 0;
+    }
+
+    if (cfg["meta"]) {
+        build_meta();
+    }
 
     if (cfg["clean"]) {
         bld::log(bld::Log_type::INFO, "Cleaning " + BIN);
         bld::fs::remove_dir(BIN);
         bld::log(bld::Log_type::INFO, "Done.");
+    } else if (cfg["test"]) {
+        auto [passed, failed] = run_tests(release);
+        return failed.empty() ? 0 : 1;
     } else if (!std::string(cfg["objs"]).empty()) {
         build_custom_interpreter(release, force);
     } else {
@@ -424,14 +361,8 @@ int main(int argc, char *argv[])
     }
 
     if (cfg["compile"]) {
-        std::string file{""};
-        if (cfg["o"]) {
-            file = std::string(cfg["o"]);
-        } else {
-            file = "./bin/new";
-        }
-
-        compile_custom(cfg["compile"], file);
+        std::string file = cfg["o"] ? std::string(cfg["o"]) : "./bin/new";
+        compile_custom(cfg["compile"], file, release);
         bld::log(bld::Log_type::INFO, "Build complete -> " + file);
     }
 

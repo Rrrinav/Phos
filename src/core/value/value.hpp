@@ -101,6 +101,8 @@ struct Closure_data
 {
     String_data *name{};
     std::size_t arity{};
+    std::size_t min_arity{};
+    bool is_variadic{false};
     types::Function_type signature{};
 
     vm::Instruction *code{nullptr};

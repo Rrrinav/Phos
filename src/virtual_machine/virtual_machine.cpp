@@ -505,15 +505,28 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
 
             Closure_data *target_closure = callee.as_closure();
 
-            if (target_closure->arity != arg_count) {
-                panic("Arity mismatch. Expected {} arguments, got {} at IP: {}", target_closure->arity, arg_count, ip - 1);
-            }
             if (target_closure->native_func.has_value()) {
+                if (target_closure->is_variadic) {
+                    if (arg_count < target_closure->min_arity) {
+                        panic(
+                            "Arity mismatch. Expected at least {} arguments, got {} at IP: {}",
+                            target_closure->min_arity,
+                            arg_count,
+                            ip - 1);
+                    }
+                } else if (target_closure->arity != arg_count) {
+                    panic("Arity mismatch. Expected {} arguments, got {} at IP: {}", target_closure->arity, arg_count, ip - 1);
+                }
+
                 frame->ip = ip;
                 std::span<Value> args(&registers[base + inst.rrr.src_a + 1], arg_count);
                 Value result = (*target_closure->native_func)(ctx, args);
                 registers[base + inst.rrr.dst] = result;
                 break;
+            }
+
+            if (target_closure->arity != arg_count) {
+                panic("Arity mismatch. Expected {} arguments, got {} at IP: {}", target_closure->arity, arg_count, ip - 1);
             }
 
             if (thread->call_stack_count >= thread->call_stack_capacity) {

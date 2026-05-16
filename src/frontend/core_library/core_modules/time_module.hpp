@@ -1,20 +1,23 @@
 #pragma once
 
+#include "core/value/ffi_support.hpp"
 #include "core/value/value.hpp"
 #include "frontend/environment/type_environment.hpp"
-#include "virtual_machine/garbage_collector/gc_context.hpp"
 
 #include <chrono>
 #include <ctime>
-#include <iomanip>
 #include <span>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace phos::vm::modules {
 
 using Ctx = vm::Vm_context;
+
+// Cache the signature so we can quickly instantiate models at runtime
+inline types::Model_type time_datetime_sig{};
 
 struct time_native
 {
@@ -33,15 +36,12 @@ struct time_native
     }
 
     // System Epoch Clocks
-
-    // Returns standard Unix epoch timestamp in seconds
     static Value epoch(Ctx &, std::span<Value>)
     {
         auto now = std::chrono::system_clock::now().time_since_epoch();
         return Value(static_cast<int64_t>(std::chrono::duration_cast<std::chrono::seconds>(now).count()));
     }
 
-    // Returns standard Unix epoch timestamp in milliseconds
     static Value epoch_ms(Ctx &, std::span<Value>)
     {
         auto now = std::chrono::system_clock::now().time_since_epoch();
@@ -49,7 +49,6 @@ struct time_native
     }
 
     // Thread Control
-
     static Value sleep(Ctx &, std::span<Value> args)
     {
         int64_t ms = args[0].as_int();
@@ -59,41 +58,47 @@ struct time_native
         return Value(nullptr); // Void return
     }
 
-    // Formatting Utilities
-
-    // Returns current UTC date/time as ISO 8601 string: "YYYY-MM-DDTHH:MM:SSZ"
-    static Value utc_string(Ctx &ctx, std::span<Value>)
+    // DateTime Model Constructors
+    static Value utc_datetime(Ctx &ctx, std::span<Value>)
     {
         auto now = std::chrono::system_clock::now();
         std::time_t current_time = std::chrono::system_clock::to_time_t(now);
         std::tm *tm_utc = std::gmtime(&current_time);
 
-        std::ostringstream ss;
-        ss << std::put_time(tm_utc, "%Y-%m-%dT%H:%M:%SZ");
-        return Value::make_string(ctx, ss.str());
+        std::vector<Value> fields = {
+            Value(static_cast<int64_t>(tm_utc->tm_year + 1900)),
+            Value(static_cast<int64_t>(tm_utc->tm_mon + 1)),
+            Value(static_cast<int64_t>(tm_utc->tm_mday)),
+            Value(static_cast<int64_t>(tm_utc->tm_hour)),
+            Value(static_cast<int64_t>(tm_utc->tm_min)),
+            Value(static_cast<int64_t>(tm_utc->tm_sec))};
+
+        return ffi::make_model(ctx, time_datetime_sig, fields);
     }
 
-    // Returns current local date/time as a standard string: "YYYY-MM-DD HH:MM:SS"
-    static Value local_string(Ctx &ctx, std::span<Value>)
+    static Value local_datetime(Ctx &ctx, std::span<Value>)
     {
         auto now = std::chrono::system_clock::now();
         std::time_t current_time = std::chrono::system_clock::to_time_t(now);
         std::tm *tm_local = std::localtime(&current_time);
 
-        std::ostringstream ss;
-        ss << std::put_time(tm_local, "%Y-%m-%d %H:%M:%S");
-        return Value::make_string(ctx, ss.str());
+        std::vector<Value> fields = {
+            Value(static_cast<int64_t>(tm_local->tm_year + 1900)),
+            Value(static_cast<int64_t>(tm_local->tm_mon + 1)),
+            Value(static_cast<int64_t>(tm_local->tm_mday)),
+            Value(static_cast<int64_t>(tm_local->tm_hour)),
+            Value(static_cast<int64_t>(tm_local->tm_min)),
+            Value(static_cast<int64_t>(tm_local->tm_sec))};
+
+        return ffi::make_model(ctx, time_datetime_sig, fields);
     }
 
     // Parsing and Arithmetic
-
-    // Safely parses ISO 8601 strings manually
-    static Value parse_utc(Ctx &, std::span<Value> args)
+    static Value parse_utc(Ctx &ctx, std::span<Value> args)
     {
         std::string date_str(args[0].as_string());
         std::tm tm_time = {};
 
-        // Ensure defaults for time if only date is provided
         tm_time.tm_hour = 0;
         tm_time.tm_min = 0;
         tm_time.tm_sec = 0;
@@ -104,13 +109,11 @@ struct time_native
 
         std::istringstream ss(date_str);
 
-        // Try to parse YYYY-MM-DD
         if (ss >> year >> dash1 >> month >> dash2 >> day && dash1 == '-' && dash2 == '-') {
             tm_time.tm_year = year - 1900;
             tm_time.tm_mon = month - 1;
             tm_time.tm_mday = day;
 
-            // Try to continue parsing time: THH:MM:SSZ
             if (ss >> t_sep >> hour >> colon1 >> minute >> colon2 >> second >> z_char && (t_sep == 'T' || t_sep == ' ') && colon1 == ':'
                 && colon2 == ':') {
                 tm_time.tm_hour = hour;
@@ -118,22 +121,20 @@ struct time_native
                 tm_time.tm_sec = second;
             }
 
-#if defined(_WIN32)
-            std::time_t time = _mkgmtime(&tm_time);
-#else
-            std::time_t time = timegm(&tm_time);
-#endif
+            std::vector<Value> fields = {
+                Value(static_cast<int64_t>(year)),
+                Value(static_cast<int64_t>(month)),
+                Value(static_cast<int64_t>(day)),
+                Value(static_cast<int64_t>(tm_time.tm_hour)),
+                Value(static_cast<int64_t>(tm_time.tm_min)),
+                Value(static_cast<int64_t>(tm_time.tm_sec))};
 
-            if (time != -1) {
-                return Value(static_cast<int64_t>(time));
-            }
+            return ffi::make_model(ctx, time_datetime_sig, fields);
         }
 
-        // Return explicit Phos nil on failure
         return Value(nullptr);
     }
 
-    // Returns the number of seconds between two epoch timestamps (end - start)
     static Value diff(Ctx &, std::span<Value> args)
     {
         int64_t end = args[0].as_int();
@@ -144,27 +145,54 @@ struct time_native
 
 inline void register_time(Type_environment &env)
 {
-    // High-Resolution Timers
-    env.define_native("time::now", std::vector<std::string>{}, "f64", time_native::now);
-    env.define_native("time::cpu_time", std::vector<std::string>{}, "f64", time_native::cpu_time);
+    // 1. Register the DateTime Model
+    auto datetime_type = env.define_native_model(
+        "time::DateTime",
+        {{"year", env.tt.get_i64()},
+         {"month", env.tt.get_i64()},
+         {"day", env.tt.get_i64()},
+         {"hour", env.tt.get_i64()},
+         {"minute", env.tt.get_i64()},
+         {"second", env.tt.get_i64()}});
 
-    // System Epoch Clocks
-    env.define_native("time::epoch", std::vector<std::string>{}, "i64", time_native::epoch);
-    env.define_native("time::epoch_ms", std::vector<std::string>{}, "i64", time_native::epoch_ms);
+    // Cache the signature for the FFI builder
+    time_datetime_sig = env.tt.get(datetime_type).as<types::Model_type>();
 
-    // Thread Control
-    env.define_native("time::sleep", std::vector<std::string>{"i64"}, "void", time_native::sleep);
+    // 2. High-Resolution Timers
+    env.define_native("time::now", std::vector<Native_param>{}, "f64", time_native::now);
+    env.define_native("time::cpu_time", std::vector<Native_param>{}, "f64", time_native::cpu_time);
 
-    // String Formatting
-    env.define_native("time::utc_string", std::vector<std::string>{}, "string", time_native::utc_string);
-    env.define_native("time::local_string", std::vector<std::string>{}, "string", time_native::local_string);
+    // 3. System Epoch Clocks
+    env.define_native("time::epoch", std::vector<Native_param>{}, "i64", time_native::epoch);
+    env.define_native("time::epoch_ms", std::vector<Native_param>{}, "i64", time_native::epoch_ms);
 
-    // Parsing and Arithmetic
-    // Note the 'i64?' return type for parse_utc. It returns an optional to force safe unwrapping in Phos.
-    env.define_native("time::parse_utc", std::vector<std::string>{"string"}, "i64?", time_native::parse_utc);
-    env.define_native("time::diff", std::vector<std::string>{"i64", "i64"}, "i64", time_native::diff);
+    // 4. Thread Control
+    env.define_native(
+        "time::sleep",
+        std::vector<Native_param>{Native_param{.name = "ms", .type_str = "i64", .default_value = std::nullopt}},
+        "void",
+        time_native::sleep);
 
-    // Constants
+    // 5. Native Model Constructors
+    env.define_native("time::utc_datetime", std::vector<Native_param>{}, "time::DateTime", time_native::utc_datetime);
+    env.define_native("time::local_datetime", std::vector<Native_param>{}, "time::DateTime", time_native::local_datetime);
+
+    env.define_native(
+        "time::parse_utc",
+        std::vector<Native_param>{Native_param{.name = "date_str", .type_str = "string", .default_value = std::nullopt}},
+        "time::DateTime?", // Returns an optional DateTime model now!
+        time_native::parse_utc);
+
+    // 6. Parsing and Arithmetic
+    env.define_native(
+        "time::diff",
+        std::vector<Native_param>{
+            Native_param{.name = "end", .type_str = "i64", .default_value = std::nullopt},
+            Native_param{.name = "start", .type_str = "i64", .default_value = std::nullopt}},
+        "i64",
+        time_native::diff);
+
+    // 7. Constants
     env.define_native_const("time::MS_PER_SEC", Value(static_cast<int64_t>(1000)));
     env.define_native_const("time::US_PER_SEC", Value(static_cast<int64_t>(1000000)));
     env.define_native_const("time::NS_PER_SEC", Value(static_cast<int64_t>(1000000000)));

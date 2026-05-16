@@ -152,7 +152,7 @@ struct Model_literal_expr
 struct Closure_expr
 {
     std::vector<Function_param> parameters;
-    types::Type_id return_type;
+    std::vector<Function_param> returns;
     Stmt_id body;
     types::Type_id type;
     Source_location loc;
@@ -261,7 +261,7 @@ struct Expr
 // Statement Nodes
 struct Return_stmt
 {
-    Expr_id expression = Expr_id::null();
+    std::vector<Expr_id> expressions;
     Source_location loc;
 };
 
@@ -269,8 +269,12 @@ struct Function_stmt
 {
     std::string name;
     bool is_static;
+    bool is_pure{false};
     std::vector<Function_param> parameters;
-    types::Type_id return_type;
+    // Can be anonymous:  [ {name: "", type: i32} ]
+    // Can be named:      [ {name: "x", type: i32} ]
+    // Can have defaults: [ {name: "x", type: i32, default: expr} ]
+    std::vector<Function_param> returns;
     Stmt_id body;
     std::optional<Symbol_id> resolved_symbol = std::nullopt;
     Source_location loc;
@@ -301,6 +305,16 @@ struct Var_stmt
     std::string name;
     types::Type_id type;
     Expr_id initializer = Expr_id::null();
+    bool type_inferred = false;
+    Source_location loc;
+};
+
+struct Multi_var_stmt
+{
+    Var_kind kind = Var_kind::Let;
+    std::vector<std::string> names;
+    std::vector<types::Type_id> types;
+    std::vector<Expr_id> initializers;
     bool type_inferred = false;
     Source_location loc;
 };
@@ -400,6 +414,7 @@ struct Stmt
         Function_stmt,
         Model_stmt,
         Var_stmt,
+        Multi_var_stmt,
         Print_stmt,
         Expr_stmt,
         Block_stmt,

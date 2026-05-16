@@ -83,7 +83,8 @@ public:
     Scope_tracker variables;
 
     std::vector<std::unordered_set<Access_path, Access_path_hash>> m_nil_checked_vars_stack;
-    std::optional<types::Type_id> current_return_type;
+    std::optional<std::vector<types::Type_id>> current_return_types;
+    const std::vector<ast::Function_param> *current_return_params = nullptr;
     std::optional<types::Type_id> current_model_type;
 
     err::Engine diagnostics_{"semantic-checking"};
@@ -200,6 +201,7 @@ public:
     void check_print_stmt(ast::Stmt_id stmt_id);
     void check_return_stmt(ast::Stmt_id stmt_id);
     void check_var_stmt(ast::Stmt_id stmt_id);
+    void check_multi_var_stmt(ast::Stmt_id stmt_id);
     void check_while_stmt(ast::Stmt_id stmt_id);
     void check_for_stmt(ast::Stmt_id stmt_id);
     void check_for_in_stmt(ast::Stmt_id stmt_id);

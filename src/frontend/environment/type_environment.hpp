@@ -41,6 +41,12 @@ struct Native_param
     std::string name;
     std::string type_str;
     std::optional<Value> default_value;
+    bool is_variadic = false;
+
+    std::string display_type() const
+    {
+        return type_str + (is_variadic ? "..." : "");
+    }
 };
 
 struct Native_sig
@@ -48,6 +54,16 @@ struct Native_sig
     std::vector<Native_param> params;
     std::string ret_type_str;
     Native_fn func = nullptr;
+
+    bool is_variadic() const
+    {
+        return !params.empty() && params.back().is_variadic;
+    }
+
+    size_t fixed_arity() const
+    {
+        return params.size() - (is_variadic() ? 1u : 0u);
+    }
 };
 
 class Type_environment
@@ -75,6 +91,7 @@ public:
 
     // Models
     bool register_model(const std::string &name);
+    types::Type_id define_native_model(const std::string &name, const std::vector<std::pair<std::string, types::Type_id>> &fields);
     bool add_model_field_default(const std::string &model_name, const std::string &field, ast::Expr_id expr);
     bool add_model_static_field(const std::string &model_name, const std::string &field, types::Type_id type, ast::Expr_id expr);
     bool add_model_method(const std::string &model_name, const std::string &method, ast::Stmt_id decl);

@@ -28,10 +28,11 @@
   01. B_LDR_IMPLEMENTATION          : Include all the implementation in the header file.
   02. BLD_REBUILD_YOURSELF_ONCHANGE : Rebuild the build executable if the source file is newer than the executable and run it.
   03. BLD_HANDLE_ARGS               : Handle command-line arguments (only run and config commands).
-  04. BLD_REBUILD_AND_ARGS          : Rebuild the executable if the source file is newer than the executable and handle command-line
-  arguments. 05. BLD_NO_COLORS                 : Disable colors in log messages. 06. BLD_USE_CONFIG                : Enable the
-  configuration system in the build tool. 07. BLD_DEFAULT_CONFIG_FILE       : File to save the configuration to. 08. BLD_NO_LOGGING : No
-  logging in the build tool. 09. BLD_VERBOSE_0                 : No output in the tool.
+  04. BLD_REBUILD_AND_ARGS          : Rebuild the executable if the source file is newer than the executable and handle command-line arguments.
+  05. BLD_USE_COLORS                : Enable colors in logging
+  06. BLD_USE_CONFIG                : Enable the configuration system in the build tool.
+  07. BLD_DEFAULT_CONFIG_FILE       : File to save the configuration to.
+  08. BLD_NO_LOGGING                : No logging in the build tool. 09. BLD_VERBOSE_0                 : No output in the tool.
   10. BLD_VERBOSE_1                 : No verbose output in the tool. Only prints errors. No INFO or WARNING messages.
   11. BLD_VERBOSE_2                 : Only prints errors and warning. No INFO messages.
     Verbosity is full by default.
@@ -123,6 +124,7 @@ struct Proc
     pid p_id = 0;
     State state = State::INIT_ERROR;
     int exit_code = 0;
+    std::string label{""};
 
 #ifndef _WIN32
     int signal = 0;
@@ -341,7 +343,7 @@ public:
     bool verbose = false;
     bool hot_reload = false;
     bool override_run = false;
-    size_t threads = 1;
+    size_t threads = std::thread::hardware_concurrency();
 
     std::vector<std::string> hot_reload_files;
     std::vector<std::string> cmd_args;
@@ -408,7 +410,7 @@ public:
     void parse_args(const std::vector<std::string> &args);
 
     // Help and documentation
-    void show_help() const;
+    void show_help(bool only_custom = true) const;
 
     // Debug: show all stored config
     void dump() const;
@@ -465,7 +467,7 @@ Wait_status try_wait_nb(const Proc &proc);
  * @param sleep_ms (int): Time to sleep to avoid busy looping.
  * @return Exec_par_result: process ids that failed
  */
-Par_exec_res wait_procs(std::vector<Proc> procs, int sleep_ms = 50);
+Par_exec_res wait_procs(std::vector<bld::Proc> procs, bool show_progress = true);
 
 /* @brief: Execute the command
  * @param command ( Command ): Command to execute, must be a valid process command and not shell command
@@ -1025,18 +1027,18 @@ void bld::internal_log(bld::Log_type type, const std::string &msg)
     return;
 #endif
 
-#ifdef BLD_NO_COLORS
-    static constexpr const char *COLOUR_INFO = "";
-    static constexpr const char *COLOUR_WARN = "";
-    static constexpr const char *COLOUR_ERROR = "";
-    static constexpr const char *COLOUR_DEBUG = "";
-    static constexpr const char *COLOUR_RESET = "";
-#else
-    static constexpr const char *COLOUR_INFO = "\x1b[38;2;80;250;123m";   // mint green
-    static constexpr const char *COLOUR_WARN = "\x1b[38;2;255;200;87m";   // amber
+#ifdef BLD_USE_COLORS
+    static constexpr const char *COLOUR_INFO  = "\x1b[38;2;80;250;123m";  // mint green
+    static constexpr const char *COLOUR_WARN  = "\x1b[38;2;255;200;87m";  // amber
     static constexpr const char *COLOUR_ERROR = "\x1b[38;2;255;85;85m";   // red
     static constexpr const char *COLOUR_DEBUG = "\x1b[38;2;130;170;255m"; // light blue
     static constexpr const char *COLOUR_RESET = "\x1b[0m";
+#else
+    static constexpr const char *COLOUR_INFO  = "";
+    static constexpr const char *COLOUR_WARN  = "";
+    static constexpr const char *COLOUR_ERROR = "";
+    static constexpr const char *COLOUR_DEBUG = "";
+    static constexpr const char *COLOUR_RESET = "";
 #endif
 
     switch (type) {
@@ -1074,18 +1076,18 @@ void bld::internal_log(bld::Log_type type, const std::string &msg)
 
 void bld::log(bld::Log_type type, const std::string &msg)
 {
-#ifdef BLD_NO_COLORS
-    static constexpr const char *COLOUR_INFO = "";
-    static constexpr const char *COLOUR_WARN = "";
-    static constexpr const char *COLOUR_ERROR = "";
-    static constexpr const char *COLOUR_DEBUG = "";
-    static constexpr const char *COLOUR_RESET = "";
-#else
+#ifdef BLD_USE_COLORS
     static constexpr const char *COLOUR_INFO = "\x1b[38;2;80;250;123m";   // mint green
     static constexpr const char *COLOUR_WARN = "\x1b[38;2;255;200;87m";   // amber
     static constexpr const char *COLOUR_ERROR = "\x1b[38;2;255;85;85m";   // red
     static constexpr const char *COLOUR_DEBUG = "\x1b[38;2;130;170;255m"; // light blue
     static constexpr const char *COLOUR_RESET = "\x1b[0m";
+#else
+    static constexpr const char *COLOUR_INFO = "";
+    static constexpr const char *COLOUR_WARN = "";
+    static constexpr const char *COLOUR_ERROR = "";
+    static constexpr const char *COLOUR_DEBUG = "";
+    static constexpr const char *COLOUR_RESET = "";
 #endif
 
     switch (type) {
@@ -1227,48 +1229,245 @@ bld::Exit_status bld::wait_proc(bld::Proc proc)
     return status;
 }
 
-bld::Par_exec_res bld::wait_procs(std::vector<bld::Proc> procs, int sleep_ms)
-{
-    bld::Par_exec_res result;
-    result.exit_statuses.resize(procs.size());
-    std::vector<bool> completed(procs.size(), false);
-    size_t remaining = procs.size();
+namespace {
 
-    while (remaining > 0) {
-        for (size_t i = 0; i < procs.size(); ++i) {
-            if (completed[i]) {
+// "[NNN%]" — always 6 chars wide, right-justified percentage.
+inline std::string _bld_pct(size_t done, size_t total)
+{
+    int pct = (total > 0) ? static_cast<int>(100.0 * done / total) : 100;
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "[%3d%%]", pct);
+    return {buf};
+}
+
+// Emit one make-style line to stderr.
+// `sig` is only meaningful (non-zero) on Unix when a signal killed the process.
+inline void _bld_emit(size_t done, size_t total, bool success, const std::string &label, int exit_code = 0, int sig = 0)
+{
+#ifdef BLD_NO_LOGGING
+    (void)done;
+    (void)total;
+    (void)success;
+    (void)label;
+    (void)exit_code;
+    (void)sig;
+    return;
+#endif
+
+#ifdef BLD_USE_COLORS
+    const char *c_pct = "\x1b[38;2;130;170;255m";   // light blue
+    const char *c_ok = "\x1b[38;2;80;250;123m";     // mint green
+    const char *c_fail = "\x1b[38;2;255;85;85m";    // red
+    const char *c_label = "\x1b[38;2;220;220;220m"; // light grey
+    const char *c_dim = "\x1b[38;2;110;110;110m";   // dim grey
+    const char *c_reset = "\x1b[0m";
+#else
+    const char *c_pct = "";
+    const char *c_ok = "";
+    const char *c_fail = "";
+    const char *c_label = "";
+    const char *c_dim = "";
+    const char *c_reset = "";
+#endif
+
+    // "[NNN%]  Done    'label'"  or  "[NNN%]  FAILED  'label'  (exit N)"
+    std::cerr << c_pct << _bld_pct(done, total) << c_reset << "  " << (success ? c_ok : c_fail) << (success ? "Done  " : "FAILED") << c_reset << "  "
+              << c_label << label << c_reset;
+
+    if (!success) {
+        std::cerr << "  " << c_dim;
+        if (sig != 0) {
+            std::cerr << "(signal " << sig << ")";
+        } else {
+            std::cerr << "(exit " << exit_code << ")";
+        }
+        std::cerr << c_reset;
+    }
+
+    std::cerr << "\n";
+    std::cerr.flush();
+}
+
+// Opening line printed before the loop.
+inline void _bld_emit_start(size_t total)
+{
+#ifdef BLD_NO_LOGGING
+    (void)total;
+    return;
+#endif
+#ifdef BLD_USE_COLORS
+    const char *c_pct = "\x1b[38;2;130;170;255m";
+    const char *c_dim = "\x1b[38;2;110;110;110m";
+    const char *c_reset = "\x1b[0m";
+#else
+    const char *c_pct = "";
+    const char *c_dim = "";
+    const char *c_reset = "";
+#endif
+    std::cerr << c_pct << "[  0%]" << c_reset << "  " << c_dim << "Waiting for " << total << " process" << (total == 1 ? "" : "es") << "..."
+              << c_reset << "\n";
+    std::cerr.flush();
+}
+
+} // anonymous namespace
+
+bld::Par_exec_res bld::wait_procs(std::vector<bld::Proc> procs, bool show_progress)
+{
+    Par_exec_res result;
+    const size_t total = procs.size();
+    result.exit_statuses.resize(total);
+
+    if (total == 0) {
+        return result;
+    }
+
+    // Display label for slot i: use proc.label if set, else "process N".
+    auto get_label = [&](size_t i) -> std::string { return procs[i].label.empty() ? "process " + std::to_string(i) : "'" + procs[i].label + "'"; };
+
+    if (show_progress) {
+        _bld_emit_start(total);
+    }
+
+    size_t done_count = 0;
+
+#ifndef _WIN32
+    std::unordered_map<pid_t, size_t> pid_to_idx;
+    pid_to_idx.reserve(total);
+    size_t active = 0;
+
+    for (size_t i = 0; i < total; ++i) {
+        if (!procs[i].is_valid()) {
+            result.exit_statuses[i] = Exit_status{false, -1, 0};
+            result.failed_indices.push_back(i);
+            if (show_progress) {
+                _bld_emit(++done_count, total, false, get_label(i), -1);
+            }
+            continue;
+        }
+        pid_to_idx[procs[i].p_id] = i;
+        ++active;
+    }
+
+    while (active > 0) {
+        int raw = 0;
+        pid_t pid = ::waitpid(-1, &raw, 0);
+
+        if (pid == -1) {
+            if (errno == EINTR) {
                 continue;
             }
-
-            bld::Wait_status status = bld::try_wait_nb(procs[i]);
-
-            if (status.exited && !status.waitpid_failed && !status.invalid_proc) // Process has terminated
-            {
-                completed[i] = true;
-                remaining--;
-
-                // Convert Wait_status to Exit_status for storage
-                Exit_status exit_status{};
-                exit_status.normal = status.normal;
-                exit_status.exit_code = status.exit_code;
-#ifndef _WIN32
-                exit_status.signal = status.signal;
-#endif
-                result.exit_statuses[i] = exit_status;
-
-                if (status) { // success (normal && exit_code == 0)
-                    result.completed++;
-                } else {
-                    result.failed_indices.push_back(i);
-                }
-
-                bld::cleanup_process(procs[i]);
+            if (errno == ECHILD) {
+                break;
             }
-            // If !status.exited, process is still running, continue polling
+            bld::internal_log(Log_type::ERR, "waitpid(-1): " + std::string(strerror(errno)));
+            break;
         }
 
-        if (remaining > 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms));
+        auto it = pid_to_idx.find(pid);
+        if (it == pid_to_idx.end()) {
+            bld::internal_log(Log_type::WARNING, "Reaped unexpected child PID " + std::to_string(pid) + " (not in wait_procs set — ignored).");
+            continue;
+        }
+
+        const size_t idx = it->second;
+        pid_to_idx.erase(it);
+        --active;
+
+        Exit_status es{};
+        int sig_num = 0;
+
+        if (WIFEXITED(raw)) {
+            es.normal = true;
+            es.exit_code = WEXITSTATUS(raw);
+        } else if (WIFSIGNALED(raw)) {
+            sig_num = WTERMSIG(raw);
+            es.signal = sig_num;
+        }
+
+        result.exit_statuses[idx] = es;
+        if (es) {
+            ++result.completed;
+        } else {
+            result.failed_indices.push_back(idx);
+        }
+
+        cleanup_process(procs[idx]);
+
+        if (show_progress) {
+            _bld_emit(++done_count, total, bool(es), get_label(idx), es.exit_code, sig_num);
+        }
+    }
+
+#else // Windows
+
+    std::vector<HANDLE> active_handles;
+    std::vector<size_t> active_indices;
+    active_handles.reserve(total);
+    active_indices.reserve(total);
+
+    for (size_t i = 0; i < total; ++i) {
+        if (!procs[i].is_valid()) {
+            result.exit_statuses[i] = Exit_status{false, -1};
+            result.failed_indices.push_back(i);
+            if (show_progress) {
+                _bld_emit(++done_count, total, false, get_label(i), -1);
+            }
+            continue;
+        }
+        active_handles.push_back(procs[i].process_handle);
+        active_indices.push_back(i);
+    }
+
+    while (!active_handles.empty()) {
+        const DWORD batch = static_cast<DWORD>(std::min(active_handles.size(), static_cast<size_t>(MAXIMUM_WAIT_OBJECTS)));
+
+        DWORD wr = ::WaitForMultipleObjects(batch, active_handles.data(), FALSE, INFINITE);
+
+        if (wr == WAIT_FAILED || wr >= WAIT_OBJECT_0 + batch) {
+            bld::internal_log(Log_type::ERR, "WaitForMultipleObjects: " + std::to_string(GetLastError()));
+            break;
+        }
+
+        const size_t slot = static_cast<size_t>(wr - WAIT_OBJECT_0);
+        const size_t proc_idx = active_indices[slot];
+
+        Exit_status es{};
+        DWORD exit_code = 0;
+        if (::GetExitCodeProcess(active_handles[slot], &exit_code)) {
+            es.normal = true;
+            es.exit_code = static_cast<int>(exit_code);
+        }
+
+        result.exit_statuses[proc_idx] = es;
+        if (es) {
+            ++result.completed;
+        } else {
+            result.failed_indices.push_back(proc_idx);
+        }
+
+        cleanup_process(procs[proc_idx]);
+
+        if (show_progress) {
+            _bld_emit(++done_count, total, bool(es), get_label(proc_idx), es.exit_code);
+        }
+
+        // O(1) removal via swap-with-last.
+        active_handles[slot] = active_handles.back();
+        active_handles.pop_back();
+        active_indices[slot] = active_indices.back();
+        active_indices.pop_back();
+    }
+
+#endif
+
+    if (show_progress) {
+        if (result.failed_indices.empty()) {
+            bld::internal_log(Log_type::INFO, "All " + std::to_string(total) + " processes completed successfully.");
+        } else {
+            bld::internal_log(
+                Log_type::WARNING,
+                std::to_string(result.completed) + "/" + std::to_string(total) + " succeeded, " + std::to_string(result.failed_indices.size())
+                    + " failed.");
         }
     }
 
@@ -1344,7 +1543,10 @@ bld::Proc bld::execute_async(const Command &command)
         return proc;
     }
 
-    return Proc(pi.hProcess, pi.hThread, pi.dwProcessId);
+    Proc prc(pi.hProcess, pi.hThread, pi.dwProcessId);
+    prc.label = command.get_command_string();
+
+    return prc;
 
 #else
     auto args = command.to_exec_args();
@@ -1365,7 +1567,10 @@ bld::Proc bld::execute_async(const Command &command)
         std::exit(EXIT_FAILURE);
     }
 
-    return Proc(pid);
+    Proc proc(pid);
+    proc.label = command.get_command_string();
+
+    return proc;
 #endif
 }
 
@@ -1412,7 +1617,9 @@ bld::Proc bld::execute_async_redirect(const Command &command, const Redirect &re
     }
 
     CloseHandle(pi.hThread); // We don't need the thread handle
-    return Proc(pi.hProcess, nullptr, pi.dwProcessId);
+    Proc proc(pi.hProcess, nullptr, pi.dwProcessId);
+    proc.label = command.get_command_string();
+    return proc;
 
 #else
     auto args = command.to_exec_args();
@@ -1475,7 +1682,9 @@ bld::Proc bld::execute_async_redirect(const Command &command, const Redirect &re
         close(redirect.stderr_fd);
     }
 
-    return Proc(pid);
+    Proc proc(pid);
+    proc.label = command.get_command_string();
+    return proc;
 #endif
 }
 
@@ -2454,47 +2663,111 @@ void Config::parse_file_list(const std::string &value)
     }
 }
 
-// Help and documentation
-void Config::show_help() const
+void bld::Config::show_help(bool only_custom) const
 {
-    std::cout << "Config Usage:\n"
-              << "Flags (no value needed):\n"
-              << "  -flag_name              Set flag (e.g., -test, -debug, -verbose)\n"
-              << "\nKey=Value pairs:\n"
-              << "  -key=value              Set config value (e.g., -compiler=clang++)\n"
-              << "\nBuilt-in options:\n"
-              << "  -c, -compiler=COMPILER  Compiler to use\n"
-              << "  -t, -target=TARGET      Target executable name\n"
-              << "  -f, -flags=FLAGS        Compiler flags\n"
-              << "  -j, -threads=N          Build threads\n"
-              << "  -v, -verbose            Enable verbose output\n"
-              << "  -hr, -hot-reload        Enable hot reload\n"
-              << "  --watch=files           Comma-separated files to watch\n";
-
-    if (!custom_configs.empty()) {
-        std::cout << "\nCustom options:\n";
-        for (const auto &[name, config] : custom_configs) {
-            if (config.is_flag) {
-                std::cout << "  -" << name;
-                if (!config.description.empty()) {
-                    std::cout << "                    " << config.description;
-                }
-                std::cout << "\n";
-            } else {
-                std::cout << "  -" << name << "=VALUE";
-                if (!config.default_value.empty()) {
-                    std::cout << "           (default: " << config.default_value << ")";
-                }
-                if (!config.description.empty()) {
-                    std::cout << " " << config.description;
-                }
-                std::cout << "\n";
-            }
+    // Built-in names registered by initialize_builtin_options()
+    static const std::unordered_set<std::string> builtin_names = {
+        "compiler","c","target","t","build-dir","d","flags","f",
+        "link","l","threads","j","pre","post",
+        "verbose","v","hot-reload","hr","override-run","help","h"
+    };
+ 
+    // ── Full built-in reference ──────────────────────────────
+    if (!only_custom) {
+        std::cout
+            << "Usage: <executable> [options]\n\n"
+            << "Flags (no value needed):\n"
+            << "  -flag_name              Set a flag  (e.g. -verbose)\n\n"
+            << "Key=Value pairs:\n"
+            << "  -key=value              Set a config value  (e.g. -compiler=clang++)\n\n"
+            << "Built-in options:\n"
+            << std::left
+            << "  " << std::setw(28) << "-c, -compiler=COMPILER"
+               << "Compiler to use                (default: " << compiler << ")\n"
+            << "  " << std::setw(28) << "-t, -target=TARGET"
+               << "Target executable name         (default: " << target << ")\n"
+            << "  " << std::setw(28) << "-d, -build-dir=DIR"
+               << "Build directory                (default: " << build_dir << ")\n"
+            << "  " << std::setw(28) << "-f, -flags=FLAGS"
+               << "Compiler flags                 (default: " << compiler_flags << ")\n"
+            << "  " << std::setw(28) << "-l, -link=FLAGS"
+               << "Linker flags\n"
+            << "  " << std::setw(28) << "-j, -threads=N"
+               << "Number of build threads        (default: " << threads << ")\n"
+            << "  " << std::setw(28) << "-pre=CMD"
+               << "Pre-build shell command\n"
+            << "  " << std::setw(28) << "-post=CMD"
+               << "Post-build shell command\n"
+            << "  " << std::setw(28) << "-v, -verbose"
+               << "Enable verbose output\n"
+            << "  " << std::setw(28) << "-hr, -hot-reload"
+               << "Enable hot reload\n"
+            << "  " << std::setw(28) << "-override-run"
+               << "Override run behaviour\n"
+            << "  " << std::setw(28) << "-h, -help"
+               << "Show this help\n\n"
+            << "Commands:\n"
+            << "  " << std::setw(28) << "-configure [opts]"
+               << "Parse opts and save to " << BLD_DEFAULT_CONFIG_FILE << "\n"
+            << "  " << std::setw(28) << "-use-config"
+               << "Load config from " << BLD_DEFAULT_CONFIG_FILE << "\n\n";
+    }
+ 
+    // ── Collect user-defined custom configs (filter out built-ins) ──
+    std::vector<std::pair<std::string, CustomConfig>> user_flags, user_options;
+ 
+    for (const auto &[name, cfg] : custom_configs) {
+        if (builtin_names.count(name))
+            continue; // skip anything we registered internally
+        if (cfg.is_flag)
+            user_flags.emplace_back(name, cfg);
+        else
+            user_options.emplace_back(name, cfg);
+    }
+ 
+    // Sort alphabetically for a stable, readable listing
+    auto by_name = [](const auto &a, const auto &b){ return a.first < b.first; };
+    std::sort(user_flags.begin(),   user_flags.end(),   by_name);
+    std::sort(user_options.begin(), user_options.end(), by_name);
+ 
+    if (user_flags.empty() && user_options.empty()) {
+        std::cout << (only_custom
+            ? "No custom options defined.\n"
+              "  Add some with config.add_flag(name, desc) "
+              "or config.add_option(name, default, desc).\n"
+            : "  (No custom options defined.)\n");
+        return;
+    }
+ 
+    std::cout << "Custom options:\n";
+ 
+    if (!user_flags.empty()) {
+        std::cout << "\n  Flags:\n";
+        for (const auto &[name, cfg] : user_flags) {
+            std::string col1 = "    -" + name;
+            std::cout << std::left << std::setw(30) << col1;
+            if (!cfg.description.empty())
+                std::cout << "  " << cfg.description;
+            std::cout << "\n";
         }
     }
-
-    std::cout << "\nAny other -key=value and -flags are automatically stored!\n";
+ 
+    if (!user_options.empty()) {
+        std::cout << "\n  Options:\n";
+        for (const auto &[name, cfg] : user_options) {
+            std::string col1 = "    -" + name + "=VALUE";
+            std::cout << std::left << std::setw(30) << col1;
+            if (!cfg.default_value.empty())
+                std::cout << "  (default: " << std::setw(12) << cfg.default_value << ")";
+            if (!cfg.description.empty())
+                std::cout << "  " << cfg.description;
+            std::cout << "\n";
+        }
+    }
+ 
+    std::cout << std::flush;
 }
+ 
 
 void Config::dump() const
 {

@@ -169,6 +169,8 @@ Value Value::make_closure_native(Allocator &alloc, String_data *name, size_t ari
 
     closure->name = name;
     closure->arity = arity;
+    closure->min_arity = arity;
+    closure->is_variadic = false;
     closure->signature = std::move(sig);
     closure->native_func = func;
     closure->upvalue_count = 0;

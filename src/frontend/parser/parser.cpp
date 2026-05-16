@@ -9,7 +9,6 @@
 #include <cassert>
 #include <cstddef>
 #include <expected>
-#include <print>
 #include <string>
 #include <utility>
 #include <variant>
@@ -308,7 +307,9 @@ void Parser::stamp_stmt(ast::Stmt_id stmt_id)
             using T = std::decay_t<decltype(s)>;
 
             if constexpr (std::is_same_v<T, ast::Return_stmt>) {
-                stamp_expr(s.expression);
+                for (auto& e : s.expressions) {
+                    stamp_expr(e);
+                }
             } else if constexpr (std::is_same_v<T, ast::Function_stmt>) {
                 for (auto &param : s.parameters) {
                     stamp_loc(param.loc);
@@ -325,6 +326,10 @@ void Parser::stamp_stmt(ast::Stmt_id stmt_id)
                 }
             } else if constexpr (std::is_same_v<T, ast::Var_stmt>) {
                 stamp_expr(s.initializer);
+            } else if constexpr (std::is_same_v<T, ast::Multi_var_stmt>) {
+                for (auto expr : s.initializers) {
+                    stamp_expr(expr);
+                }
             } else if constexpr (std::is_same_v<T, ast::Print_stmt>) {
                 for (auto expr : s.expressions) {
                     stamp_expr(expr);
@@ -441,7 +446,7 @@ Result<std::optional<ast::Stmt_id>> Parser::declaration()
         return std::optional<ast::Stmt_id>{std::nullopt};
     }
 
-    if (match({lex::TokenType::Fn})) {
+    if (match({lex::TokenType::Fn, lex::TokenType::Proc})) {
         DECL_OR_RETURN(stmt, function_declaration());
         return std::optional<ast::Stmt_id>{stmt};
     }
@@ -482,12 +487,54 @@ Result<std::optional<ast::Stmt_id>> Parser::declaration()
     return std::optional<ast::Stmt_id>{stmt};
 }
 
-// fn_decl -> "fn" IDENT "(" param* ")" ("->" type)? block
+// ret_param -> IDENT ":" type ("=" expr)? | type
+Result<ast::Function_param> Parser::parse_return_parameter()
+{
+    // Check for "name :" pattern using lookahead
+    if (check(lex::TokenType::Identifier) && check_next(lex::TokenType::Colon)) {
+        // Case: Named return (e.g., -> x: i32 = 0)
+        DECL_OR_RETURN(name, consume(lex::TokenType::Identifier, "Expect return parameter name"));
+        TRY_IGNORE(consume(lex::TokenType::Colon, "Expect ':' after return parameter name"));
+
+        DECL_OR_RETURN(type, parse_type());
+
+        ast::Expr_id default_val = ast::Expr_id::null();
+        if (match({lex::TokenType::Assign})) {
+            ASSIGN_OR_RETURN(default_val, expression());
+        }
+
+        return ast::Function_param{
+            .name = name.lexeme,
+            .type = type,
+            .is_mut = true,
+            .default_value = default_val,
+            .loc = {name.line, name.column}
+        };
+    }
+
+    // Case: Anonymous return (e.g., -> i32)
+    lex::Token type_start = peek();
+    DECL_OR_RETURN(type, parse_type());
+
+    return ast::Function_param{
+        .name = "",
+        .type = type,
+        .is_mut = false,
+        .default_value = ast::Expr_id::null(),
+        .loc = {type_start.line, type_start.column}
+    };
+}
+
+// fn_decl -> ("fn" | "proc") IDENT "(" param* ")" ("->" ret_param ("," ret_param)*)? block
 Result<ast::Stmt_id> Parser::function_declaration()
 {
+    // Purity is determined by the starting keyword: fn (pure) vs proc (impure)
+    bool is_pure = previous().type == lex::TokenType::Fn;
+
     DECL_OR_RETURN(name, consume(lex::TokenType::Identifier, "Expect function name"));
     TRY_IGNORE(consume(lex::TokenType::LeftParen, "Expect '(' after function name"));
 
+    // 1. Parse Input Parameters (Names mandatory)
     std::vector<ast::Function_param> parameters;
     if (!check(lex::TokenType::RightParen)) {
         do {
@@ -498,16 +545,16 @@ Result<ast::Stmt_id> Parser::function_declaration()
             parameters.push_back(param);
         } while (match({lex::TokenType::Comma}));
     }
-
     TRY_IGNORE(consume(lex::TokenType::RightParen, "Expect ')' after parameters"));
 
-    types::Type_id return_type{};
-
+    // 2. Parse Return Parameters (Comma-separated list after '->')
+    std::vector<ast::Function_param> returns;
     if (match({lex::TokenType::Arrow})) {
-        ASSIGN_OR_RETURN(return_type, parse_type());
+        do {
+            DECL_OR_RETURN(ret_param, parse_return_parameter());
+            returns.push_back(ret_param);
+        } while (match({lex::TokenType::Comma}));
     }
-
-    function_types_.emplace(name.lexeme, return_type);
 
     TRY_IGNORE(consume(lex::TokenType::LeftBrace, "Expect '{' before function body"));
     DECL_OR_RETURN(body, block_statement());
@@ -515,8 +562,9 @@ Result<ast::Stmt_id> Parser::function_declaration()
     return ctx_.tree.add_stmt(ast::Stmt{ast::Function_stmt{
         .name = name.lexeme,
         .is_static = false,
-        .parameters = parameters,
-        .return_type = return_type,
+        .is_pure = is_pure,
+        .parameters = std::move(parameters),
+        .returns = std::move(returns),
         .body = body,
         .loc = {name.line, name.column},
     }});
@@ -726,17 +774,20 @@ Result<ast::Typed_member_decl> Parser::parse_model_field()
     };
 }
 
-// method_decl -> "static"? "fn" IDENT "(" param* ")" ("->" type)? block
+// method_decl -> "static"? ("fn" | "proc") IDENT "(" param* ")" ("->" ret_param ("," ret_param)*)? block
 Result<ast::Function_stmt> Parser::parse_model_method()
 {
     bool is_static = match({lex::TokenType::Static});
 
-    // We consume 'fn' here now so the parser correctly expects it inside the bind block
-    TRY_IGNORE(consume(lex::TokenType::Fn, is_static ? "Expect 'fn' after 'static'" : "Expect 'fn' keyword for method"));
+    if (!match({lex::TokenType::Fn, lex::TokenType::Proc})) {
+        return std::unexpected(create_error(peek(), "Expect 'fn' or 'proc' for method declaration"));
+    }
+    bool is_pure = previous().type == lex::TokenType::Fn;
 
     DECL_OR_RETURN(name, consume(lex::TokenType::Identifier, "Expect method name"));
     TRY_IGNORE(consume(lex::TokenType::LeftParen, "Expect '(' after method name"));
 
+    // Input parameters
     std::vector<ast::Function_param> parameters;
     if (!check(lex::TokenType::RightParen)) {
         do {
@@ -747,12 +798,15 @@ Result<ast::Function_stmt> Parser::parse_model_method()
             parameters.push_back(param);
         } while (match({lex::TokenType::Comma}));
     }
-
     TRY_IGNORE(consume(lex::TokenType::RightParen, "Expect ')' after parameters"));
 
-    types::Type_id return_type = ctx_.tt.get_void();
+    // Multi-return list
+    std::vector<ast::Function_param> returns;
     if (match({lex::TokenType::Arrow})) {
-        ASSIGN_OR_RETURN(return_type, parse_type());
+        do {
+            DECL_OR_RETURN(ret_param, parse_return_parameter());
+            returns.push_back(ret_param);
+        } while (match({lex::TokenType::Comma}));
     }
 
     TRY_IGNORE(consume(lex::TokenType::LeftBrace, "Expect '{' before method body"));
@@ -761,8 +815,9 @@ Result<ast::Function_stmt> Parser::parse_model_method()
     return ast::Function_stmt{
         .name = name.lexeme,
         .is_static = is_static,
-        .parameters = parameters,
-        .return_type = return_type,
+        .is_pure = is_pure,
+        .parameters = std::move(parameters),
+        .returns = std::move(returns),
         .body = body_result,
         .loc = {name.line, name.column},
     };
@@ -773,37 +828,44 @@ Result<ast::Function_stmt> Parser::parse_model_method()
 // static_decl -> "static" "mut"? IDENT (":=" expr | ":" type ("=" expr)?) ";"
 Result<ast::Stmt_id> Parser::var_declaration(ast::Var_kind kind)
 {
-    // kind here means the type of variable, these are the only 3 possible ones,
-    // then the let and static ones can be mutable or immutable.
     assert(kind == ast::Var_kind::Let || kind == ast::Var_kind::Static || kind == ast::Var_kind::Const);
 
     bool is_mut = false;
-
-    // Only check for 'mut' if we are in a 'let' declaration
-    // Statics can be mutable or immutable too.
     if (kind != ast::Var_kind::Const) {
         is_mut = match({lex::TokenType::Mut});
     }
 
-    DECL_OR_RETURN(name, consume(lex::TokenType::Identifier, "Expect variable or constant name"));
+    std::vector<lex::Token> names;
+    DECL_OR_RETURN(first_name, consume(lex::TokenType::Identifier, "Expect variable or constant name"));
+    names.push_back(first_name);
+    while (match({lex::TokenType::Comma})) {
+        DECL_OR_RETURN(next_name, consume(lex::TokenType::Identifier, "Expect variable or constant name"));
+        names.push_back(next_name);
+    }
 
-    types::Type_id var_type{};
-    ast::Expr_id initializer = ast::Expr_id::null();
+    std::vector<types::Type_id> declared_types;
+    std::vector<ast::Expr_id> initializers;
     bool type_inferred = false;
 
     if (match({lex::TokenType::Colon})) {
         if (match({lex::TokenType::Assign})) {
-            // let x := expr  OR  const x := expr
-            ASSIGN_OR_RETURN(initializer, expression());
             type_inferred = true;
+            do {
+                DECL_OR_RETURN(init_expr, expression());
+                initializers.push_back(init_expr);
+            } while (match({lex::TokenType::Comma}));
         } else {
-            // let x: T = expr  OR  const x: T = expr
-            ASSIGN_OR_RETURN(var_type, parse_type());
+            do {
+                DECL_OR_RETURN(declared_type, parse_type());
+                declared_types.push_back(declared_type);
+            } while (match({lex::TokenType::Comma}));
 
             if (match({lex::TokenType::Assign})) {
-                ASSIGN_OR_RETURN(initializer, expression());
+                do {
+                    DECL_OR_RETURN(init_expr, expression());
+                    initializers.push_back(init_expr);
+                } while (match({lex::TokenType::Comma}));
             } else if (kind == ast::Var_kind::Const) {
-                // Semantic enforcement: Constants must have an initializer
                 return std::unexpected(create_error(peek(), "Constants must be initialized"));
             }
         }
@@ -814,7 +876,6 @@ Result<ast::Stmt_id> Parser::var_declaration(ast::Var_kind kind)
     TRY_IGNORE(consume(lex::TokenType::Semicolon, "Expected ';' after declaration"));
 
     ast::Var_kind var_kind{kind};
-
     if (is_mut) {
         if (kind == ast::Var_kind::Let) {
             var_kind = ast::Var_kind::Mut;
@@ -823,13 +884,37 @@ Result<ast::Stmt_id> Parser::var_declaration(ast::Var_kind kind)
         }
     }
 
-    return ctx_.tree.add_stmt(ast::Stmt{ast::Var_stmt{
+    if (!type_inferred && declared_types.size() != names.size()) {
+        return std::unexpected(create_error(first_name, "Variable count and type count must match in multi-variable declarations"));
+    }
+    if (initializers.size() > 1 && initializers.size() != names.size()) {
+        return std::unexpected(create_error(first_name, "Variable count and initializer count must match unless using a single multi-value initializer"));
+    }
+
+    if (names.size() == 1) {
+        return ctx_.tree.add_stmt(ast::Stmt{ast::Var_stmt{
+            .kind = var_kind,
+            .name = first_name.lexeme,
+            .type = type_inferred ? ctx_.tt.get_unknown() : declared_types.front(),
+            .initializer = initializers.empty() ? ast::Expr_id::null() : initializers.front(),
+            .type_inferred = type_inferred,
+            .loc = {first_name.line, first_name.column},
+        }});
+    }
+
+    std::vector<std::string> var_names;
+    var_names.reserve(names.size());
+    for (const auto &name : names) {
+        var_names.push_back(name.lexeme);
+    }
+
+    return ctx_.tree.add_stmt(ast::Stmt{ast::Multi_var_stmt{
         .kind = var_kind,
-        .name = name.lexeme,
-        .type = var_type,
-        .initializer = initializer,
+        .names = std::move(var_names),
+        .types = std::move(declared_types),
+        .initializers = std::move(initializers),
         .type_inferred = type_inferred,
-        .loc = {name.line, name.column},
+        .loc = {first_name.line, first_name.column},
     }});
 }
 
@@ -1207,20 +1292,25 @@ Result<ast::Stmt_id> Parser::match_statement()
     }});
 }
 
-// return_stmt -> "return" expr? ";"
+// return_stmt -> "return" (expr ("," expr)*)? ";"
 Result<ast::Stmt_id> Parser::return_statement()
 {
-    size_t line = previous().line;
-    size_t column = previous().column;
+    lex::Token keyword = previous();
+    std::vector<ast::Expr_id> values;
 
-    ast::Expr_id value = ast::Expr_id::null();
     if (!check(lex::TokenType::Semicolon)) {
-        value = expression().value_or(ast::Expr_id::null());
+        do {
+            DECL_OR_RETURN(expr, expression());
+            values.push_back(expr);
+        } while (match({lex::TokenType::Comma}));
     }
 
     TRY_IGNORE(consume(lex::TokenType::Semicolon, "Expect ';' after return value"));
 
-    return ctx_.tree.add_stmt(ast::Stmt{ast::Return_stmt{value, {line, column}}});
+    return ctx_.tree.add_stmt(ast::Stmt{ast::Return_stmt{
+        .expressions = std::move(values),
+        .loc = {keyword.line, keyword.column}
+    }});
 }
 
 // expr_stmt -> expr ";"
@@ -1815,18 +1905,16 @@ Result<ast::Expr_id> Parser::primary()
     return std::unexpected(create_error(peek(), "Expect expression. Found: " + peek().lexeme));
 }
 
-// Specific Sub-Parsers
-// closure -> "fn" "(" param* ")" ("->" type)? block
+// closure_expr -> ("fn") "(" param* ")" ("->" ret_param ("," ret_param)*)? block
 Result<ast::Expr_id> Parser::parse_closure_expression()
 {
-    size_t line = peek().line;
-    size_t column = peek().column;
+    size_t line = previous().line;
+    size_t column = previous().column;
 
+    TRY_IGNORE(consume(lex::TokenType::LeftParen, "Expect '(' after closure keyword"));
+
+    // 1. Parameters
     std::vector<ast::Function_param> parameters;
-
-    TRY_IGNORE(consume(lex::TokenType::LeftParen, "Expect '(' after 'fn' for closure parameters"));
-
-    // params
     if (!check(lex::TokenType::RightParen)) {
         do {
             if (check(lex::TokenType::RightParen)) {
@@ -1836,34 +1924,27 @@ Result<ast::Expr_id> Parser::parse_closure_expression()
             parameters.push_back(param);
         } while (match({lex::TokenType::Comma}));
     }
-
     TRY_IGNORE(consume(lex::TokenType::RightParen, "Expect ')' after closure parameters"));
 
-    // return type
-    types::Type_id return_type = ctx_.tt.get_void();
-
+    // 2. Returns (Multi-return support)
+    std::vector<ast::Function_param> returns;
     if (match({lex::TokenType::Arrow})) {
-        ASSIGN_OR_RETURN(return_type, parse_type());
+        do {
+            DECL_OR_RETURN(ret_param, parse_return_parameter());
+            returns.push_back(ret_param);
+        } while (match({lex::TokenType::Comma}));
     }
 
-    // body
+    // 3. Body
     TRY_IGNORE(consume(lex::TokenType::LeftBrace, "Expect '{' before closure body"));
     DECL_OR_RETURN(body, block_statement());
 
-    std::vector<types::Type_id> param_types;
-    param_types.reserve(parameters.size());
-
-    for (const auto &param : parameters) {
-        param_types.push_back(param.type);
-    }
-
-    types::Type_id closure_type = ctx_.tt.function(param_types, return_type);
-
-    return ctx_.tree.add_expr(ast::Expr{ast::Closure_expr{
-        .parameters = parameters,
-        .return_type = return_type,
+    return ctx_.tree.add_expr(
+    ast::Expr{ast::Closure_expr{
+        .parameters = std::move(parameters),
+        .returns = std::move(returns),
         .body = body,
-        .type = closure_type,
+        .type = ctx_.tt.get_unknown(),
         .loc = {line, column},
     }});
 }
@@ -1966,9 +2047,13 @@ Result<types::Type_id> Parser::parse_type()
 
         TRY_IGNORE(consume(lex::TokenType::RightParen, "Expect ')' after function type parameters"));
         TRY_IGNORE(consume(lex::TokenType::Arrow, "Expect '->' after function type parameters"));
-        DECL_OR_RETURN(ret, parse_type());
+        std::vector<Type_id> returns;
+        do {
+            DECL_OR_RETURN(ret, parse_type());
+            returns.push_back(ret);
+        } while (match({lex::TokenType::Comma}));
 
-        current = ctx_.tt.function(params, ret);
+        current = ctx_.tt.function(params, returns);
     }
     // Primitives
     else if (match({lex::TokenType::TInt64})) {

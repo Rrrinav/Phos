@@ -9,6 +9,48 @@
 
 namespace phos::vm {
 
+namespace {
+std::vector<types::Type_id> normalize_return_types(const std::vector<types::Type_id> &returns, const types::Type_table &tt)
+{
+    if (returns.size() == 1 && tt.is_void(returns.front())) {
+        return {};
+    }
+    return returns;
+}
+
+std::vector<types::Type_id> declared_return_types(const std::vector<ast::Function_param> &returns, const types::Type_table &tt)
+{
+    std::vector<types::Type_id> out;
+    out.reserve(returns.size());
+    for (const auto &ret : returns) {
+        out.push_back(ret.type);
+    }
+    return normalize_return_types(out, tt);
+}
+
+std::vector<std::pair<std::string, types::Type_id>> positional_multi_return_fields(const std::vector<types::Type_id> &returns)
+{
+    std::vector<std::pair<std::string, types::Type_id>> fields;
+    fields.reserve(returns.size());
+    for (size_t i = 0; i < returns.size(); ++i) {
+        fields.push_back({std::format("_{}", i), returns[i]});
+    }
+    return fields;
+}
+
+types::Type_id effective_return_type(const std::vector<ast::Function_param> &returns, types::Type_table &tt)
+{
+    auto types = declared_return_types(returns, tt);
+    if (types.empty()) {
+        return tt.get_void();
+    }
+    if (types.size() == 1) {
+        return types.front();
+    }
+    return tt.model("", positional_multi_return_fields(types));
+}
+} // namespace
+
 Compiler::Compiler(phos::Compiler_context &ctx) : ctx(ctx)
 {}
 
@@ -171,7 +213,9 @@ Closure_data Compiler::compile_workspace([[maybe_unused]] Module_id main_mod)
 
         set_closure_name(*closure, name);
 
-        closure->arity = sigs[0].params.size();
+        closure->arity = sigs[0].is_variadic() ? sigs[0].fixed_arity() : sigs[0].params.size();
+        closure->min_arity = sigs[0].fixed_arity();
+        closure->is_variadic = sigs[0].is_variadic();
         closure->native_func = sigs[0].func;
         closure->code_count = 0;
         closure->code = nullptr;
@@ -480,6 +524,15 @@ void Compiler::compile_stmt(ast::Stmt_id stmt_id)
         return;
     }
 
+    if (stmt_id.value >= ctx.tree.statements.size()) {
+        std::println(
+            std::cerr,
+            "Compiler Bug: Invalid stmt id '{}' (statement table size: {}).",
+            stmt_id.value,
+            ctx.tree.statements.size());
+        std::exit(EXIT_FAILURE);
+    }
+
     std::visit(
         [this](const auto &s) {
             using T = std::decay_t<decltype(s)>;
@@ -488,6 +541,8 @@ void Compiler::compile_stmt(ast::Stmt_id stmt_id)
             } else if constexpr (std::is_same_v<T, ast::Expr_stmt>) {
                 compile_stmt_node(s);
             } else if constexpr (std::is_same_v<T, ast::Var_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Multi_var_stmt>) {
                 compile_stmt_node(s);
             } else if constexpr (std::is_same_v<T, ast::Block_stmt>) {
                 compile_stmt_node(s);
@@ -588,6 +643,47 @@ void Compiler::compile_stmt_node(const ast::Var_stmt &stmt)
     }
 }
 
+void Compiler::compile_stmt_node(const ast::Multi_var_stmt &stmt)
+{
+    auto store_variable = [&](const std::string &name, ast::Var_kind kind, uint8_t value_reg) {
+        if (kind == ast::Var_kind::Static || kind == ast::Var_kind::Static_mut) {
+            std::string canonical_name = current_module_ns_ + "::" + name;
+            if (current_module_ns_ == "main" || current_module_ns_.empty()) {
+                canonical_name = name;
+            }
+
+            if (auto sym_id = ctx.registry.lookup_global(canonical_name)) {
+                auto &sym = ctx.registry.get_symbol(*sym_id);
+                emit(vm::Instruction::make_ri(vm::Opcode::Store_global, value_reg, *sym.global_index));
+            }
+        } else if (kind == ast::Var_kind::Const) {
+            return;
+        } else {
+            current_ctx_->locals.push_back({name, value_reg});
+        }
+    };
+
+    if (stmt.initializers.size() == stmt.names.size()) {
+        for (size_t i = 0; i < stmt.names.size(); ++i) {
+            uint8_t value_reg = compile_expr(stmt.initializers[i]);
+            if (ast::get_type(ctx.tree.get(stmt.initializers[i]).node) != stmt.types[i]) {
+                emit_numeric_normalize(value_reg, stmt.types[i]);
+            }
+            store_variable(stmt.names[i], stmt.kind, value_reg);
+        }
+        return;
+    }
+
+    if (stmt.initializers.size() == 1) {
+        uint8_t source_reg = compile_expr(stmt.initializers.front());
+        for (size_t i = 0; i < stmt.names.size(); ++i) {
+            uint8_t value_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Load_field, value_reg, source_reg, static_cast<uint8_t>(i)));
+            store_variable(stmt.names[i], stmt.kind, value_reg);
+        }
+    }
+}
+
 void Compiler::compile_stmt_node(const ast::Block_stmt &stmt)
 {
     auto prev_locals_size = current_ctx_->locals.size();
@@ -678,23 +774,84 @@ void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
 {
     const std::string canonical_name = canonical_function_name(stmt);
     const bool can_reuse_hoisted_slot = (current_ctx_->enclosing == nullptr);
+    const auto *saved_returns = current_function_returns_;
 
     Function_context fn_ctx;
     fn_ctx.current_register = 0;
     push_context(&fn_ctx);
+    current_function_returns_ = &stmt.returns;
 
     for (const auto &param : stmt.parameters) {
         uint8_t reg = allocate_register();
         current_ctx_->locals.push_back({param.name, reg});
+    }
+    for (const auto &ret : stmt.returns) {
+        if (ret.name.empty()) {
+            continue;
+        }
+
+        uint8_t reg = allocate_register();
+        if (!ret.default_value.is_null()) {
+            uint8_t value_reg = compile_expr(ret.default_value);
+            if (ast::get_type(ctx.tree.get(ret.default_value).node) != ret.type) {
+                emit_numeric_normalize(value_reg, ret.type);
+            }
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, reg, value_reg, 0));
+        } else {
+            emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, reg, 0, 0));
+        }
+        current_ctx_->locals.push_back({ret.name, reg});
     }
 
     if (!stmt.body.is_null()) {
         compile_stmt(stmt.body);
     }
 
-    uint8_t nil_reg = allocate_register();
-    emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, nil_reg, 0, 0));
-    emit(vm::Instruction::make_rrr(vm::Opcode::Return, nil_reg, 0, 0));
+    auto normalized_returns = declared_return_types(stmt.returns, ctx.tt);
+    if (normalized_returns.empty()) {
+        uint8_t nil_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, nil_reg, 0, 0));
+        emit(vm::Instruction::make_rrr(vm::Opcode::Return, nil_reg, 0, 0));
+    } else if (normalized_returns.size() == 1 && !stmt.returns.empty() && !stmt.returns.front().name.empty()) {
+        int local_reg = resolve_local(current_ctx_, stmt.returns.front().name);
+        if (local_reg >= 0) {
+            emit(vm::Instruction::make_rrr(vm::Opcode::Return, static_cast<uint8_t>(local_reg), 0, 0));
+        } else {
+            uint8_t nil_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, nil_reg, 0, 0));
+            emit(vm::Instruction::make_rrr(vm::Opcode::Return, nil_reg, 0, 0));
+        }
+    } else if (!stmt.returns.empty()) {
+        std::vector<uint8_t> source_regs;
+        source_regs.reserve(stmt.returns.size());
+
+        for (const auto &ret : stmt.returns) {
+            int local_reg = -1;
+            if (!ret.name.empty()) {
+                local_reg = resolve_local(current_ctx_, ret.name);
+            }
+
+            // If it has no name, or local wasn't found, safely substitute nil
+            if (local_reg >= 0) {
+                source_regs.push_back(static_cast<uint8_t>(local_reg));
+            } else {
+                uint8_t nil_reg = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, nil_reg, 0, 0));
+                source_regs.push_back(nil_reg);
+            }
+        }
+
+        uint8_t base_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, base_reg, source_regs[0], 0));
+        for (size_t i = 1; i < source_regs.size(); ++i) {
+            uint8_t next_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, next_reg, source_regs[i], 0));
+        }
+
+        uint8_t packed_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Make_model, packed_reg, base_reg, static_cast<uint8_t>(source_regs.size())));
+        emit(vm::Instruction::make_rrr(vm::Opcode::Return, packed_reg, 0, 0));
+    }
 
     if (!stmt.resolved_symbol) {
         std::println(std::cerr, "Compiler Bug: Function '{}' missing resolved symbol.", stmt.name);
@@ -724,6 +881,7 @@ void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
     closure->upvalues = nullptr;
 
     pop_context();
+    current_function_returns_ = saved_returns;
 
     if (can_reuse_hoisted_slot && closure->upvalue_count == 0) {
         return; // Already pre-allocated and safely registered in function_locations_
@@ -750,11 +908,68 @@ void Compiler::compile_stmt_node(const ast::Return_stmt &stmt)
 {
     uint8_t ret_reg = 0;
 
-    if (!stmt.expression.is_null()) {
-        ret_reg = compile_expr(stmt.expression);
+    if (!stmt.expressions.empty()) {
+        if (stmt.expressions.size() == 1) {
+            ret_reg = compile_expr(stmt.expressions.front());
+        } else {
+            std::vector<uint8_t> value_regs;
+            value_regs.reserve(stmt.expressions.size());
+            for (size_t i = 0; i < stmt.expressions.size(); ++i) {
+                uint8_t value_reg = compile_expr(stmt.expressions[i]);
+                if (current_function_returns_ != nullptr && i < current_function_returns_->size()) {
+                    const auto &ret = (*current_function_returns_)[i];
+                    if (ast::get_type(ctx.tree.get(stmt.expressions[i]).node) != ret.type) {
+                        emit_numeric_normalize(value_reg, ret.type);
+                    }
+                }
+                value_regs.push_back(value_reg);
+            }
+
+            uint8_t base_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, base_reg, value_regs[0], 0));
+            for (size_t i = 1; i < value_regs.size(); ++i) {
+                uint8_t next_reg = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Move, next_reg, value_regs[i], 0));
+            }
+
+            ret_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Make_model, ret_reg, base_reg, static_cast<uint8_t>(value_regs.size())));
+        }
     } else {
-        ret_reg = allocate_register();
-        emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, ret_reg, 0, 0));
+        if (current_function_returns_ != nullptr && !current_function_returns_->empty()) {
+            auto normalized_returns = declared_return_types(*current_function_returns_, ctx.tt);
+            bool all_named = std::all_of(
+                current_function_returns_->begin(),
+                current_function_returns_->end(),
+                [](const auto &ret) { return !ret.name.empty(); });
+
+            if (all_named && normalized_returns.size() == 1) {
+                int local_reg = resolve_local(current_ctx_, current_function_returns_->front().name);
+                ret_reg = static_cast<uint8_t>(local_reg);
+            } else if (all_named && !normalized_returns.empty()) {
+                std::vector<uint8_t> source_regs;
+                source_regs.reserve(current_function_returns_->size());
+                for (const auto &ret : *current_function_returns_) {
+                    source_regs.push_back(static_cast<uint8_t>(resolve_local(current_ctx_, ret.name)));
+                }
+
+                uint8_t base_reg = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Move, base_reg, source_regs[0], 0));
+                for (size_t i = 1; i < source_regs.size(); ++i) {
+                    uint8_t next_reg = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Move, next_reg, source_regs[i], 0));
+                }
+
+                ret_reg = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Make_model, ret_reg, base_reg, static_cast<uint8_t>(source_regs.size())));
+            } else {
+                ret_reg = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, ret_reg, 0, 0));
+            }
+        } else {
+            ret_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, ret_reg, 0, 0));
+        }
     }
 
     emit(vm::Instruction::make_rrr(vm::Opcode::Return, ret_reg, 0, 0));
@@ -1175,6 +1390,10 @@ uint8_t Compiler::compile_expr_node(const ast::Cast_expr &expr)
     uint8_t value_reg = compile_expr(expr.expression);
     types::Type_id source_type = ast::get_type(ctx.tree.get(expr.expression).node);
 
+    if (source_type == expr.target_type) {
+        return value_reg;
+    }
+
     if (ctx.tt.is_string(source_type) && ctx.tt.is_array(expr.target_type)) {
         uint8_t dest_reg = allocate_register();
         uint8_t is_signed = (ctx.tt.get_array_elem(expr.target_type) == ctx.tt.get_i8()) ? 1 : 0;
@@ -1188,12 +1407,14 @@ uint8_t Compiler::compile_expr_node(const ast::Cast_expr &expr)
         return dest_reg;
     }
 
+    if (ctx.tt.is_optional(source_type) && !ctx.tt.is_optional(expr.target_type)) {
+        uint8_t dest_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, dest_reg, value_reg, 0));
+        return dest_reg;
+    }
+
     if (!ctx.tt.is_numeric_primitive(expr.target_type)) {
-        std::println(
-            std::cerr,
-            "Compiler Bug: Only numeric cast expressions are currently implemented, got '{}'.",
-            ctx.tt.to_string(expr.target_type));
-        std::exit(EXIT_FAILURE);
+        return value_reg;
     }
 
     emit(vm::Instruction::make_rrr(cast_opcode_for(expr.target_type), value_reg, 0, 0));
@@ -1202,23 +1423,90 @@ uint8_t Compiler::compile_expr_node(const ast::Cast_expr &expr)
 
 uint8_t Compiler::compile_expr_node(const ast::Closure_expr &expr)
 {
+    const auto *saved_returns = current_function_returns_;
     Function_context fn_ctx;
     fn_ctx.current_register = 0;
     push_context(&fn_ctx);
+    current_function_returns_ = &expr.returns;
 
+    // 1. Inject Parameters
     for (const auto &param : expr.parameters) {
         uint8_t reg = allocate_register();
         current_ctx_->locals.push_back({param.name, reg});
     }
 
+    // 2. Inject Named Returns & Evaluate Defaults
+    for (const auto &ret : expr.returns) {
+        if (ret.name.empty()) {
+            continue;
+        }
+
+        uint8_t reg = allocate_register();
+        if (!ret.default_value.is_null()) {
+            uint8_t value_reg = compile_expr(ret.default_value);
+            if (ast::get_type(ctx.tree.get(ret.default_value).node) != ret.type) {
+                emit_numeric_normalize(value_reg, ret.type);
+            }
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, reg, value_reg, 0));
+        } else {
+            emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, reg, 0, 0));
+        }
+        current_ctx_->locals.push_back({ret.name, reg});
+    }
+
+    // 3. Compile Body
     if (!expr.body.is_null()) {
         compile_stmt(expr.body);
     }
 
-    uint8_t nil_reg = allocate_register();
-    emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, nil_reg, 0, 0));
-    emit(vm::Instruction::make_rrr(vm::Opcode::Return, nil_reg, 0, 0));
+    // 4. Safely pack implicit drop-off returns
+    auto normalized_returns = declared_return_types(expr.returns, ctx.tt);
+    if (normalized_returns.empty()) {
+        uint8_t nil_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, nil_reg, 0, 0));
+        emit(vm::Instruction::make_rrr(vm::Opcode::Return, nil_reg, 0, 0));
+    } else if (normalized_returns.size() == 1 && !expr.returns.empty() && !expr.returns.front().name.empty()) {
+        int local_reg = resolve_local(current_ctx_, expr.returns.front().name);
+        if (local_reg >= 0) {
+            emit(vm::Instruction::make_rrr(vm::Opcode::Return, static_cast<uint8_t>(local_reg), 0, 0));
+        } else {
+            uint8_t nil_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, nil_reg, 0, 0));
+            emit(vm::Instruction::make_rrr(vm::Opcode::Return, nil_reg, 0, 0));
+        }
+    } else if (!expr.returns.empty()) {
+        std::vector<uint8_t> source_regs;
+        source_regs.reserve(expr.returns.size());
 
+        for (const auto &ret : expr.returns) {
+            int local_reg = -1;
+            if (!ret.name.empty()) {
+                local_reg = resolve_local(current_ctx_, ret.name);
+            }
+
+            // If it has no name, or local wasn't found, safely substitute nil
+            if (local_reg >= 0) {
+                source_regs.push_back(static_cast<uint8_t>(local_reg));
+            } else {
+                uint8_t nil_reg = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, nil_reg, 0, 0));
+                source_regs.push_back(nil_reg);
+            }
+        }
+
+        uint8_t base_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, base_reg, source_regs[0], 0));
+        for (size_t i = 1; i < source_regs.size(); ++i) {
+            uint8_t next_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, next_reg, source_regs[i], 0));
+        }
+
+        uint8_t packed_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Make_model, packed_reg, base_reg, static_cast<uint8_t>(source_regs.size())));
+        emit(vm::Instruction::make_rrr(vm::Opcode::Return, packed_reg, 0, 0));
+    }
+
+    // 5. Construct Closure Object
     Closure_data *closure = ctx.arena.allocate<Closure_data>();
     new (closure) Closure_data();
 
@@ -1248,6 +1536,7 @@ uint8_t Compiler::compile_expr_node(const ast::Closure_expr &expr)
     closure->upvalues = nullptr;
 
     pop_context();
+    current_function_returns_ = saved_returns;
 
     uint16_t const_idx = add_constant(Value::make_closure(closure));
     uint8_t dst_reg = allocate_register();
@@ -1294,12 +1583,37 @@ uint8_t Compiler::compile_expr_node(const ast::Binary_expr &expr)
         return dest_reg;
     }
 
+    types::Type_id left_type = ast::get_type(ctx.tree.get(expr.left).node);
+    types::Type_id right_type = ast::get_type(ctx.tree.get(expr.right).node);
+
+    if (expr.op == lex::TokenType::Equal || expr.op == lex::TokenType::NotEqual) {
+        if (ctx.tt.is_optional(left_type) && ctx.tt.is_nil(right_type)) {
+            uint8_t optional_reg = compile_expr(expr.left);
+            uint8_t dest_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(
+                expr.op == lex::TokenType::Equal ? vm::Opcode::Test_nil : vm::Opcode::Test_val,
+                dest_reg,
+                optional_reg,
+                0));
+            return dest_reg;
+        }
+
+        if (ctx.tt.is_nil(left_type) && ctx.tt.is_optional(right_type)) {
+            uint8_t optional_reg = compile_expr(expr.right);
+            uint8_t dest_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(
+                expr.op == lex::TokenType::Equal ? vm::Opcode::Test_nil : vm::Opcode::Test_val,
+                dest_reg,
+                optional_reg,
+                0));
+            return dest_reg;
+        }
+    }
+
     uint8_t reg_a = compile_expr(expr.left);
     uint8_t reg_b = compile_expr(expr.right);
 
     uint8_t dest_reg = allocate_register();
-    types::Type_id left_type = ast::get_type(ctx.tree.get(expr.left).node);
-    types::Type_id right_type = ast::get_type(ctx.tree.get(expr.right).node);
 
     if (expr.op == lex::TokenType::Plus) {
         if (ctx.tt.is_string(left_type) && ctx.tt.is_string(right_type)) {
@@ -1994,7 +2308,8 @@ void Compiler::compile_stmt_node(const ast::For_in_stmt &stmt)
 
                 auto iter_decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(iter_decl_id).node);
 
-                iter_model_name = std::get<types::Model_type>(ctx.tt.get(iter_decl->return_type).data).name;
+                auto iter_return_type = effective_return_type(iter_decl->returns, ctx.tt);
+                iter_model_name = std::get<types::Model_type>(ctx.tt.get(iter_return_type).data).name;
             }
         } else {
             emit(vm::Instruction::make_rrr(vm::Opcode::Move, iter_reg, iterable_reg, 0));

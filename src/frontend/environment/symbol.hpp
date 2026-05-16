@@ -24,7 +24,7 @@ struct Symbol
     bool is_public;
 
     std::optional<Value> const_value;
-    std::optional<uint32_t> global_index; // The VM memory slot for this static variable
+    std::optional<uint32_t> global_index{0}; // The VM memory slot for this static variable
     std::optional<uint16_t> stack_offset;
     std::optional<size_t> ffi_index;
 

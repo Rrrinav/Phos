@@ -2,7 +2,45 @@
 
 #include "frontend/core_library/std_lib.hpp"
 
+#include <algorithm>
+
 namespace phos {
+
+namespace {
+
+Native_param normalize_native_param(Native_param param)
+{
+    if (param.type_str == "...") {
+        param.type_str = "any";
+        param.is_variadic = true;
+        return param;
+    }
+
+    if (!param.is_variadic && param.type_str.size() >= 3 && param.type_str.ends_with("...")) {
+        param.type_str.erase(param.type_str.size() - 3);
+        param.is_variadic = true;
+    }
+
+    return param;
+}
+
+std::vector<Native_param> normalize_native_params(std::vector<Native_param> params)
+{
+    for (auto &param : params) {
+        param = normalize_native_param(std::move(param));
+    }
+
+    auto variadic_it = std::find_if(params.begin(), params.end(), [](const Native_param &param) { return param.is_variadic; });
+    if (variadic_it != params.end()) {
+        for (auto it = std::next(variadic_it); it != params.end(); ++it) {
+            it->is_variadic = false;
+        }
+    }
+
+    return params;
+}
+
+} // namespace
 
 Type_environment::Type_environment(types::Type_table &tt) : tt(tt)
 {}
@@ -34,6 +72,14 @@ bool Type_environment::register_model(const std::string &name)
     }
     model_data[name] = Model_type_data{};
     return true;
+}
+
+types::Type_id Type_environment::define_native_model(const std::string &name, const std::vector<std::pair<std::string, types::Type_id>> &fields)
+{
+    types::Type_id model_type = tt.model(name, fields);
+    global_types[name] = model_type;
+    model_data.try_emplace(name, Model_type_data{});
+    return model_type;
 }
 
 bool Type_environment::add_model_field_default(const std::string &model_name, const std::string &field, ast::Expr_id expr)
@@ -277,12 +323,12 @@ void Type_environment::define_native(const std::string &name, const std::vector<
         native_params.push_back(Native_param{.name = "", .type_str = param, .default_value = std::nullopt});
     }
 
-    native_signatures[name].push_back(Native_sig{.params = std::move(native_params), .ret_type_str = ret, .func = func});
+    native_signatures[name].push_back(Native_sig{.params = normalize_native_params(std::move(native_params)), .ret_type_str = ret, .func = func});
 }
 
 void Type_environment::define_native(const std::string &name, const std::vector<Native_param> &params, const std::string &ret, Native_fn func)
 {
-    native_signatures[name].push_back(Native_sig{.params = params, .ret_type_str = ret, .func = func});
+    native_signatures[name].push_back(Native_sig{.params = normalize_native_params(params), .ret_type_str = ret, .func = func});
 }
 
 void Type_environment::define_native_const(const std::string &name, Value val)

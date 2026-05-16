@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cctype>
 #include <format>
-#include <print>
 #include <sstream>
 
 namespace phos {
@@ -22,9 +21,229 @@ T &get_stmt(ast::Ast_tree &tree, ast::Stmt_id id)
 }
 
 [[maybe_unused]]
-std::string function_like_type_name(const std::vector<types::Type_id> &params, types::Type_id ret, types::Type_table &tt)
+std::vector<types::Type_id> normalize_return_types(const std::vector<types::Type_id> &returns, types::Type_table &tt)
 {
-    return tt.to_string(tt.function(params, ret));
+    if (returns.size() == 1 && tt.is_void(returns.front())) {
+        return {};
+    }
+    return returns;
+}
+
+std::vector<types::Type_id> declared_return_types(const std::vector<ast::Function_param> &returns, types::Type_table &tt)
+{
+    std::vector<types::Type_id> out;
+    out.reserve(returns.size());
+    for (const auto &ret : returns) {
+        out.push_back(ret.type);
+    }
+    return normalize_return_types(out, tt);
+}
+
+std::vector<std::pair<std::string, types::Type_id>> positional_multi_return_fields(const std::vector<types::Type_id> &returns)
+{
+    std::vector<std::pair<std::string, types::Type_id>> fields;
+    fields.reserve(returns.size());
+    for (size_t i = 0; i < returns.size(); ++i) {
+        fields.push_back({std::format("_{}", i), returns[i]});
+    }
+    return fields;
+}
+
+types::Type_id effective_return_type(const std::vector<types::Type_id> &returns, types::Type_table &tt)
+{
+    auto normalized = normalize_return_types(returns, tt);
+    if (normalized.empty()) {
+        return tt.get_void();
+    }
+    if (normalized.size() == 1) {
+        return normalized.front();
+    }
+    return tt.model("", positional_multi_return_fields(normalized));
+}
+
+types::Type_id effective_return_type(const types::Function_type &fn, types::Type_table &tt)
+{
+    return effective_return_type(fn.returns, tt);
+}
+
+[[maybe_unused]]
+std::string function_like_type_name(const std::vector<types::Type_id> &params, const std::vector<types::Type_id> &returns, types::Type_table &tt)
+{
+    return tt.to_string(tt.function(params, normalize_return_types(returns, tt)));
+}
+
+std::string trim_copy(std::string_view text)
+{
+    size_t start = 0;
+    while (start < text.size() && std::isspace(static_cast<unsigned char>(text[start]))) {
+        ++start;
+    }
+
+    size_t end = text.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(text[end - 1]))) {
+        --end;
+    }
+
+    return std::string(text.substr(start, end - start));
+}
+
+std::vector<std::string> split_top_level(std::string_view text, char delimiter)
+{
+    std::vector<std::string> parts;
+    size_t start = 0;
+    int paren_depth = 0;
+    int brace_depth = 0;
+    int angle_depth = 0;
+    int bracket_depth = 0;
+
+    for (size_t i = 0; i < text.size(); ++i) {
+        switch (text[i]) {
+        case '(':
+            ++paren_depth;
+            break;
+        case ')':
+            --paren_depth;
+            break;
+        case '{':
+            ++brace_depth;
+            break;
+        case '}':
+            --brace_depth;
+            break;
+        case '<':
+            ++angle_depth;
+            break;
+        case '>':
+            --angle_depth;
+            break;
+        case '[':
+            ++bracket_depth;
+            break;
+        case ']':
+            --bracket_depth;
+            break;
+        default:
+            break;
+        }
+
+        if (text[i] == delimiter && paren_depth == 0 && brace_depth == 0 && angle_depth == 0 && bracket_depth == 0) {
+            auto part = trim_copy(text.substr(start, i - start));
+            if (!part.empty()) {
+                parts.push_back(std::move(part));
+            }
+            start = i + 1;
+        }
+    }
+
+    auto tail = trim_copy(text.substr(start));
+    if (!tail.empty()) {
+        parts.push_back(std::move(tail));
+    }
+
+    return parts;
+}
+
+std::vector<std::string> split_top_level_fields(std::string_view text)
+{
+    std::vector<std::string> parts;
+    size_t start = 0;
+    int paren_depth = 0;
+    int brace_depth = 0;
+    int angle_depth = 0;
+    int bracket_depth = 0;
+
+    for (size_t i = 0; i < text.size(); ++i) {
+        switch (text[i]) {
+        case '(':
+            ++paren_depth;
+            break;
+        case ')':
+            --paren_depth;
+            break;
+        case '{':
+            ++brace_depth;
+            break;
+        case '}':
+            --brace_depth;
+            break;
+        case '<':
+            ++angle_depth;
+            break;
+        case '>':
+            --angle_depth;
+            break;
+        case '[':
+            ++bracket_depth;
+            break;
+        case ']':
+            --bracket_depth;
+            break;
+        default:
+            break;
+        }
+
+        bool is_separator = (text[i] == ';' || text[i] == ',') && paren_depth == 0 && brace_depth == 0 && angle_depth == 0 && bracket_depth == 0;
+        if (is_separator) {
+            auto part = trim_copy(text.substr(start, i - start));
+            if (!part.empty()) {
+                parts.push_back(std::move(part));
+            }
+            start = i + 1;
+        }
+    }
+
+    auto tail = trim_copy(text.substr(start));
+    if (!tail.empty()) {
+        parts.push_back(std::move(tail));
+    }
+
+    return parts;
+}
+
+[[maybe_unused]]
+size_t find_top_level_arrow(std::string_view text)
+{
+    int paren_depth = 0;
+    int brace_depth = 0;
+    int angle_depth = 0;
+    int bracket_depth = 0;
+
+    for (size_t i = 0; i + 1 < text.size(); ++i) {
+        switch (text[i]) {
+        case '(':
+            ++paren_depth;
+            break;
+        case ')':
+            --paren_depth;
+            break;
+        case '{':
+            ++brace_depth;
+            break;
+        case '}':
+            --brace_depth;
+            break;
+        case '<':
+            ++angle_depth;
+            break;
+        case '>':
+            --angle_depth;
+            break;
+        case '[':
+            ++bracket_depth;
+            break;
+        case ']':
+            --bracket_depth;
+            break;
+        default:
+            break;
+        }
+
+        if (text[i] == '-' && text[i + 1] == '>' && paren_depth == 0 && brace_depth == 0 && angle_depth == 0 && bracket_depth == 0) {
+            return i;
+        }
+    }
+
+    return std::string_view::npos;
 }
 
 std::optional<Module_id> imported_module_id(const Compiler_context &ctx, Module_id current_module_id, const std::string &alias)
@@ -51,7 +270,7 @@ types::Type_id resolve_symbol_type(Compiler_context &ctx, Symbol_id sym_id, Sema
                 for (const auto &param : decl->parameters) {
                     params.push_back(param.type);
                 }
-                sym.type = ctx.tt.function(params, decl->return_type);
+                sym.type = ctx.tt.function(params, declared_return_types(decl->returns, ctx.tt));
             }
         }
     } else if (sym.kind == Symbol_kind::Native_func) {
@@ -59,6 +278,9 @@ types::Type_id resolve_symbol_type(Compiler_context &ctx, Symbol_id sym_id, Sema
             std::vector<types::Type_id> params;
             params.reserve(signatures->front().params.size());
             for (const auto &param : signatures->front().params) {
+                if (param.is_variadic) {
+                    break;
+                }
                 params.push_back(checker.parse_type_string(param.type_str, {}));
             }
             sym.type = ctx.tt.function(params, checker.parse_type_string(signatures->front().ret_type_str, {}));
@@ -175,6 +397,33 @@ types::Type_id Semantic_checker::resolve_type_recursively(types::Type_id type_id
         return ctx.tt.iterator(resolved_base);
     }
 
+    if (ctx.tt.is_function(type_id)) {
+        auto func = ctx.tt.get(type_id).as<types::Function_type>();
+
+        for (auto &param_type : func.params) {
+            param_type = resolve_type_recursively(param_type, loc);
+        }
+        for (auto &return_type : func.returns) {
+            return_type = resolve_type_recursively(return_type, loc);
+        }
+
+        return ctx.tt.function(func.params, func.returns);
+    }
+
+    if (ctx.tt.is_model(type_id)) {
+        const auto &model = ctx.tt.get(type_id).as<types::Model_type>();
+        if (!model.name.empty()) {
+            return type_id;
+        }
+
+        std::vector<std::pair<std::string, types::Type_id>> resolved_fields = model.fields;
+        for (auto &[_, field_type] : resolved_fields) {
+            field_type = resolve_type_recursively(field_type, loc);
+        }
+
+        return ctx.tt.model("", resolved_fields);
+    }
+
     return type_id;
 }
 
@@ -192,7 +441,7 @@ bool Semantic_checker::is_iterator_protocol_type(types::Type_id type) const
                 }
                 auto decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(method->declaration).node);
                 bool valid_params = decl && (decl->parameters.size() == 1 || decl->parameters.size() == 2);
-                return valid_params && ctx.tt.is_optional(decl->return_type);
+                return valid_params && ctx.tt.is_optional(effective_return_type(declared_return_types(decl->returns, ctx.tt), ctx.tt));
             }
         }
     }
@@ -209,8 +458,9 @@ types::Type_id Semantic_checker::iterator_element_type(types::Type_id type) cons
         if (!model_name.empty()) {
             if (auto method = ctx.type_env.get_model_method(model_name, "next")) {
                 auto decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(method->declaration).node);
-                if (decl && ctx.tt.is_optional(decl->return_type)) {
-                    return ctx.tt.get_optional_base(decl->return_type);
+                auto ret_type = decl ? effective_return_type(declared_return_types(decl->returns, ctx.tt), ctx.tt) : ctx.tt.get_void();
+                if (decl && ctx.tt.is_optional(ret_type)) {
+                    return ctx.tt.get_optional_base(ret_type);
                 }
             }
         }
@@ -248,8 +498,9 @@ types::Type_id Semantic_checker::to_iterator_type(types::Type_id type) const
         if (!model_name.empty()) {
             if (auto method = ctx.type_env.get_model_method(model_name, "iter")) {
                 auto decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(method->declaration).node);
-                if (decl && decl->parameters.size() == 1 && is_iterator_protocol_type(decl->return_type)) {
-                    return decl->return_type;
+                auto ret_type = decl ? effective_return_type(declared_return_types(decl->returns, ctx.tt), ctx.tt) : ctx.tt.get_void();
+                if (decl && decl->parameters.size() == 1 && is_iterator_protocol_type(ret_type)) {
+                    return ret_type;
                 }
             }
         }
@@ -516,6 +767,53 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
 
             Symbol_id sym_id = ctx.registry.create_symbol(std::move(sym));
             module.add_public_symbol(var.name, sym_id);
+        } else if (std::holds_alternative<ast::Multi_var_stmt>(ctx.tree.get(stmt_id).node)) {
+            auto &vars = get_stmt<ast::Multi_var_stmt>(ctx.tree, stmt_id);
+
+            if (vars.kind == ast::Var_kind::Let || vars.kind == ast::Var_kind::Mut) {
+                continue;
+            }
+
+            for (size_t i = 0; i < vars.names.size(); ++i) {
+                std::string canonical_name =
+                    (module.logical_namespace == "main" || module.logical_namespace.empty()) ? vars.names[i]
+                                                                                              : module.logical_namespace + "::" + vars.names[i];
+
+                std::optional<Value> const_val = std::nullopt;
+                std::optional<uint32_t> global_idx = std::nullopt;
+                Symbol_kind kind = Symbol_kind::Global_var;
+
+                if (vars.kind == ast::Var_kind::Const) {
+                    kind = Symbol_kind::Phos_const;
+                    if (vars.initializers.size() == vars.names.size()) {
+                        if (auto *lit = std::get_if<ast::Literal_expr>(&ctx.tree.get(vars.initializers[i]).node)) {
+                            const_val = lit->value;
+                        } else {
+                            type_error(vars.loc, "Constants must be initialized with primitive literals.");
+                        }
+                    } else {
+                        type_error(vars.loc, "Constants do not support destructuring from a runtime multi-value initializer.");
+                    }
+                } else {
+                    global_idx = ctx.registry.next_global_index++;
+                }
+
+                Symbol sym{
+                    .id = Symbol_id{0},
+                    .name = canonical_name,
+                    .kind = kind,
+                    .type = ctx.tt.get_unknown(),
+                    .owner_module = mod_id,
+                    .is_public = true,
+                    .const_value = const_val,
+                    .global_index = global_idx,
+                    .stack_offset = std::nullopt,
+                    .ffi_index = std::nullopt,
+                    .declaration = stmt_id};
+
+                Symbol_id sym_id = ctx.registry.create_symbol(std::move(sym));
+                module.add_public_symbol(vars.names[i], sym_id);
+            }
         }
     }
 }
@@ -652,7 +950,7 @@ std::optional<Scope_symbol> Semantic_checker::lookup(const std::string &name, co
         for (const auto &p : decl->parameters) {
             params.push_back(p.type);
         }
-        types::Type_id func_id = ctx.tt.function(params, decl->return_type);
+        types::Type_id func_id = ctx.tt.function(params, declared_return_types(decl->returns, ctx.tt));
         return Scope_symbol{func_id, Symbol_id::null(), false, 0};
     }
 
@@ -670,25 +968,47 @@ bool Semantic_checker::is_compatible(types::Type_id expected, types::Type_id act
         return true;
     }
 
+    if (ctx.tt.is_function(expected) && ctx.tt.is_function(actual)) {
+        const auto &exp_fn = ctx.tt.get(expected).as<types::Function_type>();
+        const auto &act_fn = ctx.tt.get(actual).as<types::Function_type>();
+
+        if (exp_fn.params.size() != act_fn.params.size() || exp_fn.returns.size() != act_fn.returns.size()) {
+            return false;
+        }
+
+        for (size_t i = 0; i < exp_fn.params.size(); ++i) {
+            if (!is_compatible(exp_fn.params[i], act_fn.params[i])) {
+                return false;
+            }
+        }
+
+        for (size_t i = 0; i < exp_fn.returns.size(); ++i) {
+            if (!is_compatible(exp_fn.returns[i], act_fn.returns[i])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     if (ctx.tt.is_model(expected) && ctx.tt.is_model(actual)) {
         auto &exp_model = std::get<types::Model_type>(ctx.tt.get(expected).data);
         auto &act_model = std::get<types::Model_type>(ctx.tt.get(actual).data);
 
-        if (exp_model.name.empty() && act_model.name.empty()) {
-            if (exp_model.fields.size() != act_model.fields.size()) {
+        if (exp_model.fields.size() != act_model.fields.size()) {
+            return false;
+        }
+
+        for (size_t i = 0; i < exp_model.fields.size(); ++i) {
+            if (exp_model.fields[i].first != act_model.fields[i].first) {
                 return false;
             }
-
-            for (size_t i = 0; i < exp_model.fields.size(); ++i) {
-                if (exp_model.fields[i].first != act_model.fields[i].first) {
-                    return false;
-                }
-                if (!is_compatible(exp_model.fields[i].second, act_model.fields[i].second)) {
-                    return false;
-                }
+            if (!is_compatible(exp_model.fields[i].second, act_model.fields[i].second)) {
+                return false;
             }
-            return true;
         }
+
+        return true;
     }
 
     if (ctx.tt.is_any(expected)) {
@@ -1069,8 +1389,7 @@ void Semantic_checker::collect_nil_checked_vars_for_else(ast::Expr_id expr_id, s
 
 types::Type_id Semantic_checker::parse_type_string(std::string str, const std::unordered_map<std::string, types::Type_id> &generics) const
 {
-    str.erase(str.find_last_not_of(" \t\r\n") + 1);
-    str.erase(0, str.find_first_not_of(" \t\r\n"));
+    str = trim_copy(str);
 
     if (str.length() == 1 && std::isupper(str[0]) && generics.contains(str)) {
         return generics.at(str);
@@ -1124,6 +1443,76 @@ types::Type_id Semantic_checker::parse_type_string(std::string str, const std::u
     if (str == "nil") {
         return ctx.tt.get_nil();
     }
+    if (str == "usize" || str == "ptr") {
+        return ctx.tt.get_u64();
+    }
+    if (str == "isize") {
+        return ctx.tt.get_i64();
+    }
+    if (str == "byte" || str == "char") {
+        return ctx.tt.get_u8();
+    }
+
+    if (str.starts_with("fn(")) {
+        size_t close_paren = 0;
+        int depth = 0;
+        bool found = false;
+        for (size_t i = 2; i < str.size(); ++i) {
+            if (str[i] == '(') {
+                ++depth;
+            } else if (str[i] == ')') {
+                if (depth == 0) {
+                    close_paren = i;
+                    found = true;
+                    break;
+                }
+                --depth;
+            }
+        }
+
+        if (found) {
+            auto tail = trim_copy(str.substr(close_paren + 1));
+            if (tail.empty() || tail.starts_with("->")) {
+                std::vector<types::Type_id> params;
+                auto params_str = str.substr(3, close_paren - 3);
+                for (const auto &param_str : split_top_level(params_str, ',')) {
+                    params.push_back(parse_type_string(param_str, generics));
+                }
+
+                std::vector<types::Type_id> returns;
+                if (tail.starts_with("->")) {
+                    auto returns_str = trim_copy(tail.substr(2));
+                    for (const auto &return_str : split_top_level(returns_str, ',')) {
+                        returns.push_back(parse_type_string(return_str, generics));
+                    }
+                }
+
+                return ctx.tt.function(params, returns);
+            }
+        }
+    }
+
+    if (str.starts_with("model {") && str.back() == '}') {
+        auto body = str.substr(7, str.length() - 8);
+        std::vector<std::pair<std::string, types::Type_id>> fields;
+
+        for (const auto &field_str : split_top_level_fields(body)) {
+            auto colon = field_str.find(':');
+            if (colon == std::string::npos) {
+                return ctx.tt.get_any();
+            }
+
+            std::string field_name = trim_copy(field_str.substr(0, colon));
+            std::string field_type = trim_copy(field_str.substr(colon + 1));
+            if (field_name.empty() || field_type.empty()) {
+                return ctx.tt.get_any();
+            }
+
+            fields.push_back({field_name, parse_type_string(field_type, generics)});
+        }
+
+        return ctx.tt.model("", fields);
+    }
 
     if (str.starts_with("iter<") && str.ends_with(">")) {
         auto base = parse_type_string(str.substr(5, str.length() - 6), generics);
@@ -1148,17 +1537,14 @@ types::Type_id Semantic_checker::parse_type_string(std::string str, const std::u
 bool Semantic_checker::match_ffi_type(
     std::string expected_str, types::Type_id actual_type, std::unordered_map<std::string, types::Type_id> &generics) const
 {
-    expected_str.erase(0, expected_str.find_first_not_of(" \t\r\n"));
-    expected_str.erase(expected_str.find_last_not_of(" \t\r\n") + 1);
+    expected_str = trim_copy(expected_str);
 
     if (ctx.tt.is_any(actual_type) || ctx.tt.is_unknown(actual_type)) {
         return true;
     }
 
     if (expected_str.find('|') != std::string::npos) {
-        std::stringstream ss(expected_str);
-        std::string item;
-        while (std::getline(ss, item, '|')) {
+        for (const auto &item : split_top_level(expected_str, '|')) {
             auto temp_generics = generics;
             if (match_ffi_type(item, actual_type, temp_generics)) {
                 generics = temp_generics;
@@ -1302,11 +1688,16 @@ Semantic_checker::Bound_native_arguments Semantic_checker::try_bind_native_argum
     if (parameters.size() < parameter_offset) {
         return result;
     }
-    result.ordered_arguments.resize(parameters.size() - parameter_offset);
 
-    std::vector<bool> filled(result.ordered_arguments.size(), false);
+    const size_t available_parameter_count = parameters.size() - parameter_offset;
+    const bool has_variadic = available_parameter_count > 0 && parameters.back().is_variadic;
+    const size_t fixed_count = available_parameter_count - (has_variadic ? 1u : 0u);
+    result.ordered_arguments.resize(fixed_count);
+
+    std::vector<bool> filled(fixed_count, false);
     bool seen_named = false;
     size_t next_positional = 0;
+    std::vector<ast::Call_argument> variadic_arguments;
 
     auto advance_to_next_positional = [&]() {
         while (next_positional < filled.size() && filled[next_positional]) {
@@ -1319,13 +1710,13 @@ Semantic_checker::Bound_native_arguments Semantic_checker::try_bind_native_argum
 
         if (!arg.name.empty()) {
             seen_named = true;
-            for (size_t i = 0; i < filled.size(); ++i) {
+            for (size_t i = 0; i < fixed_count; ++i) {
                 if (parameters[i + parameter_offset].name == arg.name) {
                     target_index = i;
                     break;
                 }
             }
-            if (target_index == filled.size() || filled[target_index]) {
+            if (target_index == fixed_count || filled[target_index]) {
                 return result;
             }
         } else {
@@ -1333,8 +1724,20 @@ Semantic_checker::Bound_native_arguments Semantic_checker::try_bind_native_argum
                 return result;
             }
             advance_to_next_positional();
-            if (next_positional >= filled.size()) {
-                return result;
+            if (next_positional >= fixed_count) {
+                if (!has_variadic) {
+                    return result;
+                }
+
+                std::string expected_type_str = parameters.back().type_str;
+                std::optional<types::Type_id> expected_context = parse_type_string(expected_type_str, result.generics);
+                auto arg_res = check_expr(arg.value, expected_context);
+                if (!match_ffi_type(expected_type_str, arg_res, result.generics)) {
+                    return result;
+                }
+
+                variadic_arguments.push_back(ast::Call_argument{.name = "", .value = arg.value, .loc = arg.loc});
+                continue;
             }
             target_index = next_positional++;
         }
@@ -1362,6 +1765,8 @@ Semantic_checker::Bound_native_arguments Semantic_checker::try_bind_native_argum
         }
         return result;
     }
+
+    result.ordered_arguments.insert(result.ordered_arguments.end(), variadic_arguments.begin(), variadic_arguments.end());
     result.ok = true;
     return result;
 }
@@ -1379,6 +1784,8 @@ void Semantic_checker::check_stmt(ast::Stmt_id stmt_id)
                 check_function_stmt(stmt_id);
             } else if constexpr (std::is_same_v<T, ast::Var_stmt>) {
                 check_var_stmt(stmt_id);
+            } else if constexpr (std::is_same_v<T, ast::Multi_var_stmt>) {
+                check_multi_var_stmt(stmt_id);
             } else if constexpr (std::is_same_v<T, ast::Model_stmt>) {
                 check_model_stmt(stmt_id);
             } else if constexpr (std::is_same_v<T, ast::Union_stmt>) {
@@ -1478,17 +1885,6 @@ types::Type_id Semantic_checker::check_expr(ast::Expr_id expr_id, std::optional<
         },
         ctx.tree.get(expr_id).node);
 
-    if (ctx.tt.is_optional(actual_type)) {
-        if (auto path = extract_access_path(expr_id)) {
-            for (auto it = m_nil_checked_vars_stack.rbegin(); it != m_nil_checked_vars_stack.rend(); ++it) {
-                if (it->count(*path)) {
-                    actual_type = ctx.tt.get_optional_base(actual_type);
-                    break;
-                }
-            }
-        }
-    }
-
     if (context_type) {
         uint8_t actual_depth = 0;
         types::Type_id actual_base = actual_type;
@@ -1523,20 +1919,27 @@ void Semantic_checker::check_function_stmt(ast::Stmt_id stmt_id)
 {
     auto &fn_stmt = get_stmt<ast::Function_stmt>(ctx.tree, stmt_id);
 
-    fn_stmt.return_type = resolve_type_recursively(fn_stmt.return_type, fn_stmt.loc);
     std::vector<types::Type_id> param_types;
+    std::vector<types::Type_id> return_types;
 
     for (auto &param : fn_stmt.parameters) {
         param.type = resolve_type_recursively(param.type, param.loc);
         param_types.push_back(param.type);
     }
+    for (auto &ret : fn_stmt.returns) {
+        ret.type = resolve_type_recursively(ret.type, ret.loc);
+        return_types.push_back(ret.type);
+    }
+    return_types = normalize_return_types(return_types, ctx.tt);
 
     if (fn_stmt.resolved_symbol) {
-        ctx.registry.get_symbol(*fn_stmt.resolved_symbol).type = ctx.tt.function(param_types, fn_stmt.return_type);
+        ctx.registry.get_symbol(*fn_stmt.resolved_symbol).type = ctx.tt.function(param_types, return_types);
     }
 
-    auto saved_return = current_return_type;
-    current_return_type = fn_stmt.return_type;
+    auto saved_return_types = current_return_types;
+    auto saved_return_params = current_return_params;
+    current_return_types = return_types;
+    current_return_params = &fn_stmt.returns;
 
     validate_function_defaults(fn_stmt);
 
@@ -1546,12 +1949,29 @@ void Semantic_checker::check_function_stmt(ast::Stmt_id stmt_id)
         declare(p.name, p.type, p.is_mut, p.loc);
     }
 
+    for (const auto &ret : fn_stmt.returns) {
+        if (!ret.name.empty()) {
+            declare(ret.name, ret.type, true, ret.loc);
+
+            if (!ret.default_value.is_null()) {
+                auto def_type = check_expr(ret.default_value, ret.type);
+                if (!is_compatible(ret.type, def_type)) {
+                    auto diagnostic =
+                        err::msg::error(diagnostics_.phase(), ret.loc.l, ret.loc.c, ret.loc.file, "Default return value type mismatch.");
+                    diagnostic.expected_got(ctx.tt.to_string(ret.type), ctx.tt.to_string(def_type));
+                    diagnostics_.push(std::move(diagnostic));
+                }
+            }
+        }
+    }
+
     if (!fn_stmt.body.is_null()) {
         check_stmt(fn_stmt.body);
     }
 
     variables.end_scope();
-    current_return_type = saved_return;
+    current_return_types = saved_return_types;
+    current_return_params = saved_return_params;
 }
 
 void Semantic_checker::check_var_stmt(ast::Stmt_id stmt_id)
@@ -1631,6 +2051,110 @@ void Semantic_checker::check_var_stmt(ast::Stmt_id stmt_id)
     } else {
         declare(name, type, is_mut, loc);
     }
+}
+
+void Semantic_checker::check_multi_var_stmt(ast::Stmt_id stmt_id)
+{
+    auto &stmt = get_stmt<ast::Multi_var_stmt>(ctx.tree, stmt_id);
+
+    if (!stmt.type_inferred) {
+        for (auto &type : stmt.types) {
+            type = resolve_type_recursively(type, stmt.loc);
+        }
+    }
+
+    const bool is_global = (stmt.kind == ast::Var_kind::Const || stmt.kind == ast::Var_kind::Static || stmt.kind == ast::Var_kind::Static_mut);
+    const bool is_mut = (stmt.kind == ast::Var_kind::Mut || stmt.kind == ast::Var_kind::Static_mut);
+
+    std::vector<types::Type_id> final_types(stmt.names.size(), ctx.tt.get_unknown());
+
+    auto declare_name = [&](size_t index, types::Type_id type) {
+        final_types[index] = type;
+        if (is_global) {
+            auto &module = ctx.workspace.get_module(current_module_id);
+            if (auto sym_id = module.resolve_exported_symbol(stmt.names[index])) {
+                ctx.registry.get_symbol(*sym_id).type = type;
+                variables.declare(stmt.names[index], type, is_mut, *sym_id);
+            }
+        } else {
+            declare(stmt.names[index], type, is_mut, stmt.loc);
+        }
+    };
+
+    if (stmt.initializers.size() == stmt.names.size()) {
+        for (size_t i = 0; i < stmt.names.size(); ++i) {
+            auto init_type = check_expr(stmt.initializers[i], stmt.type_inferred ? std::nullopt : std::make_optional(stmt.types[i]));
+            types::Type_id final_type = stmt.type_inferred ? init_type : stmt.types[i];
+
+            if (stmt.type_inferred) {
+                if (ctx.tt.is_array(init_type) && ctx.tt.get_array_elem(init_type) == ctx.tt.get_void()) {
+                    type_error(stmt.loc, std::format("Cannot infer type of '{}' from an empty array initializer.", stmt.names[i]));
+                }
+            } else if (!is_compatible(stmt.types[i], init_type)) {
+                auto diagnostic = err::msg::error(diagnostics_.phase(), stmt.loc.l, stmt.loc.c, stmt.loc.file, "Initializer type mismatch.");
+                diagnostic.expected_got(ctx.tt.to_string(stmt.types[i]), ctx.tt.to_string(init_type));
+                diagnostics_.push(std::move(diagnostic));
+            }
+
+            declare_name(i, final_type);
+        }
+    } else if (stmt.initializers.size() == 1) {
+        auto init_expr = stmt.initializers.front();
+        auto source_type = check_expr(init_expr);
+        auto &init_node = ctx.tree.get(init_expr).node;
+
+        std::vector<types::Type_id> unpacked_types;
+        bool is_valid_unpack = false;
+
+        // 1. MULTI-RETURN FUNCTION UNPACKING
+        if (auto *call_expr = std::get_if<ast::Call_expr>(&init_node)) {
+            auto callee_type = ast::get_type(ctx.tree.get(call_expr->callee).node);
+            if (ctx.tt.is_function(callee_type)) {
+                unpacked_types = ctx.tt.get(callee_type).as<types::Function_type>().returns;
+                is_valid_unpack = true;
+            }
+        }
+        // 2. MODEL DESTRUCTURING
+        else if (ctx.tt.is_model(source_type)) {
+            const auto &model = ctx.tt.get(source_type).as<types::Model_type>();
+            for (const auto &field : model.fields) {
+                unpacked_types.push_back(field.second);
+            }
+            is_valid_unpack = true;
+        }
+
+        if (!is_valid_unpack) {
+            type_error(stmt.loc, "A single initializer in a multi-variable declaration must be a multi-value model or a multi-return function call.");
+            return;
+        }
+
+        if (unpacked_types.size() != stmt.names.size()) {
+            type_error(
+                stmt.loc,
+                std::format("Destructuring arity mismatch. Expected {} value(s), got {}.", stmt.names.size(), unpacked_types.size()));
+            return;
+        }
+
+        for (size_t i = 0; i < stmt.names.size(); ++i) {
+            types::Type_id extracted_type = unpacked_types[i];
+            types::Type_id final_type = stmt.type_inferred ? extracted_type : stmt.types[i];
+
+            if (!stmt.type_inferred && !is_compatible(stmt.types[i], extracted_type)) {
+                auto diagnostic = err::msg::error(diagnostics_.phase(), stmt.loc.l, stmt.loc.c, stmt.loc.file, "Initializer type mismatch.");
+                diagnostic.expected_got(ctx.tt.to_string(stmt.types[i]), ctx.tt.to_string(extracted_type));
+                diagnostics_.push(std::move(diagnostic));
+            }
+            declare_name(i, final_type);
+        }
+    } else if (stmt.initializers.empty()) {
+        type_error(stmt.loc, "Multi-variable declarations require an initializer.");
+        return;
+    } else {
+        type_error(stmt.loc, "Unsupported multi-variable declaration shape.");
+        return;
+    }
+
+    stmt.types = std::move(final_types);
 }
 
 void Semantic_checker::check_model_stmt(ast::Stmt_id stmt_id)
@@ -1771,22 +2295,75 @@ void Semantic_checker::check_print_stmt(ast::Stmt_id stmt_id)
 
 void Semantic_checker::check_return_stmt(ast::Stmt_id stmt_id)
 {
-    auto expression = get_stmt<ast::Return_stmt>(ctx.tree, stmt_id).expression;
+    auto expressions = get_stmt<ast::Return_stmt>(ctx.tree, stmt_id).expressions;
     auto loc = get_stmt<ast::Return_stmt>(ctx.tree, stmt_id).loc;
 
-    if (!current_return_type) {
+    if (!current_return_types) {
         type_error(loc, "Return statement used outside of a function");
         return;
     }
-    if (!expression.is_null()) {
-        auto val_type = check_expr(expression, current_return_type);
-        if (!is_compatible(*current_return_type, val_type)) {
+
+    auto expected_types = normalize_return_types(*current_return_types, ctx.tt);
+    auto expected_value_type = effective_return_type(expected_types, ctx.tt);
+
+    if (expressions.empty()) {
+        if (expected_types.empty()) {
+            return; // Void function, perfectly fine
+        }
+
+        if (current_return_params != nullptr) {
+            bool all_have_defaults = true;
+            for (size_t i = 0; i < current_return_params->size(); ++i) {
+                const auto &ret = (*current_return_params)[i];
+                if (ret.default_value.is_null()) {
+                    std::string param_name = ret.name.empty() ? std::format("at index {}", i) : std::format("'{}'", ret.name);
+                    type_error(loc, std::format("Naked return not allowed: Return parameter {} has no default value.", param_name));
+                    all_have_defaults = false;
+                }
+            }
+            if (all_have_defaults) {
+                return; // All have defaults, naked return is safe!
+            }
+        } else {
+            type_error(loc, "Function must return a value.");
+        }
+        return;
+    }
+
+    if (expected_types.empty()) {
+        type_error(loc, "Void functions cannot return a value.");
+        for (auto expr : expressions) {
+            check_expr(expr);
+        }
+        return;
+    }
+
+    if (expressions.size() == 1) {
+        auto val_type = check_expr(expressions.front(), expected_value_type);
+        if (!is_compatible(expected_value_type, val_type)) {
             auto diagnostic = err::msg::error(diagnostics_.phase(), loc.l, loc.c, loc.file, "Return type mismatch.");
-            diagnostic.expected_got(ctx.tt.to_string(*current_return_type), ctx.tt.to_string(val_type));
+            diagnostic.expected_got(ctx.tt.to_string(expected_value_type), ctx.tt.to_string(val_type));
             diagnostics_.push(std::move(diagnostic));
         }
-    } else if (*current_return_type != ctx.tt.get_void()) {
-        type_error(loc, "Function must return a value.");
+        return;
+    }
+
+    if (expressions.size() != expected_types.size()) {
+        type_error(loc, std::format("Return arity mismatch. Expected {} value(s), got {}.", expected_types.size(), expressions.size()));
+        for (auto expr : expressions) {
+            check_expr(expr);
+        }
+        return;
+    }
+
+    for (size_t i = 0; i < expressions.size(); ++i) {
+        auto val_type = check_expr(expressions[i], expected_types[i]);
+        if (!is_compatible(expected_types[i], val_type)) {
+            auto expr_loc = ast::get_loc(ctx.tree.get(expressions[i]).node);
+            auto diagnostic = err::msg::error(diagnostics_.phase(), expr_loc.l, expr_loc.c, expr_loc.file, "Return type mismatch.");
+            diagnostic.expected_got(ctx.tt.to_string(expected_types[i]), ctx.tt.to_string(val_type));
+            diagnostics_.push(std::move(diagnostic));
+        }
     }
 }
 
@@ -1958,7 +2535,7 @@ void Semantic_checker::check_match_stmt(ast::Stmt_id stmt_id)
                         if (method_it != model_data->methods.end()) {
                             auto decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(method_it->second.declaration).node);
                             if (decl && decl->parameters.size() == 1 && is_compatible(decl->parameters[0].type, subject_type)) {
-                                if (decl->return_type == ctx.tt.get_bool()) {
+                                if (effective_return_type(declared_return_types(decl->returns, ctx.tt), ctx.tt) == ctx.tt.get_bool()) {
                                     has_custom_match = true;
                                 } else {
                                     type_error(ast::get_loc(ctx.tree.get(arm.pattern).node), "__match__ method must return bool.");
@@ -2728,7 +3305,7 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
         std::string expected_str = "";
         if (signatures.size() == 1) {
             for (size_t i = 0; i < signatures[0].params.size(); ++i) {
-                expected_str += signatures[0].params[i].type_str;
+                expected_str += signatures[0].params[i].display_type();
                 if (i != signatures[0].params.size() - 1) {
                     expected_str += ", ";
                 }
@@ -2740,7 +3317,7 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
             for (size_t s = 0; s < signatures.size(); ++s) {
                 expected_str += "(";
                 for (size_t i = 0; i < signatures[s].params.size(); ++i) {
-                    expected_str += signatures[s].params[i].type_str;
+                    expected_str += signatures[s].params[i].display_type();
                     if (i != signatures[s].params.size() - 1) {
                         expected_str += ", ";
                     }
@@ -2786,11 +3363,11 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
         };
         if (has_named_arguments()) {
             type_error(loc, "Named arguments only supported for direct static calls.");
-            return get_node<ast::Call_expr>(ctx.tree, expr_id).type = sig.ret;
+            return get_node<ast::Call_expr>(ctx.tree, expr_id).type = effective_return_type(sig, ctx.tt);
         }
         if (arguments_copy.size() != sig.params.size()) {
             type_error(loc, "Incorrect number of arguments.");
-            return get_node<ast::Call_expr>(ctx.tree, expr_id).type = sig.ret;
+            return get_node<ast::Call_expr>(ctx.tree, expr_id).type = effective_return_type(sig, ctx.tt);
         }
         for (size_t i = 0; i < arguments_copy.size(); ++i) {
             auto arg_type = check_expr(arguments_copy[i].value, sig.params[i]);
@@ -2802,15 +3379,16 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
             }
         }
     }
-    return get_node<ast::Call_expr>(ctx.tree, expr_id).type = sig.ret;
+    return get_node<ast::Call_expr>(ctx.tree, expr_id).type = effective_return_type(sig, ctx.tt);
 }
 
 types::Type_id Semantic_checker::check_cast_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
     auto child_id = get_node<ast::Cast_expr>(ctx.tree, expr_id).expression;
-    auto target_type = get_node<ast::Cast_expr>(ctx.tree, expr_id).target_type;
+    auto target_type = resolve_type_recursively(get_node<ast::Cast_expr>(ctx.tree, expr_id).target_type, get_node<ast::Cast_expr>(ctx.tree, expr_id).loc);
     auto loc = get_node<ast::Cast_expr>(ctx.tree, expr_id).loc;
+    get_node<ast::Cast_expr>(ctx.tree, expr_id).target_type = target_type;
 
     auto original_type = check_expr(child_id);
 
@@ -2918,33 +3496,59 @@ types::Type_id Semantic_checker::check_cast_expr(ast::Expr_id expr_id, std::opti
 types::Type_id Semantic_checker::check_closure_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
-    auto return_type = get_node<ast::Closure_expr>(ctx.tree, expr_id).return_type;
-    auto loc = get_node<ast::Closure_expr>(ctx.tree, expr_id).loc;
-    auto parameters = get_node<ast::Closure_expr>(ctx.tree, expr_id).parameters;
-    auto body = get_node<ast::Closure_expr>(ctx.tree, expr_id).body;
-
-    auto saved_ret = current_return_type;
-    current_return_type = return_type;
-
-    variables.begin_scope();
-    for (auto const &p : parameters) {
-        declare(p.name, p.type, !p.is_mut, loc);
-    }
-    if (!body.is_null()) {
-        check_stmt(body);
-    }
-    variables.end_scope();
-
-    current_return_type = saved_ret;
+    auto &closure = get_node<ast::Closure_expr>(ctx.tree, expr_id);
 
     std::vector<types::Type_id> param_types;
-    for (auto const &p : parameters) {
-        param_types.push_back(p.type);
+    std::vector<types::Type_id> return_types;
+
+    for (auto &param : closure.parameters) {
+        param.type = resolve_type_recursively(param.type, param.loc);
+        param_types.push_back(param.type);
+    }
+    for (auto &ret : closure.returns) {
+        ret.type = resolve_type_recursively(ret.type, ret.loc);
+        return_types.push_back(ret.type);
+    }
+    return_types = normalize_return_types(return_types, ctx.tt);
+
+    closure.type = ctx.tt.function(param_types, return_types);
+
+    auto saved_return_types = current_return_types;
+    auto saved_return_params = current_return_params;
+    current_return_types = return_types;
+    current_return_params = &closure.returns;
+
+    variables.begin_scope();
+
+    for (const auto &p : closure.parameters) {
+        declare(p.name, p.type, p.is_mut, p.loc);
     }
 
-    auto ret = ctx.tt.function(param_types, return_type);
-    get_node<ast::Closure_expr>(ctx.tree, expr_id).type = ret;
-    return ret;
+    for (const auto &ret : closure.returns) {
+        if (!ret.name.empty()) {
+            declare(ret.name, ret.type, true, ret.loc);
+
+            if (!ret.default_value.is_null()) {
+                auto def_type = check_expr(ret.default_value, ret.type);
+                if (!is_compatible(ret.type, def_type)) {
+                    auto diagnostic =
+                        err::msg::error(diagnostics_.phase(), ret.loc.l, ret.loc.c, ret.loc.file, "Default return value type mismatch.");
+                    diagnostic.expected_got(ctx.tt.to_string(ret.type), ctx.tt.to_string(def_type));
+                    diagnostics_.push(std::move(diagnostic));
+                }
+            }
+        }
+    }
+
+    if (!closure.body.is_null()) {
+        check_stmt(closure.body);
+    }
+
+    variables.end_scope();
+    current_return_types = saved_return_types;
+    current_return_params = saved_return_params;
+
+    return closure.type;
 }
 
 types::Type_id Semantic_checker::check_field_access_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
@@ -2981,7 +3585,7 @@ types::Type_id Semantic_checker::check_field_access_expr(ast::Expr_id expr_id, s
         }
         if (contains_key(model_t.methods, field_name)) {
             const auto &method = find_by_key(model_t.methods, field_name)->second;
-            auto ret = ctx.tt.function(method.params, method.ret);
+            auto ret = ctx.tt.function(method.params, method.returns);
             get_node<ast::Field_access_expr>(ctx.tree, expr_id).type = ret;
             return ret;
         }
@@ -3071,7 +3675,7 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
                     for (const auto &param : decl->parameters) {
                         fparams.push_back(param.type);
                     }
-                    auto ret = ctx.tt.function(fparams, decl->return_type);
+                    auto ret = ctx.tt.function(fparams, declared_return_types(decl->returns, ctx.tt));
                     get_node<ast::Static_path_expr>(ctx.tree, expr_id).type = ret;
                     return ret;
                 }
@@ -3084,7 +3688,7 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
                     for (const auto &param : decl->parameters) {
                         fparams.push_back(param.type);
                     }
-                    auto ret = ctx.tt.function(fparams, decl->return_type);
+                    auto ret = ctx.tt.function(fparams, declared_return_types(decl->returns, ctx.tt));
                     get_node<ast::Static_path_expr>(ctx.tree, expr_id).type = ret;
                     return ret;
                 }
@@ -3092,7 +3696,7 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
         }
         if (contains_key(model_t.static_methods, member_lexeme)) {
             auto sig = find_by_key(model_t.static_methods, member_lexeme)->second;
-            auto ret = ctx.tt.function(sig.params, sig.ret);
+            auto ret = ctx.tt.function(sig.params, sig.returns);
             get_node<ast::Static_path_expr>(ctx.tree, expr_id).type = ret;
             return ret;
         }
@@ -3101,7 +3705,7 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
             std::vector<types::Type_id> fparams;
             fparams.push_back(base_type);
             fparams.insert(fparams.end(), sig.params.begin(), sig.params.end());
-            auto ret = ctx.tt.function(fparams, sig.ret);
+            auto ret = ctx.tt.function(fparams, sig.returns);
             get_node<ast::Static_path_expr>(ctx.tree, expr_id).type = ret;
             return ret;
         }
@@ -3398,7 +4002,7 @@ types::Type_id Semantic_checker::check_method_call_expr(ast::Expr_id expr_id, st
                 if (!c_type.params.empty()) {
                     type_error(ast::get_loc(ctx.tree.get(arguments_copy[0].value).node), "Closure passed to 'get' must take no arguments.");
                 }
-                if (!is_compatible(base_type, c_type.ret)) {
+                if (!is_compatible(base_type, effective_return_type(c_type, ctx.tt))) {
                     type_error(ast::get_loc(ctx.tree.get(arguments_copy[0].value).node), "Closure return type mismatch.");
                 }
                 get_node<ast::Method_call_expr>(ctx.tree, expr_id).arguments = std::move(arguments_copy);
@@ -3449,7 +4053,7 @@ types::Type_id Semantic_checker::check_method_call_expr(ast::Expr_id expr_id, st
         if (!c_type.params.empty()) {
             type_error(ast::get_loc(ctx.tree.get(arguments_copy[0].value).node), "Closure passed to 'or_else' must take no arguments.");
         }
-        if (!is_compatible(base_type, c_type.ret)) {
+        if (!is_compatible(base_type, effective_return_type(c_type, ctx.tt))) {
             type_error(ast::get_loc(ctx.tree.get(arguments_copy[0].value).node), "Closure return type mismatch.");
         }
         get_node<ast::Method_call_expr>(ctx.tree, expr_id).arguments = std::move(arguments_copy);
@@ -3500,7 +4104,7 @@ types::Type_id Semantic_checker::check_method_call_expr(ast::Expr_id expr_id, st
                 type_error(ast::get_loc(ctx.tree.get(arguments_copy[0].value).node), "Closure parameter mismatch.");
             }
             get_node<ast::Method_call_expr>(ctx.tree, expr_id).arguments = std::move(arguments_copy);
-            auto ret = ctx.tt.array(c_type.ret);
+            auto ret = ctx.tt.array(effective_return_type(c_type, ctx.tt));
             return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type = ret;
         }
         if (ctx.tt.is_optional(obj_type)) {
@@ -3509,7 +4113,7 @@ types::Type_id Semantic_checker::check_method_call_expr(ast::Expr_id expr_id, st
                 type_error(ast::get_loc(ctx.tree.get(arguments_copy[0].value).node), "Closure parameter mismatch.");
             }
             get_node<ast::Method_call_expr>(ctx.tree, expr_id).arguments = std::move(arguments_copy);
-            auto ret = ctx.tt.optional(c_type.ret);
+            auto ret = ctx.tt.optional(effective_return_type(c_type, ctx.tt));
             return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type = ret;
         }
         type_error(loc, ".map() can only be called on arrays and optionals.");
@@ -3541,10 +4145,12 @@ types::Type_id Semantic_checker::check_method_call_expr(ast::Expr_id expr_id, st
             get_node<ast::Method_call_expr>(ctx.tree, expr_id).arguments = std::move(bound.ordered_arguments);
 
             if (!bound.ok) {
-                return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type = decl->return_type;
+                return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type
+                    = effective_return_type(declared_return_types(decl->returns, ctx.tt), ctx.tt);
             }
 
-            return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type = decl->return_type;
+            return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type
+                = effective_return_type(declared_return_types(decl->returns, ctx.tt), ctx.tt);
         } else {
             auto &model_t = std::get<types::Model_type>(ctx.tt.get(obj_type).data);
             for (size_t i = 0; i < model_t.fields.size(); ++i) {
@@ -3566,7 +4172,7 @@ types::Type_id Semantic_checker::check_method_call_expr(ast::Expr_id expr_id, st
                             }
                         }
                         get_node<ast::Method_call_expr>(ctx.tree, expr_id).arguments = std::move(arguments_copy);
-                        return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type = func_type.ret;
+                        return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type = effective_return_type(func_type, ctx.tt);
                     }
                 }
             }
