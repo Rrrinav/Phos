@@ -819,6 +819,7 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
 
 err::Engine Semantic_checker::check_workspace()
 {
+    label_scopes_.push_back({});
     for (const auto &[name, sigs] : ctx.type_env.native_signatures) {
         if (!ctx.registry.lookup_global(name)) {
             Symbol sym{
@@ -852,6 +853,15 @@ err::Engine Semantic_checker::check_workspace()
         }
         checked_modules.insert(mod_id);
         check_module(mod_id);
+    }
+
+    auto global_labels = label_scopes_.back();
+    label_scopes_.pop_back();
+
+    for (const auto &[goto_target, loc] : global_labels.gotos) {
+        if (!global_labels.defined_labels.contains(goto_target)) {
+            type_error(loc, std::format("Unresolved goto label '@{}'.", goto_target));
+        }
     }
 
     return diagnostics_;
@@ -1801,6 +1811,16 @@ void Semantic_checker::check_stmt(ast::Stmt_id stmt_id)
                 check_print_stmt(stmt_id);
             } else if constexpr (std::is_same_v<T, ast::Return_stmt>) {
                 check_return_stmt(stmt_id);
+            } else if constexpr (std::is_same_v<T, ast::Break_stmt>) {
+                check_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Continue_stmt>) {
+                check_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Goto_stmt>) {
+                check_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Label_stmt>) {
+                check_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Defer_stmt>) {
+                check_stmt_node(s);
             } else if constexpr (std::is_same_v<T, ast::While_stmt>) {
                 check_while_stmt(stmt_id);
             } else if constexpr (std::is_same_v<T, ast::For_stmt>) {
@@ -1920,6 +1940,7 @@ void Semantic_checker::check_function_stmt(ast::Stmt_id stmt_id)
 
     std::vector<types::Type_id> param_types;
     std::vector<types::Type_id> return_types;
+    label_scopes_.push_back({});
 
     for (auto &param : fn_stmt.parameters) {
         param.type = resolve_type_recursively(param.type, param.loc);
@@ -1966,6 +1987,14 @@ void Semantic_checker::check_function_stmt(ast::Stmt_id stmt_id)
 
     if (!fn_stmt.body.is_null()) {
         check_stmt(fn_stmt.body);
+    }
+
+    auto current_labels = label_scopes_.back();
+    label_scopes_.pop_back();
+    for (const auto &[goto_target, loc] : current_labels.gotos) {
+        if (!current_labels.defined_labels.contains(goto_target)) {
+            type_error(loc, std::format("Unresolved goto label '@{}'.", goto_target));
+        }
     }
 
     variables.end_scope();
@@ -2366,10 +2395,74 @@ void Semantic_checker::check_return_stmt(ast::Stmt_id stmt_id)
     }
 }
 
+void Semantic_checker::check_stmt_node(const ast::Break_stmt &stmt)
+{
+    if (loop_label_stack_.empty()) {
+        type_error(stmt.loc, "Cannot use 'break' outside of a loop.");
+        return;
+    }
+
+    if (!stmt.target_label.empty()) {
+        bool found = false;
+        for (const auto &lbl : loop_label_stack_) {
+            if (lbl == stmt.target_label) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            type_error(stmt.loc, std::format("Cannot break to unknown loop label '@{}'.", stmt.target_label));
+        }
+    }
+}
+
+void Semantic_checker::check_stmt_node(const ast::Continue_stmt &stmt)
+{
+    if (loop_label_stack_.empty()) {
+        type_error(stmt.loc, "Cannot use 'continue' outside of a loop.");
+        return;
+    }
+
+    if (!stmt.target_label.empty()) {
+        bool found = false;
+        for (const auto &lbl : loop_label_stack_) {
+            if (lbl == stmt.target_label) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            type_error(stmt.loc, std::format("Cannot continue to unknown loop label '@{}'.", stmt.target_label));
+        }
+    }
+}
+
+void Semantic_checker::check_stmt_node(const ast::Defer_stmt &stmt)
+{
+    // Simply type-check the deferred statement exactly as if it were executed here.
+    check_stmt(stmt.call);
+}
+
+void Semantic_checker::check_stmt_node(const ast::Label_stmt &stmt)
+{
+    if (!label_scopes_.empty()) {
+        label_scopes_.back().defined_labels.insert(stmt.name);
+    }
+}
+
+void Semantic_checker::check_stmt_node(const ast::Goto_stmt &stmt)
+{
+    if (!label_scopes_.empty()) {
+        label_scopes_.back().gotos.push_back({stmt.target_label, stmt.loc});
+    }
+}
+
 void Semantic_checker::check_while_stmt(ast::Stmt_id stmt_id)
 {
     auto condition = get_stmt<ast::While_stmt>(ctx.tree, stmt_id).condition;
     auto body = get_stmt<ast::While_stmt>(ctx.tree, stmt_id).body;
+
+    loop_label_stack_.push_back(get_stmt<ast::While_stmt>(ctx.tree, stmt_id).label);
 
     if (!condition.is_null()) {
         auto type = check_expr(condition);
@@ -2380,6 +2473,7 @@ void Semantic_checker::check_while_stmt(ast::Stmt_id stmt_id)
     if (!body.is_null()) {
         check_stmt(body);
     }
+    loop_label_stack_.pop_back();
 }
 
 void Semantic_checker::check_for_stmt(ast::Stmt_id stmt_id)
@@ -2388,6 +2482,8 @@ void Semantic_checker::check_for_stmt(ast::Stmt_id stmt_id)
     auto condition = get_stmt<ast::For_stmt>(ctx.tree, stmt_id).condition;
     auto increment = get_stmt<ast::For_stmt>(ctx.tree, stmt_id).increment;
     auto body = get_stmt<ast::For_stmt>(ctx.tree, stmt_id).body;
+
+    loop_label_stack_.push_back(get_stmt<ast::For_stmt>(ctx.tree, stmt_id).label);
 
     variables.begin_scope();
     if (!initializer.is_null()) {
@@ -2405,6 +2501,8 @@ void Semantic_checker::check_for_stmt(ast::Stmt_id stmt_id)
     if (!body.is_null()) {
         check_stmt(body);
     }
+
+    loop_label_stack_.pop_back();
     variables.end_scope();
 }
 
@@ -2414,6 +2512,9 @@ void Semantic_checker::check_for_in_stmt(ast::Stmt_id stmt_id)
     auto loc = get_stmt<ast::For_in_stmt>(ctx.tree, stmt_id).loc;
     auto var_name = get_stmt<ast::For_in_stmt>(ctx.tree, stmt_id).var_name;
     auto body = get_stmt<ast::For_in_stmt>(ctx.tree, stmt_id).body;
+
+    // FIX: Use ast::For_in_stmt here!
+    loop_label_stack_.push_back(get_stmt<ast::For_in_stmt>(ctx.tree, stmt_id).label);
 
     auto iterable_type = check_expr(iterable);
     if (ctx.tt.is_unknown(iterable_type) || ctx.tt.is_any(iterable_type)) {
@@ -2432,6 +2533,8 @@ void Semantic_checker::check_for_in_stmt(ast::Stmt_id stmt_id)
     if (!body.is_null()) {
         check_stmt(body);
     }
+
+    loop_label_stack_.pop_back();
     variables.end_scope();
 }
 

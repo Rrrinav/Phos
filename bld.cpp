@@ -416,6 +416,7 @@ int main(int argc, char *argv[])
 
     if (cfg["meta"]) {
         build_meta();
+        return 0;
     }
 
     if (cfg["clean"]) {

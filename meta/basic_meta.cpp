@@ -50,7 +50,7 @@ constexpr auto gen_instruction_cpp(std::filesystem::path out_file)
     std::println(outfile);
     std::print(outfile, "{}", string_to_opcode_fn.str());
 
-    std::println("[PHOS: META]: Building '{}' file done.", out_file.string());
+    std::println("[PHOS: META]: Building '{}' file", out_file.string());
 }
 
 int main()

@@ -29,10 +29,7 @@ static std::string escape(std::string_view input)
 
 namespace phos::ast {
 
-// =============================================================================
 // Tree_printer Implementation
-// =============================================================================
-
 Tree_printer::Tree_printer(const Ast_tree &tree, const types::Type_table &tt, bool unicode) : tree(tree), tt(tt), use_unicode(unicode)
 {}
 
@@ -103,7 +100,6 @@ void Tree_printer::visit(Stmt_id stmt)
 }
 
 // ---------- Tree Expressions ----------
-
 void Tree_printer::print_node(const Literal_expr &node)
 {
     indent();
@@ -771,10 +767,41 @@ void Tree_printer::print_node(const If_stmt &node)
     }
 }
 
+void Tree_printer::print_node(const Break_stmt &node)
+{
+    indent();
+    print_str("Break" + (node.target_label.empty() ? "" : " @" + node.target_label));
+}
+
+void Tree_printer::print_node(const Continue_stmt &node)
+{
+    indent();
+    print_str("Continue" + (node.target_label.empty() ? "" : " @" + node.target_label));
+}
+
+void Tree_printer::print_node(const Goto_stmt &node)
+{
+    indent();
+    print_str("Goto @" + node.target_label);
+}
+
+void Tree_printer::print_node(const Label_stmt &node)
+{
+    indent();
+    print_str("Label: @" + node.name);
+}
+
+void Tree_printer::print_node(const Defer_stmt &node)
+{
+    indent();
+    print_str("Defer");
+    with_child(false, [&] { visit(node.call); });
+}
+
 void Tree_printer::print_node(const While_stmt &node)
 {
     indent();
-    print_str("While");
+    print_str(std::string("While") + (node.label.empty() ? "" : " [@" + node.label + "]"));
     with_child(true, [&] {
         indent();
         print_str("Cond");
@@ -790,7 +817,7 @@ void Tree_printer::print_node(const While_stmt &node)
 void Tree_printer::print_node(const For_stmt &node)
 {
     indent();
-    print_str("For");
+    print_str(std::string("For") + (node.label.empty() ? "" : " [@" + node.label + "]"));
     with_child(true, [&] {
         indent();
         print_str("Initializer");
@@ -816,7 +843,7 @@ void Tree_printer::print_node(const For_stmt &node)
 void Tree_printer::print_node(const For_in_stmt &node)
 {
     indent();
-    print_str("For-In: " + node.var_name);
+    print_str("For-In: " + node.var_name + (node.label.empty() ? "" : " [@" + node.label + "]"));
     with_child(true, [&] {
         indent();
         print_str("Iterable");
@@ -1205,20 +1232,48 @@ std::string Sexpr_printer::print_node(const If_stmt &node)
     return res + ")";
 }
 
+std::string Sexpr_printer::print_node(const Break_stmt &node)
+{
+    return "(break" + std::string(node.target_label.empty() ? "" : " @" + node.target_label) + ")";
+}
+
+std::string Sexpr_printer::print_node(const Continue_stmt &node)
+{
+    return "(continue" + std::string(node.target_label.empty() ? "" : " @" + node.target_label) + ")";
+}
+
+std::string Sexpr_printer::print_node(const Goto_stmt &node)
+{
+    return "(goto @" + node.target_label + ")";
+}
+
+std::string Sexpr_printer::print_node(const Label_stmt &node)
+{
+    return "(label @" + node.name + ")";
+}
+
+std::string Sexpr_printer::print_node(const Defer_stmt &node)
+{
+    return "(defer " + print_stmt(node.call) + ")";
+}
+
 std::string Sexpr_printer::print_node(const While_stmt &node)
 {
-    return "(while " + print_expr(node.condition) + " " + print_stmt(node.body) + ")";
+    std::string lbl = node.label.empty() ? "" : " @" + node.label;
+    return "(while" + lbl + " " + print_expr(node.condition) + " " + print_stmt(node.body) + ")";
 }
 
 std::string Sexpr_printer::print_node(const For_stmt &node)
 {
-    return "(for " + print_stmt(node.initializer) + " " + print_expr(node.condition) + " " + print_expr(node.increment) + " "
+    std::string lbl = node.label.empty() ? "" : " @" + node.label;
+    return "(for" + lbl + " " + print_stmt(node.initializer) + " " + print_expr(node.condition) + " " + print_expr(node.increment) + " "
         + print_stmt(node.body) + ")";
 }
 
 std::string Sexpr_printer::print_node(const For_in_stmt &node)
 {
-    return "(for_in " + node.var_name + " " + print_expr(node.iterable) + " " + print_stmt(node.body) + ")";
+    std::string lbl = node.label.empty() ? "" : " @" + node.label;
+    return "(for_in" + lbl + " " + node.var_name + " " + print_expr(node.iterable) + " " + print_stmt(node.body) + ")";
 }
 
 std::string Sexpr_printer::print_node(const Match_stmt &node)

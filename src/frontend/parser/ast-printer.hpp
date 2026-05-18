@@ -65,6 +65,11 @@ private:
     void print_node(const Expr_stmt &node);
     void print_node(const Block_stmt &node);
     void print_node(const If_stmt &node);
+    void print_node(const Break_stmt &node);
+    void print_node(const Continue_stmt &node);
+    void print_node(const Goto_stmt &node);
+    void print_node(const Label_stmt &node);
+    void print_node(const Defer_stmt &node);
     void print_node(const While_stmt &node);
     void print_node(const For_stmt &node);
     void print_node(const For_in_stmt &node);
@@ -138,6 +143,11 @@ public:
     std::string print_node(const Expr_stmt &node);
     std::string print_node(const Block_stmt &node);
     std::string print_node(const If_stmt &node);
+    std::string print_node(const Break_stmt &node);
+    std::string print_node(const Continue_stmt &node);
+    std::string print_node(const Goto_stmt &node);
+    std::string print_node(const Label_stmt &node);
+    std::string print_node(const Defer_stmt &node);
     std::string print_node(const While_stmt &node);
     std::string print_node(const For_stmt &node);
     std::string print_node(const For_in_stmt &node);

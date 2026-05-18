@@ -984,9 +984,9 @@ Result<ast::Stmt_id> Parser::import_statement()
 }
 
 // Statements
-
 // statement -> print_stmt | block | if_stmt | while_stmt | for_stmt
-//            | match_stmt | return_stmt | expr_stmt
+//            | match_stmt | return_stmt | expr_stmt | break_stmt
+//            | continue_stmt | goto_stmt | defer_stmt | label_stmt
 Result<ast::Stmt_id> Parser::statement()
 {
     skip_newlines();
@@ -994,6 +994,68 @@ Result<ast::Stmt_id> Parser::statement()
         return std::unexpected(create_error(peek(), "Unexpected end of file"));
     }
 
+    // 1. Handle Labels and Loop Prefixes
+    if (match({lex::TokenType::At})) {
+        ast::Source_location loc{previous().line, previous().column, source_name_};
+        DECL_OR_RETURN(name, consume(lex::TokenType::Identifier, "Expect label or attribute name after '@'."));
+
+        if (match({lex::TokenType::Colon})) {
+            // It is a Label! Check if a loop follows it immediately
+            if (match({lex::TokenType::While})) {
+                return while_statement(name.lexeme);
+            }
+            if (match({lex::TokenType::For})) {
+                if (check(lex::TokenType::LeftParen)) {
+                    return for_statement(name.lexeme);
+                }
+                return for_in_statement(name.lexeme);
+            }
+
+            // Otherwise, it's a standalone label (for goto)
+            return ctx_.tree.add_stmt(ast::Stmt{ast::Label_stmt{.name = name.lexeme, .loc = loc}});
+        } else {
+            return std::unexpected(create_error(previous(), "Attributes not yet implemented."));
+        }
+    }
+
+    // 2. Control Flow: Break, Continue, Goto, Defer
+    if (match({lex::TokenType::Break})) {
+        ast::Source_location loc{previous().line, previous().column, source_name_};
+        std::string target = "";
+        if (match({lex::TokenType::At})) {
+            DECL_OR_RETURN(label_name, consume(lex::TokenType::Identifier, "Expect label name after '@'."));
+            target = label_name.lexeme;
+        }
+        TRY_IGNORE(consume(lex::TokenType::Semicolon, "Expect ';' after break."));
+        return ctx_.tree.add_stmt(ast::Stmt{ast::Break_stmt{.target_label = target, .loc = loc}});
+    }
+
+    if (match({lex::TokenType::Continue})) {
+        ast::Source_location loc{previous().line, previous().column, source_name_};
+        std::string target = "";
+        if (match({lex::TokenType::At})) {
+            DECL_OR_RETURN(label_name, consume(lex::TokenType::Identifier, "Expect label name after '@'."));
+            target = label_name.lexeme;
+        }
+        TRY_IGNORE(consume(lex::TokenType::Semicolon, "Expect ';' after continue."));
+        return ctx_.tree.add_stmt(ast::Stmt{ast::Continue_stmt{.target_label = target, .loc = loc}});
+    }
+
+    if (match({lex::TokenType::Goto})) {
+        ast::Source_location loc{previous().line, previous().column, source_name_};
+        TRY_IGNORE(consume(lex::TokenType::At, "Expect '@' before goto label."));
+        DECL_OR_RETURN(label_name, consume(lex::TokenType::Identifier, "Expect label name."));
+        TRY_IGNORE(consume(lex::TokenType::Semicolon, "Expect ';' after goto statement."));
+        return ctx_.tree.add_stmt(ast::Stmt{ast::Goto_stmt{.target_label = label_name.lexeme, .loc = loc}});
+    }
+
+    if (match({lex::TokenType::Defer})) {
+        ast::Source_location loc{previous().line, previous().column, source_name_};
+        ASSIGN_OR_RETURN(auto deferred_stmt, statement());
+        return ctx_.tree.add_stmt(ast::Stmt{ast::Defer_stmt{.call = deferred_stmt, .loc = loc}});
+    }
+
+    // 3. Existing Statements
     if (match({lex::TokenType::Print})) {
         return print_statement(ast::Print_stream::STDOUT);
     }
@@ -1007,7 +1069,7 @@ Result<ast::Stmt_id> Parser::statement()
         return if_statement();
     }
     if (match({lex::TokenType::While})) {
-        return while_statement();
+        return while_statement("");
     }
     if (match({lex::TokenType::Match})) {
         return match_statement();
@@ -1017,12 +1079,10 @@ Result<ast::Stmt_id> Parser::statement()
     }
 
     if (match({lex::TokenType::For})) {
-        // "for" "(" ...  ->  C-style for loop
-        // "for" IDENT "in" ...  ->  for-in loop
         if (check(lex::TokenType::LeftParen)) {
-            return for_statement();
+            return for_statement("");
         }
-        return for_in_statement();
+        return for_in_statement("");
     }
 
     return expression_statement();
@@ -1160,22 +1220,24 @@ Result<ast::Stmt_id> Parser::if_statement()
 }
 
 // while_stmt -> "while" expr "{" declaration* "}"
-Result<ast::Stmt_id> Parser::while_statement()
+Result<ast::Stmt_id> Parser::while_statement(const std::string &label)
 {
     DECL_OR_RETURN(condition_result, expression());
 
     TRY_IGNORE(consume(lex::TokenType::LeftBrace, "Expect '{' after while condition"));
     DECL_OR_RETURN(body_result, block_statement());
 
-    return ctx_.tree.add_stmt(ast::Stmt{ast::While_stmt{
-        .condition = condition_result,
-        .body = body_result,
-        .loc = {previous().line, previous().column},
-    }});
+    return ctx_.tree.add_stmt(
+        ast::Stmt{ast::While_stmt{
+            .label = label,
+            .condition = condition_result,
+            .body = body_result,
+            .loc = {previous().line, previous().column},
+        }});
 }
 
 // for_stmt -> "for" "(" (var_decl | const_decl | expr_stmt | ";") expr? ";" expr? ")" block
-Result<ast::Stmt_id> Parser::for_statement()
+Result<ast::Stmt_id> Parser::for_statement(const std::string &label)
 {
     TRY_IGNORE(consume(lex::TokenType::LeftParen, "Expect '(' after 'for'"));
 
@@ -1184,7 +1246,6 @@ Result<ast::Stmt_id> Parser::for_statement()
     ast::Expr_id increment = ast::Expr_id::null();
 
     if (match({lex::TokenType::Semicolon})) {
-        // empty initializer, do nothing
     } else if (match({lex::TokenType::Let})) {
         initializer = var_declaration(ast::Var_kind::Let).value_or(ast::Stmt_id::null());
     } else if (match({lex::TokenType::Const})) {
@@ -1206,11 +1267,18 @@ Result<ast::Stmt_id> Parser::for_statement()
     TRY_IGNORE(consume(lex::TokenType::LeftBrace, "Expect '{' after for clauses"));
     DECL_OR_RETURN(body, block_statement());
 
-    return ctx_.tree.add_stmt(ast::Stmt{ast::For_stmt{initializer, condition, increment, body, {previous().line, previous().column}}});
+    return ctx_.tree.add_stmt(
+        ast::Stmt{ast::For_stmt{
+            .label = label,
+            .initializer = initializer,
+            .condition = condition,
+            .increment = increment,
+            .body = body,
+            .loc = {previous().line, previous().column}}});
 }
 
 // for_in_stmt
-Result<ast::Stmt_id> Parser::for_in_statement()
+Result<ast::Stmt_id> Parser::for_in_statement(const std::string &label)
 {
     DECL_OR_RETURN(var_name, consume(lex::TokenType::Identifier, "Expect loop variable name after 'for'"));
     TRY_IGNORE(consume(lex::TokenType::In, "Expect 'in' after loop variable"));
@@ -1221,12 +1289,15 @@ Result<ast::Stmt_id> Parser::for_in_statement()
     TRY_IGNORE(consume(lex::TokenType::LeftBrace, "Expect '{' after for-in iterable"));
     DECL_OR_RETURN(body, block_statement());
 
-    return ctx_.tree.add_stmt(ast::Stmt{ast::For_in_stmt{
-        .var_name = var_name.lexeme,
-        .iterable = iterable,
-        .body = body,
-        .loc = {var_name.line, var_name.column},
-    }});
+    return ctx_.tree.add_stmt(
+        ast::Stmt{ast::For_in_stmt{
+            .label = label,
+            .var_name = var_name.lexeme,
+            .iterable = iterable,
+            .body = body,
+            .loc = {var_name.line, var_name.column},
+        }}
+    );
 }
 
 // match_stmt -> "match" expr "{" match_arm* "}"

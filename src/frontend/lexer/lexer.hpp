@@ -218,6 +218,8 @@ private:
         case '"':
             return scan_string(start_col);
 
+        case '@':
+            return make(TokenType::At, "@", start_col);
         //  comments and division
         case '/':
             if (match('/')) {

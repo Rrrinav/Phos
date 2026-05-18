@@ -25,6 +25,14 @@ struct Local
     uint8_t reg;
 };
 
+// Tracks active loops so break and continue know where to jump
+struct Loop_info
+{
+    std::string label;
+    std::vector<size_t> break_jumps;
+    std::vector<size_t> continue_jumps;
+};
+
 // The isolated universe for a single function being compiled
 struct Function_context
 {
@@ -36,6 +44,11 @@ struct Function_context
 
     // The Shopping List: Variables this function steals from parents
     std::vector<Compiler_upvalue> upvalues;
+
+    // Control Flow Trackers
+    std::vector<Loop_info> loops;
+    std::unordered_map<std::string, uint32_t> labels;
+    std::vector<std::pair<std::string, size_t>> unresolved_gotos;
 };
 
 class Compiler
@@ -46,7 +59,7 @@ class Compiler
     Function_context *current_ctx_{nullptr};
     Function_context *root_ctx_{nullptr};
 
-    std::unordered_map<Symbol_id, Closure_data*> function_locations_;
+    std::unordered_map<Symbol_id, Closure_data *> function_locations_;
     std::string current_module_ns_;
     std::string current_function_name_ = "<top_level>";
     const std::vector<ast::Function_param> *current_function_returns_{nullptr};
@@ -105,6 +118,12 @@ public:
     void compile_stmt_node(const ast::Union_stmt &stmt);
     void compile_stmt_node(const ast::Enum_stmt &stmt);
     void compile_stmt_node(const ast::Match_stmt &stmt);
+    void compile_stmt_node(const ast::Break_stmt &stmt);
+    void compile_stmt_node(const ast::Continue_stmt &stmt);
+    void compile_stmt_node(const ast::Goto_stmt &stmt);
+    void compile_stmt_node(const ast::Label_stmt &stmt);
+    void compile_stmt_node(const ast::Defer_stmt &stmt);
+    void compile_stmt_node(const ast::For_in_stmt &stmt);
 
     // Expression compilation visitors. Returns the register holding the result.
     uint8_t compile_expr(ast::Expr_id expr_id);
@@ -127,7 +146,6 @@ public:
     uint8_t compile_expr_node(const ast::Enum_member_expr &expr);
     uint8_t compile_expr_node(const ast::Static_path_expr &expr);
     uint8_t compile_expr_node(const ast::Range_expr &expr);
-    void compile_stmt_node(const ast::For_in_stmt &stmt);
 
 public:
     // Tracks lexical variables in the current block

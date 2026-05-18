@@ -243,6 +243,16 @@ Closure_data Compiler::compile_workspace([[maybe_unused]] Module_id main_mod)
 
     emit(vm::Instruction::make_rrr(vm::Opcode::Return, 0, 0, 0));
 
+    // Patch any top-level unresolved gotos (though unlikely outside a function)
+    for (const auto &[label_name, jump_idx] : current_ctx_->unresolved_gotos) {
+        if (current_ctx_->labels.contains(label_name)) {
+            current_ctx_->block.instructions[jump_idx].i.imm = current_ctx_->labels.at(label_name);
+        } else {
+            std::println(std::cerr, "Compiler Bug: Unresolved goto label '{}' bypassed semantic checker.", label_name);
+            std::exit(EXIT_FAILURE);
+        }
+    }
+
     Closure_data data{};
     auto &final_block = current_block();
 
@@ -516,11 +526,7 @@ void Compiler::compile_stmt(ast::Stmt_id stmt_id)
     }
 
     if (stmt_id.value >= ctx.tree.statements.size()) {
-        std::println(
-            std::cerr,
-            "Compiler Bug: Invalid stmt id '{}' (statement table size: {}).",
-            stmt_id.value,
-            ctx.tree.statements.size());
+        std::println(std::cerr, "Compiler Bug: Invalid stmt id '{}' (statement table size: {}).", stmt_id.value, ctx.tree.statements.size());
         std::exit(EXIT_FAILURE);
     }
 
@@ -557,6 +563,16 @@ void Compiler::compile_stmt(ast::Stmt_id stmt_id)
                 compile_stmt_node(s);
             } else if constexpr (std::is_same_v<T, ast::For_in_stmt>) {
                 compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Break_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Continue_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Goto_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Label_stmt>) {
+                compile_stmt_node(s);
+            } else if constexpr (std::is_same_v<T, ast::Defer_stmt>) {
+                compile_stmt_node(s);
             } else if constexpr (std::is_same_v<T, ast::Import_stmt>) {
                 // Imports are a compile-time construct. No bytecode to emit
             } else {
@@ -565,6 +581,62 @@ void Compiler::compile_stmt(ast::Stmt_id stmt_id)
             }
         },
         ctx.tree.get(stmt_id).node);
+}
+
+void Compiler::compile_stmt_node(const ast::Break_stmt &stmt)
+{
+    size_t jump_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+
+    if (stmt.target_label.empty()) {
+        current_ctx_->loops.back().break_jumps.push_back(jump_idx);
+    } else {
+        for (auto it = current_ctx_->loops.rbegin(); it != current_ctx_->loops.rend(); ++it) {
+            if (it->label == stmt.target_label) {
+                it->break_jumps.push_back(jump_idx);
+                return;
+            }
+        }
+    }
+}
+
+void Compiler::compile_stmt_node(const ast::Continue_stmt &stmt)
+{
+    size_t jump_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+
+    if (stmt.target_label.empty()) {
+        current_ctx_->loops.back().continue_jumps.push_back(jump_idx);
+    } else {
+        for (auto it = current_ctx_->loops.rbegin(); it != current_ctx_->loops.rend(); ++it) {
+            if (it->label == stmt.target_label) {
+                it->continue_jumps.push_back(jump_idx);
+                return;
+            }
+        }
+    }
+}
+
+void Compiler::compile_stmt_node(const ast::Label_stmt &stmt)
+{
+    current_ctx_->labels[stmt.name] = static_cast<uint32_t>(current_block().instructions.size());
+}
+
+void Compiler::compile_stmt_node(const ast::Goto_stmt &stmt)
+{
+    size_t jump_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+
+    auto it = current_ctx_->labels.find(stmt.target_label);
+    if (it != current_ctx_->labels.end()) {
+        current_block().instructions[jump_idx].i.imm = it->second;
+    } else {
+        current_ctx_->unresolved_gotos.push_back({stmt.target_label, jump_idx});
+    }
+}
+
+void Compiler::compile_stmt_node(const ast::Defer_stmt &stmt)
+{
+    (void)stmt; // Silence unused warning
+    std::println(std::cerr, "Compiler Error: 'defer' keyword requires VM Opcode support, which is not yet implemented.");
+    std::exit(EXIT_FAILURE);
 }
 
 void Compiler::compile_stmt_node(const ast::Print_stmt &stmt)
@@ -626,10 +698,8 @@ void Compiler::compile_stmt_node(const ast::Var_stmt &stmt)
             emit(vm::Instruction::make_ri(vm::Opcode::Store_global, target_reg, *sym.global_index));
         }
     } else if (stmt.kind == ast::Var_kind::Const) {
-        // Do nothing! Constants are baked into the bytecode when used,
-        // they don't take up VM memory or require runtime initialization.
+        // Do nothing! Constants are baked into the bytecode when used
     } else {
-        // Standard local variable ('let' / 'mut')
         current_ctx_->locals.push_back({stmt.name, target_reg});
     }
 }
@@ -715,18 +785,32 @@ void Compiler::compile_stmt_node(const ast::If_stmt &stmt)
 
 void Compiler::compile_stmt_node(const ast::While_stmt &stmt)
 {
+    current_ctx_->loops.push_back({stmt.label, {}, {}});
+
     std::uint32_t loop_start = static_cast<uint32_t>(current_block().instructions.size());
 
     std::uint8_t condition_reg = compile_expr(stmt.condition);
-
     size_t exit_jump_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, condition_reg, 0));
 
     compile_stmt(stmt.body);
 
+    // Patch continue jumps to jump to condition evaluation
+    uint32_t continue_target = loop_start;
+    for (size_t idx : current_ctx_->loops.back().continue_jumps) {
+        current_block().instructions[idx].i.imm = continue_target;
+    }
+
     emit(vm::Instruction::make_i(vm::Opcode::Jump, loop_start));
 
+    // Patch break jumps to jump past the loop
     uint16_t exit_target = static_cast<uint16_t>(current_block().instructions.size());
     current_block().instructions[exit_jump_idx].ri.imm = exit_target;
+
+    for (size_t idx : current_ctx_->loops.back().break_jumps) {
+        current_block().instructions[idx].i.imm = exit_target;
+    }
+
+    current_ctx_->loops.pop_back();
 }
 
 void Compiler::compile_stmt_node(const ast::For_stmt &stmt)
@@ -736,6 +820,8 @@ void Compiler::compile_stmt_node(const ast::For_stmt &stmt)
     if (!stmt.initializer.is_null()) {
         compile_stmt(stmt.initializer);
     }
+
+    current_ctx_->loops.push_back({stmt.label, {}, {}});
 
     uint32_t loop_start = static_cast<uint32_t>(current_block().instructions.size());
 
@@ -747,17 +833,181 @@ void Compiler::compile_stmt_node(const ast::For_stmt &stmt)
 
     compile_stmt(stmt.body);
 
+    // Patch continue jumps to jump to the increment expression
+    uint32_t continue_target = static_cast<uint32_t>(current_block().instructions.size());
+    for (size_t idx : current_ctx_->loops.back().continue_jumps) {
+        current_block().instructions[idx].i.imm = continue_target;
+    }
+
     if (!stmt.increment.is_null()) {
         compile_expr(stmt.increment);
     }
 
     emit(vm::Instruction::make_i(vm::Opcode::Jump, loop_start));
 
+    // Patch break jumps to jump past the loop
+    uint16_t exit_target = static_cast<uint16_t>(current_block().instructions.size());
     if (static_cast<int>(exit_jump_idx) != -1) {
-        uint16_t exit_target = static_cast<uint16_t>(current_block().instructions.size());
         current_block().instructions[exit_jump_idx].ri.imm = exit_target;
     }
 
+    for (size_t idx : current_ctx_->loops.back().break_jumps) {
+        current_block().instructions[idx].i.imm = exit_target;
+    }
+
+    current_ctx_->loops.pop_back();
+    current_ctx_->locals.resize(prev_locals_size);
+}
+
+void Compiler::compile_stmt_node(const ast::For_in_stmt &stmt)
+{
+    auto prev_locals_size = current_ctx_->locals.size();
+
+    uint8_t iterable_reg = compile_expr(stmt.iterable);
+    types::Type_id iterable_type = ast::get_type(ctx.tree.get(stmt.iterable).node);
+
+    bool is_custom_model = ctx.tt.is_model(iterable_type);
+
+    uint8_t loop_var_reg = allocate_register();
+    current_ctx_->locals.push_back({stmt.var_name, loop_var_reg});
+
+    current_ctx_->loops.push_back({stmt.label, {}, {}});
+
+    // Custom Model Iterators
+    if (is_custom_model) {
+        auto &model_name = std::get<types::Model_type>(ctx.tt.get(iterable_type).data).name;
+        auto model_data_ptr = ctx.type_env.get_model(model_name);
+
+        uint8_t iter_reg = allocate_register();
+        std::string iter_model_name = model_name;
+
+        if (model_data_ptr && model_data_ptr->methods.contains("iter")) {
+            if (auto sym_id = ctx.registry.lookup_global(model_name + "::iter")) {
+                uint8_t func_reg = allocate_register();
+                Closure_data *closure = function_locations_.at(*sym_id);
+                uint16_t const_idx = add_constant(Value::make_closure(closure));
+
+                emit(vm::Instruction::make_ri(vm::Opcode::Load_const, func_reg, const_idx));
+
+                uint8_t call_base = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base, func_reg, 0));
+
+                uint8_t arg_this = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_this, iterable_reg, 0));
+
+                emit(vm::Instruction::make_rrr(vm::Opcode::Call, iter_reg, call_base, 1));
+
+                auto iter_decl_id = model_data_ptr->methods.at("iter").declaration;
+                auto iter_decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(iter_decl_id).node);
+
+                auto iter_return_type = effective_return_type(iter_decl->returns, ctx.tt);
+                iter_model_name = std::get<types::Model_type>(ctx.tt.get(iter_return_type).data).name;
+            }
+        } else {
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, iter_reg, iterable_reg, 0));
+        }
+
+        uint8_t step_reg = allocate_register();
+        uint16_t one_idx = add_constant(Value(static_cast<int64_t>(1)));
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, step_reg, one_idx));
+
+        uint32_t loop_start = static_cast<uint32_t>(current_block().instructions.size());
+
+        auto next_decl_id = ctx.type_env.get_model(iter_model_name)->methods.at("next").declaration;
+        auto next_decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(next_decl_id).node);
+        uint8_t argc = static_cast<uint8_t>(next_decl->parameters.size());
+
+        uint8_t next_func = allocate_register();
+        if (auto sym_id = ctx.registry.lookup_global(iter_model_name + "::next")) {
+            Closure_data *closure = function_locations_.at(*sym_id);
+            uint16_t next_idx = add_constant(Value::make_closure(closure));
+            emit(vm::Instruction::make_ri(vm::Opcode::Load_const, next_func, next_idx));
+        }
+
+        uint8_t call_base = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base, next_func, 0));
+
+        uint8_t arg_this = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_this, iter_reg, 0));
+
+        if (argc == 2) {
+            uint8_t arg_step = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_step, step_reg, 0));
+        }
+
+        uint8_t opt_val_reg = allocate_register();
+
+        emit(vm::Instruction::make_rrr(vm::Opcode::Call, opt_val_reg, call_base, argc));
+
+        uint8_t end_reg = allocate_register();
+        emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, end_reg, opt_val_reg, 0));
+
+        size_t jump_body = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, end_reg, 0));
+        size_t jump_exit = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+
+        uint16_t body_target = static_cast<uint16_t>(current_block().instructions.size());
+        current_block().instructions[jump_body].ri.imm = body_target;
+
+        emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, loop_var_reg, opt_val_reg, 0));
+
+        compile_stmt(stmt.body);
+
+        uint32_t continue_target = loop_start;
+        for (size_t idx : current_ctx_->loops.back().continue_jumps) {
+            current_block().instructions[idx].i.imm = continue_target;
+        }
+
+        emit(vm::Instruction::make_i(vm::Opcode::Jump, loop_start));
+
+        uint32_t exit_target = static_cast<uint32_t>(current_block().instructions.size());
+        current_block().instructions[jump_exit].i.imm = exit_target;
+
+        for (size_t idx : current_ctx_->loops.back().break_jumps) {
+            current_block().instructions[idx].i.imm = exit_target;
+        }
+    }
+    // Builtin Iterators
+    else {
+        uint8_t iter_reg = allocate_register();
+
+        emit(vm::Instruction::make_rrr(vm::Opcode::Make_iter, iter_reg, iterable_reg, 0));
+
+        uint8_t opt_val_reg = allocate_register();
+
+        uint32_t loop_start = static_cast<uint32_t>(current_block().instructions.size());
+
+        emit(vm::Instruction::make_rrr(vm::Opcode::Iter_next, opt_val_reg, iter_reg, 0));
+
+        uint8_t end_reg = allocate_register();
+
+        emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, end_reg, opt_val_reg, 0));
+
+        size_t jump_body = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, end_reg, 0));
+        size_t jump_exit = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+
+        uint16_t body_target = static_cast<uint16_t>(current_block().instructions.size());
+        current_block().instructions[jump_body].ri.imm = body_target;
+
+        emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, loop_var_reg, opt_val_reg, 0));
+
+        compile_stmt(stmt.body);
+
+        uint32_t continue_target = loop_start;
+        for (size_t idx : current_ctx_->loops.back().continue_jumps) {
+            current_block().instructions[idx].i.imm = continue_target;
+        }
+
+        emit(vm::Instruction::make_i(vm::Opcode::Jump, loop_start));
+
+        uint32_t exit_target = static_cast<uint32_t>(current_block().instructions.size());
+        current_block().instructions[jump_exit].i.imm = exit_target;
+
+        for (size_t idx : current_ctx_->loops.back().break_jumps) {
+            current_block().instructions[idx].i.imm = exit_target;
+        }
+    }
+
+    current_ctx_->loops.pop_back();
     current_ctx_->locals.resize(prev_locals_size);
 }
 
@@ -846,6 +1096,16 @@ void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
         uint8_t packed_reg = allocate_register();
         emit(vm::Instruction::make_rrr(vm::Opcode::Make_model, packed_reg, base_reg, static_cast<uint8_t>(source_regs.size())));
         emit(vm::Instruction::make_rrr(vm::Opcode::Return, packed_reg, 0, 0));
+    }
+
+    // Patch unresolved gotos
+    for (const auto &[label_name, jump_idx] : current_ctx_->unresolved_gotos) {
+        if (current_ctx_->labels.contains(label_name)) {
+            current_ctx_->block.instructions[jump_idx].i.imm = current_ctx_->labels.at(label_name);
+        } else {
+            std::println(std::cerr, "Compiler Bug: Unresolved goto label '{}' bypassed semantic checker.", label_name);
+            std::exit(EXIT_FAILURE);
+        }
     }
 
     if (!stmt.resolved_symbol) {
@@ -938,10 +1198,8 @@ void Compiler::compile_stmt_node(const ast::Return_stmt &stmt)
     } else {
         if (current_function_returns_ != nullptr && !current_function_returns_->empty()) {
             auto normalized_returns = declared_return_types(*current_function_returns_, ctx.tt);
-            bool all_named = std::all_of(
-                current_function_returns_->begin(),
-                current_function_returns_->end(),
-                [](const auto &ret) { return !ret.name.empty(); });
+            bool all_named =
+                std::all_of(current_function_returns_->begin(), current_function_returns_->end(), [](const auto &ret) { return !ret.name.empty(); });
 
             if (all_named && normalized_returns.size() == 1) {
                 int local_reg = resolve_local(current_ctx_, current_function_returns_->front().name);
@@ -1553,6 +1811,16 @@ uint8_t Compiler::compile_expr_node(const ast::Closure_expr &expr)
         emit(vm::Instruction::make_rrr(vm::Opcode::Return, packed_reg, 0, 0));
     }
 
+    // Patch unresolved gotos
+    for (const auto &[label_name, jump_idx] : current_ctx_->unresolved_gotos) {
+        if (current_ctx_->labels.contains(label_name)) {
+            current_ctx_->block.instructions[jump_idx].i.imm = current_ctx_->labels.at(label_name);
+        } else {
+            std::println(std::cerr, "Compiler Bug: Unresolved goto label '{}' bypassed semantic checker.", label_name);
+            std::exit(EXIT_FAILURE);
+        }
+    }
+
     // 6. Construct Closure Object
     Closure_data *closure = ctx.arena.allocate<Closure_data>();
     new (closure) Closure_data();
@@ -1640,22 +1908,16 @@ uint8_t Compiler::compile_expr_node(const ast::Binary_expr &expr)
         if (ctx.tt.is_optional(left_type) && ctx.tt.is_nil(right_type)) {
             uint8_t optional_reg = compile_expr(expr.left);
             uint8_t dest_reg = allocate_register();
-            emit(vm::Instruction::make_rrr(
-                expr.op == lex::TokenType::Equal ? vm::Opcode::Test_nil : vm::Opcode::Test_val,
-                dest_reg,
-                optional_reg,
-                0));
+            emit(
+                vm::Instruction::make_rrr(expr.op == lex::TokenType::Equal ? vm::Opcode::Test_nil : vm::Opcode::Test_val, dest_reg, optional_reg, 0));
             return dest_reg;
         }
 
         if (ctx.tt.is_nil(left_type) && ctx.tt.is_optional(right_type)) {
             uint8_t optional_reg = compile_expr(expr.right);
             uint8_t dest_reg = allocate_register();
-            emit(vm::Instruction::make_rrr(
-                expr.op == lex::TokenType::Equal ? vm::Opcode::Test_nil : vm::Opcode::Test_val,
-                dest_reg,
-                optional_reg,
-                0));
+            emit(
+                vm::Instruction::make_rrr(expr.op == lex::TokenType::Equal ? vm::Opcode::Test_nil : vm::Opcode::Test_val, dest_reg, optional_reg, 0));
             return dest_reg;
         }
     }
@@ -2315,146 +2577,6 @@ uint8_t Compiler::compile_expr_node(const ast::Range_expr &expr)
     emit(vm::Instruction::make_rrr(opcode, dst_reg, start_reg, end_reg));
 
     return dst_reg;
-}
-
-void Compiler::compile_stmt_node(const ast::For_in_stmt &stmt)
-{
-    auto prev_locals_size = current_ctx_->locals.size();
-
-    uint8_t iterable_reg = compile_expr(stmt.iterable);
-    types::Type_id iterable_type = ast::get_type(ctx.tree.get(stmt.iterable).node);
-
-    bool is_custom_model = ctx.tt.is_model(iterable_type);
-
-    uint8_t loop_var_reg = allocate_register();
-    current_ctx_->locals.push_back({stmt.var_name, loop_var_reg});
-
-    // Custom Model Iterators
-    if (is_custom_model) {
-        auto &model_name = std::get<types::Model_type>(ctx.tt.get(iterable_type).data).name;
-
-        auto model_data_ptr = ctx.type_env.get_model(model_name);
-
-        uint8_t iter_reg = allocate_register();
-        std::string iter_model_name = model_name;
-
-        if (model_data_ptr && model_data_ptr->methods.contains("iter")) {
-            if (auto sym_id = ctx.registry.lookup_global(model_name + "::iter")) {
-                uint8_t func_reg = allocate_register();
-                Closure_data *closure = function_locations_.at(*sym_id);
-                uint16_t const_idx = add_constant(Value::make_closure(closure));
-
-                emit(vm::Instruction::make_ri(vm::Opcode::Load_const, func_reg, const_idx));
-
-                uint8_t call_base = allocate_register();
-                emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base, func_reg, 0));
-
-                uint8_t arg_this = allocate_register();
-                emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_this, iterable_reg, 0));
-
-                emit(vm::Instruction::make_rrr(vm::Opcode::Call, iter_reg, call_base, 1));
-
-                auto iter_decl_id = model_data_ptr->methods.at("iter").declaration;
-
-                auto iter_decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(iter_decl_id).node);
-
-                auto iter_return_type = effective_return_type(iter_decl->returns, ctx.tt);
-                iter_model_name = std::get<types::Model_type>(ctx.tt.get(iter_return_type).data).name;
-            }
-        } else {
-            emit(vm::Instruction::make_rrr(vm::Opcode::Move, iter_reg, iterable_reg, 0));
-        }
-
-        uint8_t step_reg = allocate_register();
-        uint16_t one_idx = add_constant(Value(static_cast<int64_t>(1)));
-        emit(vm::Instruction::make_ri(vm::Opcode::Load_const, step_reg, one_idx));
-
-        uint32_t loop_start = static_cast<uint32_t>(current_block().instructions.size());
-
-        auto next_decl_id = ctx.type_env.get_model(iter_model_name)->methods.at("next").declaration;
-        auto next_decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(next_decl_id).node);
-        uint8_t argc = static_cast<uint8_t>(next_decl->parameters.size());
-
-        uint8_t next_func = allocate_register();
-        if (auto sym_id = ctx.registry.lookup_global(iter_model_name + "::next")) {
-            Closure_data *closure = function_locations_.at(*sym_id);
-            uint16_t next_idx = add_constant(Value::make_closure(closure));
-            emit(vm::Instruction::make_ri(vm::Opcode::Load_const, next_func, next_idx));
-        }
-
-        uint8_t call_base = allocate_register();
-        emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base, next_func, 0));
-
-        uint8_t arg_this = allocate_register();
-        emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_this, iter_reg, 0));
-
-        if (argc == 2) {
-            uint8_t arg_step = allocate_register();
-            emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_step, step_reg, 0));
-        }
-
-        uint8_t opt_val_reg = allocate_register();
-
-        emit(vm::Instruction::make_rrr(vm::Opcode::Call, opt_val_reg, call_base, argc));
-
-        uint8_t end_reg = allocate_register();
-        emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, end_reg, opt_val_reg, 0));
-
-        size_t jump_body = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, end_reg, 0));
-
-        size_t jump_exit = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
-
-        uint16_t body_target = static_cast<uint16_t>(current_block().instructions.size());
-
-        current_block().instructions[jump_body].ri.imm = body_target;
-
-        emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, loop_var_reg, opt_val_reg, 0));
-
-        compile_stmt(stmt.body);
-
-        emit(vm::Instruction::make_i(vm::Opcode::Jump, loop_start));
-
-        uint32_t exit_target = static_cast<uint32_t>(current_block().instructions.size());
-
-        current_block().instructions[jump_exit].i.imm = exit_target;
-    }
-
-    // Builtin Iterators
-    else {
-        uint8_t iter_reg = allocate_register();
-
-        emit(vm::Instruction::make_rrr(vm::Opcode::Make_iter, iter_reg, iterable_reg, 0));
-
-        uint8_t opt_val_reg = allocate_register();
-
-        uint32_t loop_start = static_cast<uint32_t>(current_block().instructions.size());
-
-        emit(vm::Instruction::make_rrr(vm::Opcode::Iter_next, opt_val_reg, iter_reg, 0));
-
-        uint8_t end_reg = allocate_register();
-
-        emit(vm::Instruction::make_rrr(vm::Opcode::Test_nil, end_reg, opt_val_reg, 0));
-
-        size_t jump_body = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, end_reg, 0));
-
-        size_t jump_exit = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
-
-        uint16_t body_target = static_cast<uint16_t>(current_block().instructions.size());
-
-        current_block().instructions[jump_body].ri.imm = body_target;
-
-        emit(vm::Instruction::make_rrr(vm::Opcode::Unwrap_option, loop_var_reg, opt_val_reg, 0));
-
-        compile_stmt(stmt.body);
-
-        emit(vm::Instruction::make_i(vm::Opcode::Jump, loop_start));
-
-        uint32_t exit_target = static_cast<uint32_t>(current_block().instructions.size());
-
-        current_block().instructions[jump_exit].i.imm = exit_target;
-    }
-
-    current_ctx_->locals.resize(prev_locals_size);
 }
 
 } // namespace phos::vm

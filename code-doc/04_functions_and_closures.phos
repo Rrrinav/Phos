@@ -61,6 +61,8 @@ fn get_coordinates() -> x: i64 = 10, y: i64 = 20 {
     return;
 }
 
+fn string_to_int(x: string) -> x: i32 = 0 {...}
+
 let cx, cy := get_coordinates();
 print("Coordinates: x = ", cx, ", y = ", cy, sep="");
 

@@ -349,8 +349,39 @@ struct If_stmt
     Source_location loc;
 };
 
+struct Break_stmt
+{
+    std::string target_label;
+    Source_location loc;
+};
+
+struct Continue_stmt
+{
+    std::string target_label;
+    Source_location loc;
+};
+
+struct Goto_stmt
+{
+    std::string target_label;
+    Source_location loc;
+};
+
+struct Label_stmt
+{
+    std::string name;
+    Source_location loc;
+};
+
+struct Defer_stmt
+{
+    Stmt_id call;
+    Source_location loc;
+};
+
 struct While_stmt
 {
+    std::string label{""};
     Expr_id condition;
     Stmt_id body;
     Source_location loc;
@@ -358,6 +389,7 @@ struct While_stmt
 
 struct For_stmt
 {
+    std::string label{""};
     Stmt_id initializer;
     Expr_id condition;
     Expr_id increment;
@@ -367,6 +399,7 @@ struct For_stmt
 
 struct For_in_stmt
 {
+    std::string label{""};
     std::string var_name;
     Expr_id iterable;
     Stmt_id body;
@@ -418,6 +451,11 @@ struct Stmt
         Print_stmt,
         Expr_stmt,
         Block_stmt,
+        Break_stmt,
+        Continue_stmt,
+        Goto_stmt,
+        Label_stmt,
+        Defer_stmt,
         If_stmt,
         While_stmt,
         For_stmt,

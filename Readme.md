@@ -72,9 +72,9 @@ g++ ./bld.cpp -o ./bld
 - [ ] Add a saturation cast (limits to size, not truncate bits)
 - [ ] Concurrency (green threads)
 - [ ] Proper I/O (reading input, file streams)
-- [ ] Have proper command line args for it
-- [ ] Imports
-- [ ] FFI (In langugae FFI)
+- [ ] Optimisations
+
+- For I/O I am waiting for generics
 
 ## TODO 2
 

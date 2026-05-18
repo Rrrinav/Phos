@@ -90,8 +90,16 @@ public:
     err::Engine diagnostics_{"semantic-checking"};
     Module_id current_module_id = Module_id::null();
 
+    struct Label_scope
+    {
+        std::unordered_set<std::string> defined_labels;
+        std::vector<std::pair<std::string, ast::Source_location>> gotos;
+    };
+
     std::unordered_set<Module_id> hoisted_modules;
     std::unordered_set<Module_id> checked_modules;
+    std::vector<std::string> loop_label_stack_;
+    std::vector<Label_scope> label_scopes_;
 
     /*
      * [check] -> diagnostics
@@ -202,6 +210,11 @@ public:
     void check_return_stmt(ast::Stmt_id stmt_id);
     void check_var_stmt(ast::Stmt_id stmt_id);
     void check_multi_var_stmt(ast::Stmt_id stmt_id);
+    void check_stmt_node(const ast::Break_stmt &stmt);
+    void check_stmt_node(const ast::Continue_stmt &stmt);
+    void check_stmt_node(const ast::Goto_stmt &stmt);
+    void check_stmt_node(const ast::Label_stmt &stmt);
+    void check_stmt_node(const ast::Defer_stmt &stmt);
     void check_while_stmt(ast::Stmt_id stmt_id);
     void check_for_stmt(ast::Stmt_id stmt_id);
     void check_for_in_stmt(ast::Stmt_id stmt_id);

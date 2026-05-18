@@ -54,6 +54,11 @@ enum class TokenType : uint8_t {
     In,
     Return,
     Match,
+    Break,
+    Continue,
+    At,
+    Defer,
+    Goto,
 
     //  Declarations
     Fn,
@@ -178,6 +183,10 @@ static const std::unordered_map<std::string_view, TokenType> token_keywords = {
     {"in", TokenType::In},
     {"return", TokenType::Return},
     {"match", TokenType::Match},
+    {"break", TokenType::Break},
+    {"continue", TokenType::Continue},
+    {"defer", TokenType::Defer},
+    {"goto", TokenType::Goto},
 
     // declarations
     {"fn", TokenType::Fn},
