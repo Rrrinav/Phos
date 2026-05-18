@@ -1,0 +1,122 @@
+// 08_ranges_iterators_and_core_helpers.phos
+//
+// This file covers ranges as first-class values, the underlying iterator
+// protocol, how to make custom models iterable, and core helpers.
+
+print("--- 1. First-Class Ranges ---");
+// Ranges are not just syntax sugar for loops; they are first-class values
+// in Phos. You can assign them to variables and pass them around.
+let exclusive_range := 1..5;   // 1, 2, 3, 4
+let inclusive_range := 1..=5;  // 1, 2, 3, 4, 5
+
+print("Iterating a stored range:");
+for i in exclusive_range {
+    print(i, end = " ");
+}
+print("\n");
+
+// Ranges are extremely powerful in match statements to evaluate boundaries.
+let score := 85;
+print("Score ", score, ": ", sep = "", end = "");
+
+match score {
+    90..=100 => { print("Grade A"); },
+    80..=89  => { print("Grade B"); },
+    70..=79  => { print("Grade C"); },
+    _        => { print("Grade F"); },
+}
+
+print("\n--- 2. Built-in Iterators ---");
+// The `for in` loop uses Iterators under the hood. You can interact with 
+// them manually using the `iter()` intrinsic or the `.iter()` method.
+let nums := [10, 20, 30];
+let nums_iter := iter(nums);
+
+print("Manual iteration using next():");
+
+// Iterators yield optional values (T?). When exhausted, they return `nil`.
+while true {
+    let val := nums_iter.next();
+
+    // Break when the iterator returns nil
+    if val.is_nil() {
+        break;
+    }
+
+    print("yielded: ", val.get(), sep = "");
+}
+
+print("\n--- 3. The Custom Iterator Protocol ---");
+// You can make ANY model work with `for..in` loops by implementing the 
+// Iterator Protocol. The compiler looks for two things:
+// 1. An `iter()` method on your model that returns an iterator object.
+// 2. A `next()` method on that iterator object that returns an Optional (T?).
+
+// Step 1: Define the iterator state object
+model CountdownIter {
+    current: i64;
+}
+
+bind CountdownIter {
+    // Return an optional i64 (i64?). Returns nil when done.
+    fn next() -> i64? {
+        if this.current < 0 {
+            return nil;
+        }
+        let val := this.current;
+        this.current = this.current - 1;
+        return val;
+    }
+}
+
+// Step 2: Define the actual model
+model Countdown {
+    start: i64;
+}
+
+bind Countdown {
+    // Return the iterator object
+    fn iter() -> CountdownIter {
+        return CountdownIter.{ current: this.start };
+    }
+}
+
+// Step 3: Use it natively in a loop!
+let rocket_launch := Countdown.{ start: 3 };
+
+print("Initiating custom model countdown:");
+
+for step in rocket_launch {
+    print("T-minus: ", step, sep="");
+}
+
+print("Liftoff!");
+
+
+print("\n--- 4. Core Helpers ---");
+// `len()` is a core compiler intrinsic that works universally on collections.
+let msg := "Hello Phos";
+print("Array length: ", len(nums), sep = "");
+print("String length: ", len(msg), sep = "");
+
+// Most things can be represented as a range
+// Sentinels
+let a := 20;
+
+// range of length 1
+for i in a {
+    print(i);
+}
+
+let b : i32? = nil;
+let c : i32? = 30;
+
+// range of length 0
+for i in b {
+    print(i);
+}
+
+// range of length 1
+for i in c {
+    print(i);
+}

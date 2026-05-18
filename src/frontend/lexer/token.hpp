@@ -58,6 +58,7 @@ enum class TokenType : uint8_t {
     Continue,
     At,
     Defer,
+    Defer_local,
     Goto,
 
     //  Declarations
@@ -186,6 +187,7 @@ static const std::unordered_map<std::string_view, TokenType> token_keywords = {
     {"break", TokenType::Break},
     {"continue", TokenType::Continue},
     {"defer", TokenType::Defer},
+    {"defer_local", TokenType::Defer_local},
     {"goto", TokenType::Goto},
 
     // declarations

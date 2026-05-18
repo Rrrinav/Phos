@@ -376,6 +376,7 @@ struct Label_stmt
 struct Defer_stmt
 {
     Stmt_id call;
+    bool is_function_scoped;
     Source_location loc;
 };
 

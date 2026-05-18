@@ -31,6 +31,14 @@ struct Loop_info
     std::string label;
     std::vector<size_t> break_jumps;
     std::vector<size_t> continue_jumps;
+    size_t scope_depth; // Tracks scope to correctly weave defers on break/continue!
+};
+
+// Tracks active lexical blocks and their deferred statements
+struct Scope_info
+{
+    size_t locals_count;
+    std::vector<ast::Stmt_id> defers;
 };
 
 // The isolated universe for a single function being compiled
@@ -38,14 +46,15 @@ struct Function_context
 {
     Function_context *enclosing{nullptr};
 
-    Code_block block; // The bytecode being generated for THIS function
+    Code_block block;
     std::vector<Local> locals;
     uint8_t current_register{0};
 
-    // The Shopping List: Variables this function steals from parents
     std::vector<Compiler_upvalue> upvalues;
 
     // Control Flow Trackers
+    std::vector<Scope_info> scopes;
+    std::vector<ast::Stmt_id> function_defers;
     std::vector<Loop_info> loops;
     std::unordered_map<std::string, uint32_t> labels;
     std::vector<std::pair<std::string, size_t>> unresolved_gotos;
@@ -83,6 +92,9 @@ class Compiler
     int resolve_local(Function_context *ctx, const std::string &name);
     int resolve_upvalue(Function_context *ctx, const std::string &name);
     int add_upvalue(Function_context *ctx, uint8_t index, bool is_local);
+    void push_scope();
+    void pop_scope();
+    void emit_defers(size_t target_depth);
 
 public:
     explicit Compiler(phos::Compiler_context &ctx);

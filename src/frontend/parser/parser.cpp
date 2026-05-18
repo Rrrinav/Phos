@@ -1052,7 +1052,13 @@ Result<ast::Stmt_id> Parser::statement()
     if (match({lex::TokenType::Defer})) {
         ast::Source_location loc{previous().line, previous().column, source_name_};
         ASSIGN_OR_RETURN(auto deferred_stmt, statement());
-        return ctx_.tree.add_stmt(ast::Stmt{ast::Defer_stmt{.call = deferred_stmt, .loc = loc}});
+        return ctx_.tree.add_stmt(ast::Stmt{ast::Defer_stmt{.call = deferred_stmt, .is_function_scoped = true, .loc = loc}});
+    }
+
+    if (match({lex::TokenType::Defer_local})) {
+        ast::Source_location loc{previous().line, previous().column, source_name_};
+        ASSIGN_OR_RETURN(auto deferred_stmt, statement());
+        return ctx_.tree.add_stmt(ast::Stmt{ast::Defer_stmt{.call = deferred_stmt, .is_function_scoped = false, .loc = loc}});
     }
 
     // 3. Existing Statements

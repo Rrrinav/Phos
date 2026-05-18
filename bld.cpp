@@ -347,7 +347,7 @@ void build_meta()
             cmd.add_parts(opt.path.string());
             cmd.add_parts("-o", out);
             cmd.add_parts("-O2");
-            cmd.append({"--std=c++26", "-pthread", "-Wpedantic", "-Wall", "-freflection"});
+            cmd.append({"--std=c++26", "-pthread", "-Wpedantic", "-Wall", "-freflection", "-I./src"});
             procs.push_back(bld::execute_async(cmd));
         }
 

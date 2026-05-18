@@ -169,6 +169,33 @@ int Compiler::add_upvalue(Function_context *fctx, uint8_t index, bool is_local)
     return static_cast<int>(fctx->upvalues.size() - 1);
 }
 
+void Compiler::push_scope()
+{
+    current_ctx_->scopes.push_back({current_ctx_->locals.size(), {}});
+}
+
+void Compiler::pop_scope()
+{
+    // Copy to safely prevent vector invalidation if a defer contains a nested block!
+    auto defers = current_ctx_->scopes.back().defers;
+    for (auto it = defers.rbegin(); it != defers.rend(); ++it) {
+        compile_stmt(*it);
+    }
+    current_ctx_->locals.resize(current_ctx_->scopes.back().locals_count);
+    current_ctx_->scopes.pop_back();
+}
+
+void Compiler::emit_defers(size_t target_depth)
+{
+    // Evaluate from inner-most scope outwards until the target loop/function boundary
+    for (int i = static_cast<int>(current_ctx_->scopes.size()) - 1; i >= static_cast<int>(target_depth); --i) {
+        auto defers = current_ctx_->scopes[i].defers;
+        for (auto it = defers.rbegin(); it != defers.rend(); ++it) {
+            compile_stmt(*it);
+        }
+    }
+}
+
 int Compiler::resolve_upvalue(Function_context *fctx, const std::string &name)
 {
     if (fctx->enclosing == nullptr) {
@@ -585,14 +612,18 @@ void Compiler::compile_stmt(ast::Stmt_id stmt_id)
 
 void Compiler::compile_stmt_node(const ast::Break_stmt &stmt)
 {
-    size_t jump_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+    size_t target_depth = 0;
 
     if (stmt.target_label.empty()) {
-        current_ctx_->loops.back().break_jumps.push_back(jump_idx);
+        target_depth = current_ctx_->loops.back().scope_depth;
+        emit_defers(target_depth);
+        current_ctx_->loops.back().break_jumps.push_back(emit(vm::Instruction::make_i(vm::Opcode::Jump, 0)));
     } else {
         for (auto it = current_ctx_->loops.rbegin(); it != current_ctx_->loops.rend(); ++it) {
             if (it->label == stmt.target_label) {
-                it->break_jumps.push_back(jump_idx);
+                target_depth = it->scope_depth;
+                emit_defers(target_depth);
+                it->break_jumps.push_back(emit(vm::Instruction::make_i(vm::Opcode::Jump, 0)));
                 return;
             }
         }
@@ -601,14 +632,18 @@ void Compiler::compile_stmt_node(const ast::Break_stmt &stmt)
 
 void Compiler::compile_stmt_node(const ast::Continue_stmt &stmt)
 {
-    size_t jump_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+    size_t target_depth = 0;
 
     if (stmt.target_label.empty()) {
-        current_ctx_->loops.back().continue_jumps.push_back(jump_idx);
+        target_depth = current_ctx_->loops.back().scope_depth;
+        emit_defers(target_depth);
+        current_ctx_->loops.back().continue_jumps.push_back(emit(vm::Instruction::make_i(vm::Opcode::Jump, 0)));
     } else {
         for (auto it = current_ctx_->loops.rbegin(); it != current_ctx_->loops.rend(); ++it) {
             if (it->label == stmt.target_label) {
-                it->continue_jumps.push_back(jump_idx);
+                target_depth = it->scope_depth;
+                emit_defers(target_depth);
+                it->continue_jumps.push_back(emit(vm::Instruction::make_i(vm::Opcode::Jump, 0)));
                 return;
             }
         }
@@ -634,9 +669,11 @@ void Compiler::compile_stmt_node(const ast::Goto_stmt &stmt)
 
 void Compiler::compile_stmt_node(const ast::Defer_stmt &stmt)
 {
-    (void)stmt; // Silence unused warning
-    std::println(std::cerr, "Compiler Error: 'defer' keyword requires VM Opcode support, which is not yet implemented.");
-    std::exit(EXIT_FAILURE);
+    if (stmt.is_function_scoped) {
+        current_ctx_->function_defers.push_back(stmt.call);
+    } else {
+        current_ctx_->scopes.back().defers.push_back(stmt.call);
+    }
 }
 
 void Compiler::compile_stmt_node(const ast::Print_stmt &stmt)
@@ -747,13 +784,11 @@ void Compiler::compile_stmt_node(const ast::Multi_var_stmt &stmt)
 
 void Compiler::compile_stmt_node(const ast::Block_stmt &stmt)
 {
-    auto prev_locals_size = current_ctx_->locals.size();
-
+    push_scope();
     for (const auto &st : stmt.statements) {
         compile_stmt(st);
     }
-
-    current_ctx_->locals.resize(prev_locals_size);
+    pop_scope();
 }
 
 void Compiler::compile_stmt_node(const ast::If_stmt &stmt)
@@ -785,7 +820,7 @@ void Compiler::compile_stmt_node(const ast::If_stmt &stmt)
 
 void Compiler::compile_stmt_node(const ast::While_stmt &stmt)
 {
-    current_ctx_->loops.push_back({stmt.label, {}, {}});
+    current_ctx_->loops.push_back({stmt.label, {}, {}, current_ctx_->scopes.size()});
 
     std::uint32_t loop_start = static_cast<uint32_t>(current_block().instructions.size());
 
@@ -815,13 +850,13 @@ void Compiler::compile_stmt_node(const ast::While_stmt &stmt)
 
 void Compiler::compile_stmt_node(const ast::For_stmt &stmt)
 {
-    auto prev_locals_size = current_ctx_->locals.size();
+    push_scope();
 
     if (!stmt.initializer.is_null()) {
         compile_stmt(stmt.initializer);
     }
 
-    current_ctx_->loops.push_back({stmt.label, {}, {}});
+    current_ctx_->loops.push_back({stmt.label, {}, {}, current_ctx_->scopes.size()});
 
     uint32_t loop_start = static_cast<uint32_t>(current_block().instructions.size());
 
@@ -856,12 +891,12 @@ void Compiler::compile_stmt_node(const ast::For_stmt &stmt)
     }
 
     current_ctx_->loops.pop_back();
-    current_ctx_->locals.resize(prev_locals_size);
+    pop_scope();
 }
 
 void Compiler::compile_stmt_node(const ast::For_in_stmt &stmt)
 {
-    auto prev_locals_size = current_ctx_->locals.size();
+    push_scope();
 
     uint8_t iterable_reg = compile_expr(stmt.iterable);
     types::Type_id iterable_type = ast::get_type(ctx.tree.get(stmt.iterable).node);
@@ -871,7 +906,7 @@ void Compiler::compile_stmt_node(const ast::For_in_stmt &stmt)
     uint8_t loop_var_reg = allocate_register();
     current_ctx_->locals.push_back({stmt.var_name, loop_var_reg});
 
-    current_ctx_->loops.push_back({stmt.label, {}, {}});
+    current_ctx_->loops.push_back({stmt.label, {}, {}, current_ctx_->scopes.size()});
 
     // Custom Model Iterators
     if (is_custom_model) {
@@ -1008,7 +1043,7 @@ void Compiler::compile_stmt_node(const ast::For_in_stmt &stmt)
     }
 
     current_ctx_->loops.pop_back();
-    current_ctx_->locals.resize(prev_locals_size);
+    pop_scope();
 }
 
 void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
@@ -1025,6 +1060,8 @@ void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
     fn_ctx.current_register = 0;
     push_context(&fn_ctx);
     current_function_returns_ = &stmt.returns;
+
+    push_scope();
 
     for (const auto &param : stmt.parameters) {
         uint8_t reg = allocate_register();
@@ -1050,6 +1087,12 @@ void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
 
     if (!stmt.body.is_null()) {
         compile_stmt(stmt.body);
+    }
+
+    pop_scope();
+
+    for (auto it = current_ctx_->function_defers.rbegin(); it != current_ctx_->function_defers.rend(); ++it) {
+        compile_stmt(*it);
     }
 
     auto normalized_returns = declared_return_types(stmt.returns, ctx.tt);
@@ -1160,7 +1203,6 @@ void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
 
     current_ctx_->locals.push_back({stmt.name, dst_reg});
 
-    // 2. Restore function name state after block ends
     current_function_name_ = prev_func_name;
 }
 
@@ -1228,6 +1270,12 @@ void Compiler::compile_stmt_node(const ast::Return_stmt &stmt)
             ret_reg = allocate_register();
             emit(vm::Instruction::make_rrr(vm::Opcode::Load_nil, ret_reg, 0, 0));
         }
+    }
+
+    emit_defers(0);
+
+    for (auto it = current_ctx_->function_defers.rbegin(); it != current_ctx_->function_defers.rend(); ++it) {
+        compile_stmt(*it);
     }
 
     emit(vm::Instruction::make_rrr(vm::Opcode::Return, ret_reg, 0, 0));
@@ -1346,7 +1394,8 @@ void Compiler::compile_stmt_node(const ast::Match_stmt &stmt)
         }
 
         size_t jump_next_arm_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, test_reg, 0));
-        auto prev_locals_size = current_ctx_->locals.size();
+
+        push_scope();
 
         if (!arm.bind_name.empty() && ctx.tt.is_union(subject_type)) {
             uint8_t payload_reg = allocate_register();
@@ -1358,7 +1407,7 @@ void Compiler::compile_stmt_node(const ast::Match_stmt &stmt)
             compile_stmt(arm.body);
         }
 
-        current_ctx_->locals.resize(prev_locals_size);
+        pop_scope();
         end_jumps.push_back(emit(vm::Instruction::make_i(vm::Opcode::Jump, 0)));
 
         uint16_t next_arm_target = static_cast<uint16_t>(current_block().instructions.size());
@@ -1734,6 +1783,8 @@ uint8_t Compiler::compile_expr_node(const ast::Closure_expr &expr)
     push_context(&fn_ctx);
     current_function_returns_ = &expr.returns;
 
+    push_scope();
+
     // 2. Inject Parameters
     for (const auto &param : expr.parameters) {
         uint8_t reg = allocate_register();
@@ -1762,6 +1813,11 @@ uint8_t Compiler::compile_expr_node(const ast::Closure_expr &expr)
     // 4. Compile Body
     if (!expr.body.is_null()) {
         compile_stmt(expr.body);
+    }
+
+    pop_scope();
+    for (auto it = current_ctx_->function_defers.rbegin(); it != current_ctx_->function_defers.rend(); ++it) {
+        compile_stmt(*it);
     }
 
     // 5. Safely pack implicit drop-off returns
