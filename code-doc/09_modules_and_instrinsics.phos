@@ -1,3 +1,33 @@
-import math;
+// You can import a native module like this
+// and it will be imported as a namespace
+import time;
 
-print(math::cos(math::pi/2.0));
+// Only the top level symbol is imported
+import math::sin;
+// in this case sin as sin and not math::sin, because top level is `sin` and not `math`;
+import math::{cos, pi};
+// You can import multiple symbols from a same module like above
+
+print(sin(pi / 2.0));
+print(cos(pi));
+print(cos(pi));
+
+let dt := time::Date_time.{ day: 31, month: 12, year: 2020, hour: 0, minute: 0, second: 0 };
+let ldt := time::local_datetime();
+
+print(dt);
+print(ldt);
+
+// we also have an implicitly imported 'env'
+// You can provide args using phos ./file.phos -- "arg1" "arg2" ... or --args
+print(env::argv);
+print("line number: ", env::line);
+print("module     : ", env::module);
+print("file name  : ", env::file);
+
+fn this_func() {
+    print("function name: ", env::func);
+}
+
+this_func();
+

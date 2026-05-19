@@ -45,7 +45,6 @@ std::vector<Native_param> normalize_native_params(std::vector<Native_param> para
 Type_environment::Type_environment(types::Type_table &tt) : tt(tt)
 {}
 
-// REGISTRATION API
 bool Type_environment::register_global_type(const std::string &name, types::Type_id type)
 {
     if (global_types.contains(name)) {
@@ -64,7 +63,6 @@ bool Type_environment::register_function(const std::string &name, ast::Stmt_id d
     return true;
 }
 
-// --- Models ---
 bool Type_environment::register_model(const std::string &name)
 {
     if (model_data.contains(name)) {
@@ -125,7 +123,6 @@ bool Type_environment::add_model_static_method(const std::string &model_name, co
     return true;
 }
 
-// --- Unions ---
 bool Type_environment::register_union(const std::string &name)
 {
     if (union_data.contains(name)) {
@@ -144,7 +141,6 @@ bool Type_environment::add_union_variant_default(const std::string &union_name, 
     return true;
 }
 
-// --- Enums ---
 bool Type_environment::register_enum(const std::string &name)
 {
     if (enum_data.contains(name)) {
@@ -165,10 +161,6 @@ bool Type_environment::add_enum_variant(const std::string &enum_name, const std:
     enum_data[enum_name].variants[variant] = val;
     return true;
 }
-
-// ============================================================================
-// QUERY API
-// ============================================================================
 
 bool Type_environment::is_type_defined(const std::string &name) const
 {
@@ -313,7 +305,6 @@ std::optional<Value> Type_environment::get_enum_variant_value(const std::string 
     return std::nullopt;
 }
 
-// NATIVE FFI REGISTRATION
 void Type_environment::define_native(const std::string &name, const std::vector<std::string> &params, const std::string &ret, Native_fn func)
 {
     std::vector<Native_param> native_params;
@@ -331,9 +322,10 @@ void Type_environment::define_native(const std::string &name, const std::vector<
     native_signatures[name].push_back(Native_sig{.params = normalize_native_params(params), .ret_type_str = ret, .func = func});
 }
 
-void Type_environment::define_native_const(const std::string &name, Value val)
+void Type_environment::define_native_const(const std::string &name, Value val, const std::string &type_str)
 {
     native_constants[name] = val;
+    native_types[name] = type_str;
 }
 
 std::optional<Value> Type_environment::get_native_const(const std::string &name) const
@@ -357,24 +349,29 @@ const std::vector<Native_sig> *Type_environment::get_native_signatures(const std
     return nullptr;
 }
 
+std::optional<std::string> Type_environment::get_native_type_str(const std::string &name) const
+{
+    if (auto it = native_types.find(name); it != native_types.end()) {
+        return it->second;
+    }
+    return std::nullopt;
+}
+
 void Type_environment::register_core_methods()
 {
     using params_t = std::vector<std::string>;
     define_native("env::__argv_impl", std::vector<Native_param>{}, "string[]", vm::env_native::argv_impl);
     define_native("env::cwd", std::vector<Native_param>{}, "string", vm::env_native::cwd);
 
-    // --- Core Engine Operations ---
-    define_native("clock",   params_t{}, "f64", vm::core::native_clock);
+    define_native("clock", params_t{}, "f64", vm::core::native_clock);
     define_native("is_same", params_t{"any", "any"}, "bool", vm::core::native_is_same);
-    define_native("exit",    params_t{"i32"}, "void", vm::core::exit);
-    define_native("len",     params_t{"any"}, "i64", vm::core::native_len);
+    define_native("exit", params_t{"i32"}, "void", vm::core::exit);
+    define_native("len", params_t{"any"}, "i64", vm::core::native_len);
 
-    // --- Numerical Methods ---
     define_native("to_string", params_t{"any"}, "string", vm::numerical::to_string);
     define_native("parse_i64", params_t{"string"}, "i64?", vm::numerical::parse_i64);
     define_native("parse_f64", params_t{"string"}, "f64?", vm::numerical::parse_f64);
 
-    // --- String Methods ---
     define_native("String::substr", params_t{"string", "i64", "i64"}, "string", vm::string_methods::substr);
     define_native("String::starts_with", params_t{"string", "string"}, "bool", vm::string_methods::starts_with);
     define_native("String::ends_with", params_t{"string", "string"}, "bool", vm::string_methods::ends_with);
@@ -385,7 +382,6 @@ void Type_environment::register_core_methods()
     define_native("String::repeat", params_t{"string", "i64"}, "string", vm::string_methods::repeat);
     define_native("String::index_of", params_t{"string", "string"}, "i64?", vm::string_methods::index_of);
 
-    // --- Array Methods ---
     define_native("Array::len", params_t{"T[]"}, "u64", vm::array_methods::len);
     define_native("Array::is_empty", params_t{"T[]"}, "bool", vm::array_methods::is_empty);
     define_native("Array::clear", params_t{"T[]"}, "void", vm::array_methods::clear);
@@ -396,5 +392,4 @@ void Type_environment::register_core_methods()
     define_native("Array::u_remove_at", params_t{"T[]", "i64"}, "T?", vm::array_methods::u_remove_at);
     define_native("Array::reverse", params_t{"T[]"}, "void", vm::array_methods::reverse);
 }
-
 } // namespace phos

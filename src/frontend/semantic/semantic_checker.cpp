@@ -261,28 +261,58 @@ types::Type_id resolve_symbol_type(Compiler_context &ctx, Symbol_id sym_id, Sema
         return sym.type;
     }
 
-    if (sym.kind == Symbol_kind::Phos_func) {
-        if (auto func_data = ctx.type_env.get_function(sym.name)) {
-            if (auto *decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(func_data->declaration).node)) {
+    auto try_resolve = [&](const std::string &name) -> std::optional<types::Type_id> {
+        if (auto native_t = ctx.type_env.get_native_type_str(name)) {
+            return checker.parse_type_string(*native_t, {});
+        }
+        if (sym.kind == Symbol_kind::Native_func) {
+            if (auto signatures = ctx.type_env.get_native_signatures(name); signatures && !signatures->empty()) {
                 std::vector<types::Type_id> params;
-                params.reserve(decl->parameters.size());
-                for (const auto &param : decl->parameters) {
-                    params.push_back(param.type);
+                params.reserve(signatures->front().params.size());
+                for (const auto &param : signatures->front().params) {
+                    if (param.is_variadic) {
+                        break;
+                    }
+                    params.push_back(checker.parse_type_string(param.type_str, {}));
                 }
-                sym.type = ctx.tt.function(params, declared_return_types(decl->returns, ctx.tt));
+                return ctx.tt.function(params, checker.parse_type_string(signatures->front().ret_type_str, {}));
             }
         }
-    } else if (sym.kind == Symbol_kind::Native_func) {
-        if (auto signatures = ctx.type_env.get_native_signatures(sym.name); signatures && !signatures->empty()) {
-            std::vector<types::Type_id> params;
-            params.reserve(signatures->front().params.size());
-            for (const auto &param : signatures->front().params) {
-                if (param.is_variadic) {
-                    break;
+        return std::nullopt;
+    };
+
+    // 1. Try exact name match
+    if (auto t = try_resolve(sym.name)) {
+        return sym.type = *t;
+    }
+
+    // 2. Try namespace reconstruction (Fixes selective imports)
+    if (!sym.owner_module.is_null()) {
+        auto &mod = ctx.workspace.get_module(sym.owner_module);
+        if (auto t = try_resolve(mod.logical_namespace + "::" + sym.name)) {
+            return sym.type = *t;
+        }
+    }
+
+    if (sym.kind == Symbol_kind::Phos_func) {
+        auto resolve_phos = [&](const std::string &name) -> bool {
+            if (auto func_data = ctx.type_env.get_function(name)) {
+                if (auto *decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(func_data->declaration).node)) {
+                    std::vector<types::Type_id> params;
+                    params.reserve(decl->parameters.size());
+                    for (const auto &param : decl->parameters) {
+                        params.push_back(param.type);
+                    }
+                    sym.type = ctx.tt.function(params, declared_return_types(decl->returns, ctx.tt));
+                    return true;
                 }
-                params.push_back(checker.parse_type_string(param.type_str, {}));
             }
-            sym.type = ctx.tt.function(params, checker.parse_type_string(signatures->front().ret_type_str, {}));
+            return false;
+        };
+
+        if (!resolve_phos(sym.name) && !sym.owner_module.is_null()) {
+            auto &mod = ctx.workspace.get_module(sym.owner_module);
+            resolve_phos(mod.logical_namespace + "::" + sym.name);
         }
     }
 
@@ -3296,10 +3326,9 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
         return true;
     };
 
-    if (std::holds_alternative<ast::Variable_expr>(ctx.tree.get(callee_id).node)) {
-        auto var_callee_name = get_node<ast::Variable_expr>(ctx.tree, callee_id).name;
-
-        if (var_callee_name == "len") {
+    // 1. Intercept hardcoded language intrinsics
+    if (auto *var_callee = std::get_if<ast::Variable_expr>(&ctx.tree.get(callee_id).node)) {
+        if (var_callee->name == "len") {
             if (!bind_intrinsic({"collection"}, "len")) {
                 return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
             }
@@ -3311,12 +3340,11 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
             return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_u64();
         }
 
-        if (var_callee_name == "iter") {
+        if (var_callee->name == "iter") {
             if (!bind_intrinsic({"iterable"}, "iter")) {
                 return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
             }
-            auto arg_type_res = check_expr(arguments_copy[0].value);
-            auto iter_type = to_iterator_type(arg_type_res);
+            auto iter_type = to_iterator_type(check_expr(arguments_copy[0].value));
             if (!is_iterator_protocol_type(iter_type)) {
                 type_error(loc, "Value passed to iter() is not iterable.");
                 return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
@@ -3325,7 +3353,7 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
             return get_node<ast::Call_expr>(ctx.tree, expr_id).type = iter_type;
         }
 
-        if (var_callee_name == "clone") {
+        if (var_callee->name == "clone") {
             if (!bind_intrinsic({"value"}, "clone")) {
                 return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
             }
@@ -3335,35 +3363,33 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
         }
     }
 
-    std::function<std::string(ast::Expr_id)> canonical_static_path_name = [&](ast::Expr_id id) -> std::string {
-        const auto &node = ctx.tree.get(id).node;
-
-        if (const auto *var = std::get_if<ast::Variable_expr>(&node)) {
-            if (auto mod_id = imported_module_id(ctx, current_module_id, var->name)) {
-                return ctx.workspace.get_module(*mod_id).logical_namespace;
-            }
-            return var->name;
-        }
-
-        if (const auto *path = std::get_if<ast::Static_path_expr>(&node)) {
-            std::string base_name = canonical_static_path_name(path->base);
-            if (!base_name.empty()) {
-                base_name += "::";
-            }
-            return base_name + path->member.lexeme;
-        }
-
-        return "";
-    };
-
-    std::string ffi_callee_name;
-
-    if (std::holds_alternative<ast::Variable_expr>(ctx.tree.get(callee_id).node)) {
-        ffi_callee_name = get_node<ast::Variable_expr>(ctx.tree, callee_id).name;
-    } else if (std::holds_alternative<ast::Static_path_expr>(ctx.tree.get(callee_id).node)) {
-        ffi_callee_name = canonical_static_path_name(callee_id);
+    // 2. Fully evaluate and type-check the callee node (Resolves the FFI bug!)
+    auto callee_type = check_expr(callee_id);
+    if (ctx.tt.is_unknown(callee_type)) {
+        return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
     }
 
+    // 3. Check if the resolved AST node points to a Native FFI function
+    std::string ffi_callee_name;
+    const auto &callee_node = ctx.tree.get(callee_id).node;
+
+    if (const auto *var = std::get_if<ast::Variable_expr>(&callee_node)) {
+        if (var->resolved_symbol) {
+            auto &sym = ctx.registry.get_symbol(*var->resolved_symbol);
+            if (sym.kind == Symbol_kind::Native_func) {
+                ffi_callee_name = sym.name;
+            }
+        }
+    } else if (const auto *sp = std::get_if<ast::Static_path_expr>(&callee_node)) {
+        if (sp->resolved_symbol) {
+            auto &sym = ctx.registry.get_symbol(*sp->resolved_symbol);
+            if (sym.kind == Symbol_kind::Native_func) {
+                ffi_callee_name = sym.name;
+            }
+        }
+    }
+
+    // 4. Handle Native FFI Binding
     if (!ffi_callee_name.empty() && ctx.type_env.is_native_defined(ffi_callee_name)) {
         const auto &signatures = *ctx.type_env.get_native_signatures(ffi_callee_name);
 
@@ -3372,13 +3398,6 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
             if (bound.ok) {
                 get_node<ast::Call_expr>(ctx.tree, expr_id).arguments = std::move(bound.ordered_arguments);
                 get_node<ast::Call_expr>(ctx.tree, expr_id).native_signature_index = static_cast<int>(sig_index);
-
-                if (std::holds_alternative<ast::Static_path_expr>(ctx.tree.get(callee_id).node)) {
-                    auto &sp = get_node<ast::Static_path_expr>(ctx.tree, callee_id);
-                    if (auto global_sym_id = ctx.registry.lookup_global(ffi_callee_name)) {
-                        sp.resolved_symbol = *global_sym_id;
-                    }
-                }
 
                 auto ret = parse_type_string(signatures[sig_index].ret_type_str, bound.generics);
                 return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ret;
@@ -3437,22 +3456,18 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
         return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
     }
 
-    auto callee_type = check_expr(callee_id);
-    if (ctx.tt.is_unknown(callee_type)) {
-        return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
-    }
-
+    // 5. Handle Standard Phos Function Binding
     if (!ctx.tt.is_function(callee_type)) {
-        type_error(ast::get_loc(ctx.tree.get(callee_id).node), "This expression cannot be called.");
+        type_error(ast::get_loc(callee_node), "This expression cannot be called.");
         return get_node<ast::Call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
     }
 
     auto sig = ctx.tt.get(callee_type).as<types::Function_type>();
     const ast::Function_stmt *declaration = nullptr;
-    if (std::holds_alternative<ast::Variable_expr>(ctx.tree.get(callee_id).node)) {
-        auto vname = get_node<ast::Variable_expr>(ctx.tree, callee_id).name;
-        if (ctx.type_env.is_function_defined(vname)) {
-            declaration = std::get_if<ast::Function_stmt>(&ctx.tree.get(ctx.type_env.get_function(vname)->declaration).node);
+
+    if (const auto *var = std::get_if<ast::Variable_expr>(&callee_node)) {
+        if (ctx.type_env.is_function_defined(var->name)) {
+            declaration = std::get_if<ast::Function_stmt>(&ctx.tree.get(ctx.type_env.get_function(var->name)->declaration).node);
         }
     }
 
@@ -3460,10 +3475,8 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
         auto bound = bind_call_arguments(declaration->parameters, arguments_copy, loc, "function", declaration->name);
         get_node<ast::Call_expr>(ctx.tree, expr_id).arguments = std::move(bound.ordered_arguments);
     } else {
-        auto has_named_arguments = [&]() {
-            return std::any_of(arguments_copy.begin(), arguments_copy.end(), [](const auto &arg) { return !arg.name.empty(); });
-        };
-        if (has_named_arguments()) {
+        bool has_named = std::any_of(arguments_copy.begin(), arguments_copy.end(), [](const auto &arg) { return !arg.name.empty(); });
+        if (has_named) {
             type_error(loc, "Named arguments only supported for direct static calls.");
             return get_node<ast::Call_expr>(ctx.tree, expr_id).type = effective_return_type(sig, ctx.tt);
         }
@@ -3481,6 +3494,7 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
             }
         }
     }
+
     return get_node<ast::Call_expr>(ctx.tree, expr_id).type = effective_return_type(sig, ctx.tt);
 }
 
@@ -3708,6 +3722,25 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
 
     auto &expr = get_node<ast::Static_path_expr>(ctx.tree, expr_id);
 
+    auto is_namespace_imported = [&](const std::string &alias) -> bool {
+        if (current_module_id.is_null()) {
+            return false;
+        }
+        auto &module = ctx.workspace.get_module(current_module_id);
+        for (auto root_id : module.ast_roots) {
+            if (root_id.is_null()) {
+                continue;
+            }
+            if (auto *import_stmt = std::get_if<ast::Import_stmt>(&ctx.tree.get(root_id).node)) {
+                std::string current_alias = import_stmt->local_alias.empty() ? import_stmt->path.back() : import_stmt->local_alias;
+                if (current_alias == alias && import_stmt->selectives.empty()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
     if (auto *base_var = std::get_if<ast::Variable_expr>(&ctx.tree.get(expr.base).node)) {
         if (base_var->name == "env") {
             if (expr.member.lexeme == "line") {
@@ -3726,12 +3759,46 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
                 return ctx.tt.array(ctx.tt.get_string());
             }
         }
+
+        std::string full_name = base_var->name + "::" + member_lexeme;
+        if (auto sym_id = ctx.registry.lookup_global(full_name)) {
+            // Intrinsic namespaces do not require explicit imports
+            bool is_intrinsic_ns = (base_var->name == "Array" || base_var->name == "String" || base_var->name == "Optional");
+
+            // NEW: Locally defined types (Models, Unions, Enums) bypass the import check!
+            bool is_local_type = ctx.type_env.is_type_defined(base_var->name);
+
+            if (is_intrinsic_ns || is_local_type || is_namespace_imported(base_var->name)) {
+                expr.resolved_symbol = sym_id;
+                if (auto native_t = ctx.type_env.get_native_type_str(full_name)) {
+                    return expr.type = parse_type_string(*native_t, {});
+                }
+                return expr.type = resolve_symbol_type(ctx, *sym_id, *this);
+            } else {
+                type_error(
+                    loc,
+                    std::format("Namespace '{}' is not fully imported. Use 'import {};' to access '{}'.", base_var->name, base_var->name, full_name));
+                return expr.type = ctx.tt.get_unknown();
+            }
+        }
     }
 
     std::optional<Module_id> base_module_id;
 
     if (auto *var_base = std::get_if<ast::Variable_expr>(&ctx.tree.get(base_id).node)) {
-        base_module_id = ctx.workspace.get_module(current_module_id).resolve_import(var_base->name);
+        if (is_namespace_imported(var_base->name)) {
+            base_module_id = ctx.workspace.get_module(current_module_id).resolve_import(var_base->name);
+        } else if (ctx.workspace.get_module(current_module_id).resolve_import(var_base->name)) {
+            type_error(
+                loc,
+                std::format(
+                    "Namespace '{}' is not fully imported. Use 'import {};' to access '{}::{}'.",
+                    var_base->name,
+                    var_base->name,
+                    var_base->name,
+                    member_lexeme));
+            return get_node<ast::Static_path_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+        }
     } else if (auto *path_base = std::get_if<ast::Static_path_expr>(&ctx.tree.get(base_id).node)) {
         check_expr(base_id);
         base_module_id = path_base->resolved_module;
@@ -3749,6 +3816,10 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
         if (auto sym_id = target_module.resolve_exported_symbol(member_lexeme)) {
             expr.resolved_module.reset();
             expr.resolved_symbol = *sym_id;
+            auto &sym = ctx.registry.get_symbol(*sym_id);
+            if (auto native_t = ctx.type_env.get_native_type_str(sym.name)) {
+                return expr.type = parse_type_string(*native_t, {});
+            }
             return expr.type = resolve_symbol_type(ctx, *sym_id, *this);
         }
 
@@ -3768,6 +3839,10 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
         }
     } else {
         base_type = check_expr(base_id);
+    }
+
+    if (ctx.tt.is_unknown(base_type)) {
+        return get_node<ast::Static_path_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
     }
 
     if (ctx.tt.is_union(base_type)) {

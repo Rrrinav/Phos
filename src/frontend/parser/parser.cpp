@@ -1734,6 +1734,36 @@ Result<ast::Expr_id> Parser::call()
             }});
 
         } else if (match({lex::TokenType::Dot})) {
+            // NEW: Intercept Model Literal construction precisely!
+            if (check(lex::TokenType::LeftBrace)) {
+                // A safe recursive lambda to build string representations out of arbitrarily deep static paths.
+                auto get_path_string = [&](ast::Expr_id id) -> std::string {
+                    auto helper = [&](auto& self, ast::Expr_id curr_id) -> std::string {
+                        const auto &node = ctx_.tree.get(curr_id).node;
+                        if (const auto *var = std::get_if<ast::Variable_expr>(&node)) {
+                            return var->name;
+                        }
+                        if (const auto *path = std::get_if<ast::Static_path_expr>(&node)) {
+                            std::string base_str = self(self, path->base);
+                            if (!base_str.empty()) {
+                                return base_str + "::" + path->member.lexeme;
+                            }
+                        }
+                        return "";
+                    };
+                    return helper(helper, id);
+                };
+
+                std::string path_name = get_path_string(expr);
+                if (path_name.empty()) {
+                    return std::unexpected(create_error(previous(), "Invalid left-hand side for model literal instantiation. Expected a type path."));
+                }
+
+                DECL_OR_RETURN(model_lit, parse_model_literal(path_name));
+                expr = model_lit;
+                continue;
+            }
+
             DECL_OR_RETURN(name_result, consume(lex::TokenType::Identifier, "Expect member name after '.'"));
 
             if (match({lex::TokenType::LeftParen})) {
@@ -1798,40 +1828,44 @@ Result<ast::Expr_id> Parser::primary()
 
             TRY_IGNORE(consume(lex::TokenType::RightBrace, "Expect '}' after anonymous model fields"));
 
-            return ctx_.tree.add_expr(ast::Expr{ast::Anon_model_literal_expr{
-                .fields = std::move(fields),
-                .type = ctx_.tt.get_unknown(),
-                .loc = loc,
-            }});
+            return ctx_.tree.add_expr(
+                ast::Expr{ast::Anon_model_literal_expr{
+                    .fields = std::move(fields),
+                    .type = ctx_.tt.get_unknown(),
+                    .loc = loc,
+                }});
         }
 
         DECL_OR_RETURN(member, consume(lex::TokenType::Identifier, "Expect enum variant name after '.'"));
-        return ctx_.tree.add_expr(ast::Expr{ast::Enum_member_expr{
-            .member_name = member.lexeme,
-            .loc = loc,
-            .type = ctx_.tt.get_unknown(),
-        }});
+        return ctx_.tree.add_expr(
+            ast::Expr{ast::Enum_member_expr{
+                .member_name = member.lexeme,
+                .loc = loc,
+                .type = ctx_.tt.get_unknown(),
+            }});
     }
 
     // concurrency
     if (match({lex::TokenType::Spawn})) {
         ast::Source_location loc{previous().line, previous().column};
         DECL_OR_RETURN(call_expr, expression());
-        return ctx_.tree.add_expr(ast::Expr{ast::Spawn_expr{
-            .call = call_expr,
-            .type = ctx_.tt.get_unknown(),
-            .loc = loc,
-        }});
+        return ctx_.tree.add_expr(
+            ast::Expr{ast::Spawn_expr{
+                .call = call_expr,
+                .type = ctx_.tt.get_unknown(),
+                .loc = loc,
+            }});
     }
 
     if (match({lex::TokenType::Await})) {
         ast::Source_location loc{previous().line, previous().column};
         DECL_OR_RETURN(thread, expression());
-        return ctx_.tree.add_expr(ast::Expr{ast::Await_expr{
-            .thread = thread,
-            .type = ctx_.tt.get_unknown(),
-            .loc = loc,
-        }});
+        return ctx_.tree.add_expr(
+            ast::Expr{ast::Await_expr{
+                .thread = thread,
+                .type = ctx_.tt.get_unknown(),
+                .loc = loc,
+            }});
     }
 
     if (match({lex::TokenType::Yield})) {
@@ -1841,11 +1875,12 @@ Result<ast::Expr_id> Parser::primary()
             ASSIGN_OR_RETURN(value, expression());
         }
 
-        return ctx_.tree.add_expr(ast::Expr{ast::Yield_expr{
-            .value = value,
-            .type = ctx_.tt.get_unknown(),
-            .loc = loc,
-        }});
+        return ctx_.tree.add_expr(
+            ast::Expr{ast::Yield_expr{
+                .value = value,
+                .type = ctx_.tt.get_unknown(),
+                .loc = loc,
+            }});
     }
 
     // this
@@ -1854,11 +1889,12 @@ Result<ast::Expr_id> Parser::primary()
             return std::unexpected(create_error(previous(), "Cannot use 'this' outside of a model method"));
         }
 
-        return ctx_.tree.add_expr(ast::Expr{ast::Variable_expr{
-            .name = "this",
-            .type = ctx_.tt.get_unknown(),
-            .loc = {previous().line, previous().column},
-        }});
+        return ctx_.tree.add_expr(
+            ast::Expr{ast::Variable_expr{
+                .name = "this",
+                .type = ctx_.tt.get_unknown(),
+                .loc = {previous().line, previous().column},
+            }});
     }
 
     // closure
@@ -1873,11 +1909,12 @@ Result<ast::Expr_id> Parser::primary()
 
     // primitives
     if (match({lex::TokenType::Nil})) {
-        ast::Expr_id expr = ctx_.tree.add_expr(ast::Expr{ast::Literal_expr{
-            .value = Value(nullptr),
-            .type = ctx_.tt.get_nil(),
-            .loc = {previous().line, previous().column},
-        }});
+        ast::Expr_id expr = ctx_.tree.add_expr(
+            ast::Expr{ast::Literal_expr{
+                .value = Value(nullptr),
+                .type = ctx_.tt.get_nil(),
+                .loc = {previous().line, previous().column},
+            }});
 
         // 'nil' is an empty container, inherently Depth 1
         ctx_.tree.get(expr).auto_wrap_depth = 1;
@@ -1891,11 +1928,12 @@ Result<ast::Expr_id> Parser::primary()
     }
 
     if (match({lex::TokenType::Bool})) {
-        return ctx_.tree.add_expr(ast::Expr{ast::Literal_expr{
-            .value = previous().literal,
-            .type = ctx_.tt.get_bool(),
-            .loc = {previous().line, previous().column},
-        }});
+        return ctx_.tree.add_expr(
+            ast::Expr{ast::Literal_expr{
+                .value = previous().literal,
+                .type = ctx_.tt.get_bool(),
+                .loc = {previous().line, previous().column},
+            }});
     }
 
     auto is_numeric_literal = [](const lex::Token &t) {
@@ -1914,19 +1952,21 @@ Result<ast::Expr_id> Parser::primary()
 
     if (is_numeric_literal(peek())) {
         lex::Token tok = advance();
-        return ctx_.tree.add_expr(ast::Expr{ast::Literal_expr{
-            .value = tok.literal,
-            .type = map_token_to_type(tok.type, ctx_.tt),
-            .loc = {tok.line, tok.column},
-        }});
+        return ctx_.tree.add_expr(
+            ast::Expr{ast::Literal_expr{
+                .value = tok.literal,
+                .type = map_token_to_type(tok.type, ctx_.tt),
+                .loc = {tok.line, tok.column},
+            }});
     }
 
     if (match({lex::TokenType::String})) {
-        return ctx_.tree.add_expr(ast::Expr{ast::Literal_expr{
-            .value = previous().literal,
-            .type = ctx_.tt.get_string(),
-            .loc = {previous().line, previous().column},
-        }});
+        return ctx_.tree.add_expr(
+            ast::Expr{ast::Literal_expr{
+                .value = previous().literal,
+                .type = ctx_.tt.get_string(),
+                .loc = {previous().line, previous().column},
+            }});
     }
 
     // identifier, primitive type namespaces (like string::), scope resolution, model literal
@@ -1949,27 +1989,24 @@ Result<ast::Expr_id> Parser::primary()
 
         if (match({lex::TokenType::ColonColon})) {
             // Type::Member  or  Union::Variant or Enum::Variant
-            DECL_OR_RETURN(member, consume(lex::TokenType::Identifier, "Expect member name after '::'"));
+            DECL_OR_RETURN(member, consume(lex::TokenType::Identifier, "Expect type name after '::'"));
             auto base_var_expr = ctx_.tree.add_expr(ast::Expr{ast::Variable_expr{id.lexeme, ctx_.tt.get_unknown(), {id.line, id.column}}});
-            return ctx_.tree.add_expr(ast::Expr{ast::Static_path_expr{
-                .base = base_var_expr,
-                .member = member,
-                .type = ctx_.tt.get_unknown(),
-                .loc = {member.line, member.column},
-            }});
-        }
-
-        if (check(lex::TokenType::Dot) && current_ + 1 < tokens_.size() && tokens_[current_ + 1].type == lex::TokenType::LeftBrace) {
-            advance();
-            return parse_model_literal(id.lexeme);
+            return ctx_.tree.add_expr(
+                ast::Expr{ast::Static_path_expr{
+                    .base = base_var_expr,
+                    .member = member,
+                    .type = ctx_.tt.get_unknown(),
+                    .loc = {member.line, member.column},
+                }});
         }
 
         // Otherwise, it's just a standard variable expression!
-        return ctx_.tree.add_expr(ast::Expr{ast::Variable_expr{
-            .name = id.lexeme,
-            .type = ctx_.tt.get_unknown(),
-            .loc = {id.line, id.column},
-        }});
+        return ctx_.tree.add_expr(
+            ast::Expr{ast::Variable_expr{
+                .name = id.lexeme,
+                .type = ctx_.tt.get_unknown(),
+                .loc = {id.line, id.column},
+            }});
     }
 
     // grouped expression

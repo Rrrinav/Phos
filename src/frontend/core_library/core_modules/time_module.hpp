@@ -147,13 +147,16 @@ inline void register_time(Type_environment &env)
 {
     // 1. Register the DateTime Model
     auto datetime_type = env.define_native_model(
-        "time::DateTime",
-        {{"year", env.tt.get_i64()},
-         {"month", env.tt.get_i64()},
-         {"day", env.tt.get_i64()},
-         {"hour", env.tt.get_i64()},
-         {"minute", env.tt.get_i64()},
-         {"second", env.tt.get_i64()}});
+        "time::Date_time",
+        {
+            {"year", env.tt.get_i64()},
+            {"month", env.tt.get_i64()},
+            {"day", env.tt.get_i64()},
+            {"hour", env.tt.get_i64()},
+            {"minute", env.tt.get_i64()},
+            {"second", env.tt.get_i64()}
+        }
+    );
 
     // Cache the signature for the FFI builder
     time_datetime_sig = env.tt.get(datetime_type).as<types::Model_type>();
@@ -180,7 +183,7 @@ inline void register_time(Type_environment &env)
     env.define_native(
         "time::parse_utc",
         std::vector<Native_param>{Native_param{.name = "date_str", .type_str = "string", .default_value = std::nullopt}},
-        "time::DateTime?", // Returns an optional DateTime model now!
+        "time::Date_time?", // Returns an optional DateTime model now!
         time_native::parse_utc);
 
     // 6. Parsing and Arithmetic
@@ -193,12 +196,12 @@ inline void register_time(Type_environment &env)
         time_native::diff);
 
     // 7. Constants
-    env.define_native_const("time::MS_PER_SEC", Value(static_cast<int64_t>(1000)));
-    env.define_native_const("time::US_PER_SEC", Value(static_cast<int64_t>(1000000)));
-    env.define_native_const("time::NS_PER_SEC", Value(static_cast<int64_t>(1000000000)));
-    env.define_native_const("time::SEC_PER_MIN", Value(static_cast<int64_t>(60)));
-    env.define_native_const("time::MIN_PER_HOUR", Value(static_cast<int64_t>(60)));
-    env.define_native_const("time::HOUR_PER_DAY", Value(static_cast<int64_t>(24)));
+    env.define_native_const("time::MS_PER_SEC", Value(static_cast<int64_t>(1000)), "i64");
+    env.define_native_const("time::US_PER_SEC", Value(static_cast<int64_t>(1000000)), "i64");
+    env.define_native_const("time::NS_PER_SEC", Value(static_cast<int64_t>(1000000000)), "i64");
+    env.define_native_const("time::SEC_PER_MIN", Value(static_cast<int64_t>(60)), "i64");
+    env.define_native_const("time::MIN_PER_HOUR", Value(static_cast<int64_t>(60)), "i64");
+    env.define_native_const("time::HOUR_PER_DAY", Value(static_cast<int64_t>(24)), "i64");
 }
 
 } // namespace phos::vm::modules

@@ -538,47 +538,47 @@ inline void register_math(Type_environment &env)
     env.define_native("math::digit_sum", std::vector<std::string>{"i32"}, "i64", math_native::digit_sum);
 
     // --- Constants ---
-    env.define_native_const("math::pi", Value(3.14159265358979323846));
-    env.define_native_const("math::tau", Value(6.28318530717958647692));
-    env.define_native_const("math::e", Value(2.71828182845904523536));
-    env.define_native_const("math::phi", Value(1.61803398874989484820));
-    env.define_native_const("math::sqrt2", Value(1.41421356237309504880));
-    env.define_native_const("math::sqrt3", Value(1.73205080756887729353));
-    env.define_native_const("math::ln2", Value(0.69314718055994530942));
-    env.define_native_const("math::ln10", Value(2.30258509299404568402));
-    env.define_native_const("math::log2e", Value(1.44269504088896340736));
-    env.define_native_const("math::log10e", Value(0.43429448190325182765));
-    env.define_native_const("math::inf", Value(std::numeric_limits<double>::infinity()));
-    env.define_native_const("math::nan", Value(std::numeric_limits<double>::quiet_NaN()));
-    env.define_native_const("math::epsilon", Value(std::numeric_limits<double>::epsilon()));
-    env.define_native_const("math::max_f64", Value(std::numeric_limits<double>::max()));
-    env.define_native_const("math::min_f64", Value(std::numeric_limits<double>::lowest()));
-    env.define_native_const("math::max_f32", Value(std::numeric_limits<float>::max()));
-    env.define_native_const("math::min_f32", Value(std::numeric_limits<float>::lowest()));
-    env.define_native_const("math::max_f16", Value(std::numeric_limits<float>::max()));
-    env.define_native_const("math::min_f16", Value(std::numeric_limits<float>::lowest()));
-    env.define_native_const("math::max_f16", Value(65504.0f));
-    env.define_native_const("math::min_f16", Value(-65504.0f));
-    env.define_native_const("math::smallest_f16", Value(6.10352e-5f));
-    env.define_native_const("math::tiny_f16", Value(5.96046e-8f));
+    env.define_native_const("math::pi", Value(3.14159265358979323846), "f64");
+    env.define_native_const("math::tau", Value(6.28318530717958647692), "f64");
+    env.define_native_const("math::e", Value(2.71828182845904523536), "f64");
+    env.define_native_const("math::phi", Value(1.61803398874989484820), "f64");
+    env.define_native_const("math::sqrt2", Value(1.41421356237309504880), "f64");
+    env.define_native_const("math::sqrt3", Value(1.73205080756887729353), "f64");
+    env.define_native_const("math::ln2", Value(0.69314718055994530942), "f64");
+    env.define_native_const("math::ln10", Value(2.30258509299404568402), "f64");
+    env.define_native_const("math::log2e", Value(1.44269504088896340736), "f64");
+    env.define_native_const("math::log10e", Value(0.43429448190325182765), "f64");
+    env.define_native_const("math::inf", Value(std::numeric_limits<double>::infinity()), "f64");
+    env.define_native_const("math::nan", Value(std::numeric_limits<double>::quiet_NaN()), "f64");
+    env.define_native_const("math::epsilon", Value(std::numeric_limits<double>::epsilon()), "f64");
+    env.define_native_const("math::max_f64", Value(std::numeric_limits<double>::max()), "f64");
+    env.define_native_const("math::min_f64", Value(std::numeric_limits<double>::lowest()), "f64");
+    env.define_native_const("math::max_f32", Value(std::numeric_limits<float>::max()), "f32");
+    env.define_native_const("math::min_f32", Value(std::numeric_limits<float>::lowest()), "f32");
+    env.define_native_const("math::max_f16", Value(std::numeric_limits<float>::max()), "f16");
+    env.define_native_const("math::min_f16", Value(std::numeric_limits<float>::lowest()), "f16");
+    env.define_native_const("math::max_f16", Value(65504.0f), "f16");
+    env.define_native_const("math::min_f16", Value(-65504.0f), "f16");
+    env.define_native_const("math::smallest_f16", Value(6.10352e-5f), "f16");
+    env.define_native_const("math::tiny_f16", Value(5.96046e-8f), "f16");
 
-    env.define_native_const("math::max_i64", Value(std::numeric_limits<int64_t>::max()));
-    env.define_native_const("math::min_i64", Value(std::numeric_limits<int64_t>::min()));
-    env.define_native_const("math::max_i32", Value(std::numeric_limits<int32_t>::max()));
-    env.define_native_const("math::min_i32", Value(std::numeric_limits<int32_t>::min()));
-    env.define_native_const("math::max_i16", Value(std::numeric_limits<int16_t>::max()));
-    env.define_native_const("math::min_i16", Value(std::numeric_limits<int16_t>::min()));
-    env.define_native_const("math::max_i8", Value(std::numeric_limits<int8_t>::max()));
-    env.define_native_const("math::min_i8", Value(std::numeric_limits<int8_t>::min()));
+    env.define_native_const("math::max_i64", Value(std::numeric_limits<int64_t>::max()), "i64");
+    env.define_native_const("math::min_i64", Value(std::numeric_limits<int64_t>::min()), "i64");
+    env.define_native_const("math::max_i32", Value(std::numeric_limits<int32_t>::max()), "i32");
+    env.define_native_const("math::min_i32", Value(std::numeric_limits<int32_t>::min()), "i32");
+    env.define_native_const("math::max_i16", Value(std::numeric_limits<int16_t>::max()), "i16");
+    env.define_native_const("math::min_i16", Value(std::numeric_limits<int16_t>::min()), "i16");
+    env.define_native_const("math::max_i8", Value(std::numeric_limits<int8_t>::max()), "i8");
+    env.define_native_const("math::min_i8", Value(std::numeric_limits<int8_t>::min()), "i8");
 
-    env.define_native_const("math::max_u64", Value(std::numeric_limits<uint64_t>::max()));
-    env.define_native_const("math::min_u64", Value(std::numeric_limits<uint64_t>::min()));
-    env.define_native_const("math::max_u32", Value(std::numeric_limits<uint32_t>::max()));
-    env.define_native_const("math::min_u32", Value(std::numeric_limits<uint32_t>::min()));
-    env.define_native_const("math::max_u16", Value(std::numeric_limits<uint16_t>::max()));
-    env.define_native_const("math::min_u16", Value(std::numeric_limits<uint16_t>::min()));
-    env.define_native_const("math::max_u8", Value(std::numeric_limits<uint8_t>::max()));
-    env.define_native_const("math::min_u8", Value(std::numeric_limits<uint8_t>::min()));
+    env.define_native_const("math::max_u64", Value(std::numeric_limits<uint64_t>::max()), "u64");
+    env.define_native_const("math::min_u64", Value(std::numeric_limits<uint64_t>::min()), "u64");
+    env.define_native_const("math::max_u32", Value(std::numeric_limits<uint32_t>::max()), "u32");
+    env.define_native_const("math::min_u32", Value(std::numeric_limits<uint32_t>::min()), "u32");
+    env.define_native_const("math::max_u16", Value(std::numeric_limits<uint16_t>::max()), "u16");
+    env.define_native_const("math::min_u16", Value(std::numeric_limits<uint16_t>::min()), "u16");
+    env.define_native_const("math::max_u8", Value(std::numeric_limits<uint8_t>::max()), "u8");
+    env.define_native_const("math::min_u8", Value(std::numeric_limits<uint8_t>::min()), "u8");
 }
 
 } // namespace phos::vm::modules
