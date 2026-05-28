@@ -1,0 +1,39 @@
+import io;
+
+fn main() {
+    let opened := io::open("Readme.md");
+
+    if opened.has(io::Open_result::Error) {
+        let err: io::Error = opened.get(io::Open_result::Error);
+        print("open failed: ", err.kind, " ", err.message, " ", err.path, sep = "");
+        return;
+    }
+
+    let stream: io::In_stream = opened.get(io::Open_result::Ok);
+    print("source = ", stream.source, " open = ", stream.is_open(), sep = "");
+
+    while true {
+        let chunk: io::Read_line_result = stream.read_line();
+
+        if chunk.has(io::Read_line_result::Eof) {
+            break;
+        }
+
+        if chunk.has(io::Read_line_result::Error) {
+            let err: io::Error = chunk.get(io::Read_line_result::Error);
+            print("read failed: ", err.kind, " ", err.message, sep = "");
+            break;
+        }
+
+        print(chunk.get(io::Read_line_result::Ok));
+    }
+
+    let closed: io::Status = stream.close();
+    print("close ok = ", closed.has(io::Status::Ok), sep = "");
+
+    let stdin_stream: io::In_stream = io::stdin();
+    print("stdin open = ", stdin_stream.is_open(), sep = "");
+}
+
+main();
+

@@ -4063,6 +4063,45 @@ types::Type_id Semantic_checker::check_method_call_expr(ast::Expr_id expr_id, st
         return true;
     };
 
+    if (std::holds_alternative<ast::Variable_expr>(ctx.tree.get(obj_id).node)) {
+        auto var_callee_name = get_node<ast::Variable_expr>(ctx.tree, obj_id).name;
+
+        if (var_callee_name == "len") {
+            if (!bind_intrinsic({"collection"}, "len")) {
+                return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+            }
+            auto arg_type = check_expr(arguments_copy[0].value);
+            if (!ctx.tt.is_string(arg_type) && !ctx.tt.is_array(arg_type)) {
+                type_error(loc, "len() expects a string or an array.");
+            }
+            get_node<ast::Method_call_expr>(ctx.tree, expr_id).arguments = std::move(arguments_copy);
+            return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type = ctx.tt.get_u64();
+        }
+
+        if (var_callee_name == "iter") {
+            if (!bind_intrinsic({"iterable"}, "iter")) {
+                return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+            }
+            auto arg_type_res = check_expr(arguments_copy[0].value);
+            auto iter_type = to_iterator_type(arg_type_res);
+            if (!is_iterator_protocol_type(iter_type)) {
+                type_error(loc, "Value passed to iter() is not iterable.");
+                return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+            }
+            get_node<ast::Method_call_expr>(ctx.tree, expr_id).arguments = std::move(arguments_copy);
+            return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type = iter_type;
+        }
+
+        if (var_callee_name == "clone") {
+            if (!bind_intrinsic({"value"}, "clone")) {
+                return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+            }
+            auto ret = check_expr(arguments_copy[0].value);
+            get_node<ast::Method_call_expr>(ctx.tree, expr_id).arguments = std::move(arguments_copy);
+            return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type = ret;
+        }
+    }
+
     auto obj_type = check_expr(obj_id);
 
     if (ctx.tt.is_any(obj_type)) {
@@ -4088,13 +4127,13 @@ types::Type_id Semantic_checker::check_method_call_expr(ast::Expr_id expr_id, st
             auto arg_expr_node = &ctx.tree.get(arguments_copy[0].value).node;
 
             if (auto *static_path = std::get_if<ast::Static_path_expr>(arg_expr_node)) {
+                variant_name = static_path->member.lexeme;
                 if (auto *var_expr = std::get_if<ast::Variable_expr>(&ctx.tree.get(static_path->base).node)) {
                     if (var_expr->name != union_t.name) {
                         type_error(
                             ast::get_loc(*arg_expr_node),
                             std::format("Argument to .{}() must be a variant of the same union type.", method_name));
                     }
-                    variant_name = static_path->member.lexeme;
                 }
             } else if (auto *em = std::get_if<ast::Enum_member_expr>(arg_expr_node)) {
                 variant_name = em->member_name;
@@ -4333,9 +4372,18 @@ types::Type_id Semantic_checker::check_method_call_expr(ast::Expr_id expr_id, st
             auto decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(method_decl_id).node);
 
             std::vector<ast::Call_argument> ufcs_args;
-            ufcs_args.push_back({"", obj_id, loc});
-            for (auto &arg : arguments_copy) {
-                ufcs_args.push_back(arg);
+
+            // NEW: Idempotent re-check guard. Since AST IDs are strictly unique per node in the Arena,
+            // if arguments_copy[0] exactly matches obj_id, it was already safely prepended!
+            bool already_bound = !arguments_copy.empty() && arguments_copy[0].value == obj_id;
+
+            if (already_bound) {
+                ufcs_args = arguments_copy;
+            } else {
+                ufcs_args.push_back({"", obj_id, loc});
+                for (auto &arg : arguments_copy) {
+                    ufcs_args.push_back(arg);
+                }
             }
 
             auto bound = bind_call_arguments(decl->parameters, ufcs_args, loc, "method", method_name);
@@ -4348,29 +4396,47 @@ types::Type_id Semantic_checker::check_method_call_expr(ast::Expr_id expr_id, st
 
             return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type
                 = effective_return_type(declared_return_types(decl->returns, ctx.tt), ctx.tt);
-        } else {
-            auto &model_t = std::get<types::Model_type>(ctx.tt.get(obj_type).data);
-            for (size_t i = 0; i < model_t.fields.size(); ++i) {
-                if (model_t.fields[i].first == method_name) {
-                    auto field_type = model_t.fields[i].second;
-                    if (ctx.tt.is_function(field_type)) {
-                        get_node<ast::Method_call_expr>(ctx.tree, expr_id).is_closure_field = true;
-                        get_node<ast::Method_call_expr>(ctx.tree, expr_id).field_index = static_cast<uint8_t>(i);
-                        auto func_type = ctx.tt.get(field_type).as<types::Function_type>();
+        }
 
-                        if (arguments_copy.size() != func_type.params.size()) {
-                            type_error(loc, "Incorrect number of arguments for closure field.");
-                        } else {
-                            for (size_t j = 0; j < arguments_copy.size(); ++j) {
-                                auto arg_res = check_expr(arguments_copy[j].value, func_type.params[j]);
-                                if (!is_compatible(func_type.params[j], arg_res)) {
-                                    type_error(ast::get_loc(ctx.tree.get(arguments_copy[j].value).node), "Argument type mismatch.");
-                                }
+        std::string native_model_method_name = model_name + "::" + method_name;
+        if (!model_name.empty() && ctx.type_env.is_native_defined(native_model_method_name)) {
+            const auto &signatures = *ctx.type_env.get_native_signatures(native_model_method_name);
+            for (size_t sig_index = 0; sig_index < signatures.size(); ++sig_index) {
+                auto bound = try_bind_native_arguments(signatures[sig_index].params, arguments_copy, obj_type);
+                if (bound.ok) {
+                    get_node<ast::Method_call_expr>(ctx.tree, expr_id).arguments = std::move(bound.ordered_arguments);
+                    get_node<ast::Method_call_expr>(ctx.tree, expr_id).native_signature_index = static_cast<int>(sig_index);
+                    auto ret = parse_type_string(signatures[sig_index].ret_type_str, bound.generics);
+                    return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type = ret;
+                }
+            }
+
+            type_error(loc, std::format("Arguments do not match any native signature for method '{}'.", method_name));
+            get_node<ast::Method_call_expr>(ctx.tree, expr_id).arguments = std::move(arguments_copy);
+            return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+        }
+
+        auto &model_t = std::get<types::Model_type>(ctx.tt.get(obj_type).data);
+        for (size_t i = 0; i < model_t.fields.size(); ++i) {
+            if (model_t.fields[i].first == method_name) {
+                auto field_type = model_t.fields[i].second;
+                if (ctx.tt.is_function(field_type)) {
+                    get_node<ast::Method_call_expr>(ctx.tree, expr_id).is_closure_field = true;
+                    get_node<ast::Method_call_expr>(ctx.tree, expr_id).field_index = static_cast<uint8_t>(i);
+                    auto func_type = ctx.tt.get(field_type).as<types::Function_type>();
+
+                    if (arguments_copy.size() != func_type.params.size()) {
+                        type_error(loc, "Incorrect number of arguments for closure field.");
+                    } else {
+                        for (size_t j = 0; j < arguments_copy.size(); ++j) {
+                            auto arg_res = check_expr(arguments_copy[j].value, func_type.params[j]);
+                            if (!is_compatible(func_type.params[j], arg_res)) {
+                                type_error(ast::get_loc(ctx.tree.get(arguments_copy[j].value).node), "Argument type mismatch.");
                             }
                         }
-                        get_node<ast::Method_call_expr>(ctx.tree, expr_id).arguments = std::move(arguments_copy);
-                        return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type = effective_return_type(func_type, ctx.tt);
                     }
+                    get_node<ast::Method_call_expr>(ctx.tree, expr_id).arguments = std::move(arguments_copy);
+                    return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type = effective_return_type(func_type, ctx.tt);
                 }
             }
         }

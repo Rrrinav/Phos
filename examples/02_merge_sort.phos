@@ -1,28 +1,28 @@
 fn merge(left: i64[], right: i64[]) -> i64[] {
     let mut result : i64[] = [];
-    let mut i := 0;
-    let mut j := 0;
+    let mut i : u64 = 0;
+    let mut j : u64 = 0;
 
     while i < len(left) && j < len(right) {
         if left[i] <= right[j] {
             result.push(left[i]);
-            i = i + 1;
+            i = i + 1u64;
         } else {
             result.push(right[j]);
-            j = j + 1;
+            j = j + 1u64;
         }
     }
 
     // Drain remaining left elements
     while i < len(left) {
         result.push(left[i]);
-        i = i + 1;
+        i = i + 1u64;
     }
 
     // Drain remaining right elements
     while j < len(right) {
         result.push(right[j]);
-        j = j + 1;
+        j = j + 1u64;
     }
 
     return result;
@@ -30,26 +30,26 @@ fn merge(left: i64[], right: i64[]) -> i64[] {
 
 fn merge_sort(arr: i64[]) -> i64[] {
     let length := len(arr);
-    if length <= 1 {
+    if length <= 1u64 {
         return arr;
     }
 
     // Cast the float division back to an integer!
-    let mid := (length / 2) as i64;
+    let mid := (length / 2u64) as u64;
 
     // Manually slice the arrays
     let mut left : i64[] = [];
-    let mut i := 0;
+    let mut i : u64 = 0;
     while i < mid {
         left.push(arr[i]);
-        i = i + 1;
+        i = i + 1u64;
     }
 
     let mut right : i64[] = [];
     let mut j := mid;
     while j < length {
         right.push(arr[j]);
-        j = j + 1;
+        j = j + 1u64;
     }
 
     // Recursive calls and merge
@@ -59,8 +59,8 @@ fn merge_sort(arr: i64[]) -> i64[] {
     return merge(left, right);
 }
 
-let unsorted := [38, 27, 43, 3, 9, 82, 10];
-print("Unsorted: ");
+let unsorted : i64[] = [38, 27, 43, 3, 9, 82, 10];
+print("Unsorted:");
 print(unsorted);
 let sorted := merge_sort(unsorted);
 print("Merge Sort Result:");

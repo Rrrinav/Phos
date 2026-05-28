@@ -89,9 +89,7 @@ static std::string string_diff(const std::string &got, const std::string &expect
     return out.str();
 }
 
-//  Core build primitives
-static bool
-compile_parallel(const std::vector<std::string> &srcs, const std::string &obj_root, bool release, bool force, std::vector<std::string> &obj_paths)
+static bool compile_parallel(const std::vector<std::string> &srcs, const std::string &obj_root, bool release, bool force, std::vector<std::string> &obj_paths)
 {
     std::vector<bld::Proc> procs;
 
@@ -174,9 +172,7 @@ static bool build_core_library(const std::string &obj_root, bool release, bool f
 {
     auto cpp_files = bld::fs::get_all_files_with_extensions(SRC, {"cpp"}, true);
 
-    cpp_files.erase(
-        std::remove_if(cpp_files.begin(), cpp_files.end(), [](const std::string &f) { return f.find("main.cpp") != std::string::npos; }),
-        cpp_files.end());
+    cpp_files.erase(std::remove_if(cpp_files.begin(), cpp_files.end(), [](const std::string &f) { return f.find("main.cpp") != std::string::npos; }), cpp_files.end());
 
     std::vector<std::string> obj_paths;
     bool any_compiled = compile_parallel(cpp_files, obj_root, release, force, obj_paths);

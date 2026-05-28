@@ -74,7 +74,7 @@ g++ ./bld.cpp -o ./bld
 - [ ] Proper I/O (reading input, file streams)
 - [ ] Optimisations
 
-- For I/O I am waiting for generics
+- Concrete string input streams exist now; generic result/stream abstractions still need generics
 
 ## TODO 2
 

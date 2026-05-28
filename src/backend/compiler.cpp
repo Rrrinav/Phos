@@ -1086,14 +1086,22 @@ void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
     }
 
     if (!stmt.body.is_null()) {
-        compile_stmt(stmt.body);
+        if (const auto *body_block = std::get_if<ast::Block_stmt>(&ctx.tree.get(stmt.body).node)) {
+            for (const auto &body_stmt : body_block->statements) {
+                compile_stmt(body_stmt);
+            }
+        } else {
+            compile_stmt(stmt.body);
+        }
     }
 
-    pop_scope();
-
+    // Function-scoped defers must still see locals declared in the function body,
+    // so emit them before we pop the body scope.
     for (auto it = current_ctx_->function_defers.rbegin(); it != current_ctx_->function_defers.rend(); ++it) {
         compile_stmt(*it);
     }
+
+    pop_scope();
 
     auto normalized_returns = declared_return_types(stmt.returns, ctx.tt);
     if (normalized_returns.empty()) {
@@ -2428,34 +2436,70 @@ uint8_t Compiler::compile_expr_node(const ast::Method_call_expr &expr)
                     return dest_reg;
                 }
             }
-        } else {
-            auto &model_t = std::get<types::Model_type>(ctx.tt.get(obj_type).data);
-            for (size_t i = 0; i < model_t.fields.size(); ++i) {
-                if (model_t.fields[i].first == expr.method_name) {
+        }
+
+        std::string native_model_method_name = model_name + "::" + expr.method_name;
+        if (!model_name.empty() && ctx.type_env.is_native_defined(native_model_method_name)) {
+            if (auto sym_id = ctx.registry.lookup_global(native_model_method_name)) {
+                if (function_locations_.contains(*sym_id)) {
                     uint8_t obj_reg = compile_expr(expr.object);
-                    uint8_t field_idx = static_cast<uint8_t>(i);
-                    uint8_t func_reg = allocate_register();
-                    emit(vm::Instruction::make_rrr(vm::Opcode::Load_field, func_reg, obj_reg, field_idx));
 
                     std::vector<uint8_t> arg_eval_regs;
                     for (const auto &arg : expr.arguments) {
                         arg_eval_regs.push_back(compile_expr(arg.value));
                     }
 
+                    uint8_t func_reg = allocate_register();
+                    Closure_data *closure = function_locations_.at(*sym_id);
+                    uint16_t const_idx = add_constant(Value::make_closure(closure));
+                    emit(vm::Instruction::make_ri(vm::Opcode::Load_const, func_reg, const_idx));
+
                     uint8_t call_base_reg = allocate_register();
                     emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base_reg, func_reg, 0));
 
-                    for (size_t j = 0; j < expr.arguments.size(); ++j) {
+                    uint8_t arg_this = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_this, obj_reg, 0));
+
+                    for (size_t i = 0; i < expr.arguments.size(); ++i) {
                         uint8_t arg_reg = allocate_register();
-                        emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_reg, arg_eval_regs[j], 0));
+                        emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_reg, arg_eval_regs[i], 0));
                     }
 
                     uint8_t dest_reg = allocate_register();
-                    uint8_t argc = static_cast<uint8_t>(expr.arguments.size());
+                    uint8_t argc = static_cast<uint8_t>(expr.arguments.size() + 1);
                     emit(vm::Instruction::make_rrr(vm::Opcode::Call, dest_reg, call_base_reg, argc));
 
                     return dest_reg;
                 }
+            }
+        }
+
+        auto &model_t = std::get<types::Model_type>(ctx.tt.get(obj_type).data);
+        for (size_t i = 0; i < model_t.fields.size(); ++i) {
+            if (model_t.fields[i].first == expr.method_name) {
+                uint8_t obj_reg = compile_expr(expr.object);
+                uint8_t field_idx = static_cast<uint8_t>(i);
+                uint8_t func_reg = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Load_field, func_reg, obj_reg, field_idx));
+
+                std::vector<uint8_t> arg_eval_regs;
+                for (const auto &arg : expr.arguments) {
+                    arg_eval_regs.push_back(compile_expr(arg.value));
+                }
+
+                uint8_t call_base_reg = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base_reg, func_reg, 0));
+
+                for (size_t j = 0; j < expr.arguments.size(); ++j) {
+                    uint8_t arg_reg = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Move, arg_reg, arg_eval_regs[j], 0));
+                }
+
+                uint8_t dest_reg = allocate_register();
+                uint8_t argc = static_cast<uint8_t>(expr.arguments.size());
+                emit(vm::Instruction::make_rrr(vm::Opcode::Call, dest_reg, call_base_reg, argc));
+
+                return dest_reg;
             }
         }
     }

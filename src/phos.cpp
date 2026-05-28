@@ -3,6 +3,7 @@
 #include "backend/assembler.hpp"
 #include "backend/compiler.hpp"
 #include "frontend/core_library/core_modules/ffi_demo_module.hpp"
+#include "frontend/core_library/core_modules/io_module.hpp"
 #include "frontend/core_library/core_modules/math_module.hpp"
 #include "frontend/core_library/core_modules/time_module.hpp"
 #include "frontend/lexer/lexer.hpp"
@@ -72,6 +73,7 @@ bool Phos_engine::compile_source(const std::string &source, const std::string &l
 
     Module_resolver module_resolver(ctx, root_dir);
     module_resolver.register_ffi("ffi_demo", [](Type_environment &env) { vm::modules::register_ffi_demo(env); });
+    module_resolver.register_ffi("io", [](Type_environment &env) { vm::modules::register_io(env); });
     module_resolver.register_ffi("math", [](Type_environment &env) { vm::modules::register_math(env); });
     module_resolver.register_ffi("time", [](Type_environment &env) { vm::modules::register_time(env); });
 
