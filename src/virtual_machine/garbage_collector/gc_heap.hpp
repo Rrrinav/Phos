@@ -86,13 +86,13 @@ private:
     std::vector<phos::Value *> extra_roots_;
 
     void mark_value(phos::Value &v);
-    void mark_cell(Gc_cell *cell); 
-    void trace_gray();             
+    void mark_cell(Gc_cell *cell);
+    void trace_gray();
 
     void trace_string(Gc_cell *cell);
     void trace_array(Gc_cell *cell);
     void trace_model(Gc_cell *cell);
-    void trace_union_(Gc_cell *cell); 
+    void trace_union_(Gc_cell *cell);
     void trace_closure(Gc_cell *cell);
     void trace_iterator(Gc_cell *cell);
     void trace_thread(Gc_cell *cell);

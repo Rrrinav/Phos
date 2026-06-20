@@ -3,6 +3,7 @@
 #include "core/value/value.hpp"
 
 #include <cstdint>
+#include <flat_map>
 #include <string>
 
 namespace phos::lex {
@@ -170,7 +171,7 @@ struct Token
 
 //  Keyword map
 
-static const std::unordered_map<std::string_view, TokenType> token_keywords = {
+static const std::flat_map<std::string_view, TokenType> token_keywords = {
     // binding
     {"let", TokenType::Let},
     {"mut", TokenType::Mut},

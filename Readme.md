@@ -2,8 +2,6 @@
 
 > An interpreted statically typed scripting language with proper type checking
 
-GC not implemented yet.
-
 I aim at adding a lot of features for learning purposes, they may not be perfect though.
 
 ## Example

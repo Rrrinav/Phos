@@ -5,6 +5,7 @@
 #include "core/arena.hpp"
 
 #include <cctype>
+#include <flat_map>
 #include <format>
 #include <optional>
 #include <string>
@@ -50,10 +51,9 @@ private:
 
     phos::mem::Arena& arena_;
     std::string source_name_;
-    const std::unordered_map<std::string_view, TokenType> keywords = token_keywords;
+    const std::flat_map<std::string_view, TokenType> keywords = token_keywords;
 
     //  primitives
-
     bool is_at_end() const
     {
         return current >= source.size();

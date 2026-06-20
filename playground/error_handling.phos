@@ -57,3 +57,60 @@ fn main() {
 
     io::printf("Server booted on port {}", prt);
 }
+
+enum errt {
+    enum io {
+        file_doesn't_exit,
+        could_not_open_file,
+    }
+}
+
+model Err(et: $errt = errt, $e := string) {
+    type: errt;
+    msg: e;
+}
+
+union Result($T, $e = string) {
+    val: T;
+    err: Err;
+}
+
+bind Result {
+    operator bool() {
+        return !this.has(Result::err);
+    }
+}
+
+bind enum errt::io {
+    new_err,
+}
+
+// Both io::open and io::File::read_all return type with error err::io
+fn read_entire_file(path: io::fs::path) Result(string, errt::io) {
+    // Dk how monadic thing will work tbh
+    return io::open(path.str()).then(fn(f: io::File) {
+        return f.read_all();
+    });
+}
+
+
+fn read_entire_file(path: io::fs::path) Result(string, errt::io) {
+    let mut opened := io::open(path.str())?;
+    // if error, returns error, otherwise string
+    // idk if .{ ... } is necessary
+    return .{ opened.read_all(); }
+}
+
+fn read_entire_file(path: io::fs::path) Result(string, errt::io) {
+    // if error, returns error, otherwise string
+    return io::open(path.str()).opened.read_all();;
+}
+
+let read : string;
+
+if res := read_entire_file() {
+    read = res.get();
+} else {
+    let err := res.get();
+    print(to_string(err.type), err.msg);
+}
