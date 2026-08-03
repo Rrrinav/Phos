@@ -1,8 +1,8 @@
 #pragma once
 
-#include "token.hpp"
-#include "core/error/err.hpp"
 #include "core/arena.hpp"
+#include "core/error/err.hpp"
+#include "token.hpp"
 
 #include <cctype>
 #include <flat_map>
@@ -14,7 +14,6 @@
 
 namespace phos::lex {
 
-// BUG: fix wrap around in this let mut x : u64 = 4294967296u64;
 class Lexer
 {
 public:
@@ -50,7 +49,7 @@ private:
     size_t line = 1;
     size_t column = 1;
 
-    phos::mem::Arena& arena_;
+    phos::mem::Arena &arena_;
     std::string source_name_;
     const std::flat_map<std::string_view, TokenType> keywords = token_keywords;
 
@@ -232,17 +231,22 @@ private:
             }
             if (match('*')) {
                 // block comment — consume until */
+                bool closed = false;
                 while (!is_at_end()) {
-                    if (peek() == '\n') {
-                        line++;
-                        column = 1;
-                    }
                     if (peek() == '*' && peek_next() == '/') {
                         advance();
                         advance(); // consume '*' '/'
+                        closed = true;
                         break;
                     }
-                    advance();
+                    char cc = advance();
+                    if (cc == '\n') {
+                        line++;
+                        column = 1;
+                    }
+                }
+                if (!closed) {
+                    return Token(TokenType::Invalid, std::string("Unterminated block comment"), Value(), line, start_col);
                 }
                 return std::nullopt;
             }
@@ -516,12 +520,14 @@ private:
 
         if (peek() == 'e' || peek() == 'E') {
             size_t exp_pos = current;
+            size_t exp_col = column;
             advance();
             if (peek() == '+' || peek() == '-') {
                 advance();
             }
             if (!consume_digits([](char c) { return std::isdigit(static_cast<unsigned char>(c)); })) {
                 current = exp_pos;
+                column = exp_col;
             } else {
                 is_float = true;
             }
@@ -529,7 +535,13 @@ private:
 
         std::string cleaned = strip_underscores(source.substr(start, current - start));
         if (is_float) {
-            return finish_numeric_token(Value(std::stod(cleaned)), TokenType::Float64);
+            double dval;
+            try {
+                dval = std::stod(cleaned);
+            } catch (const std::exception &) {
+                return Token(TokenType::Invalid, std::string("Float literal out of range"), Value(), line, start_col);
+            }
+            return finish_numeric_token(Value(dval), TokenType::Float64);
         }
 
         auto raw = parse_full_width(cleaned, 10);
