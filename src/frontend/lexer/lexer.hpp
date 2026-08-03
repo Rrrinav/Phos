@@ -14,6 +14,7 @@
 
 namespace phos::lex {
 
+// BUG: fix wrap around in this let mut x : u64 = 4294967296u64;
 class Lexer
 {
 public:
@@ -375,19 +376,41 @@ private:
 
             TokenType final_type = default_token_type;
             switch (*suffix_kind) {
-                case types::Primitive_kind::I8:  final_type = TokenType::TInt8; break;
-                case types::Primitive_kind::I16: final_type = TokenType::TInt16; break;
-                case types::Primitive_kind::I32: final_type = TokenType::TInt32; break;
-                case types::Primitive_kind::I64: final_type = TokenType::TInt64; break;
-                case types::Primitive_kind::U8:  final_type = TokenType::TUInt8; break;
-                case types::Primitive_kind::U16: final_type = TokenType::TUInt16; break;
-                case types::Primitive_kind::U32: final_type = TokenType::TUInt32; break;
-                case types::Primitive_kind::U64: final_type = TokenType::TUInt64; break;
-                case types::Primitive_kind::F16: final_type = TokenType::TFloat16; break;
-                case types::Primitive_kind::F32: final_type = TokenType::TFloat32; break;
-                case types::Primitive_kind::F64: final_type = TokenType::TFloat64; break;
-                default:
-                     return Token(TokenType::Invalid, lexeme, Value(), line, start_col);
+            case types::Primitive_kind::I8:
+                final_type = TokenType::TInt8;
+                break;
+            case types::Primitive_kind::I16:
+                final_type = TokenType::TInt16;
+                break;
+            case types::Primitive_kind::I32:
+                final_type = TokenType::TInt32;
+                break;
+            case types::Primitive_kind::I64:
+                final_type = TokenType::TInt64;
+                break;
+            case types::Primitive_kind::U8:
+                final_type = TokenType::TUInt8;
+                break;
+            case types::Primitive_kind::U16:
+                final_type = TokenType::TUInt16;
+                break;
+            case types::Primitive_kind::U32:
+                final_type = TokenType::TUInt32;
+                break;
+            case types::Primitive_kind::U64:
+                final_type = TokenType::TUInt64;
+                break;
+            case types::Primitive_kind::F16:
+                final_type = TokenType::TFloat16;
+                break;
+            case types::Primitive_kind::F32:
+                final_type = TokenType::TFloat32;
+                break;
+            case types::Primitive_kind::F64:
+                final_type = TokenType::TFloat64;
+                break;
+            default:
+                return Token(TokenType::Invalid, lexeme, Value(), line, start_col);
             }
 
             return Token(final_type, lexeme, coerced.value(), line, start_col);
@@ -423,6 +446,22 @@ private:
             return saw_digit;
         };
 
+        // parses the full unsigned 64-bit magnitude for a given base, without
+        // truncating to 32 bits — truncation must happen only after the
+        // suffix (if any) is known, inside finish_numeric_token/coerce_numeric_literal.
+        auto parse_full_width = [&](std::string_view digits, int base) -> std::optional<std::uint64_t> {
+            try {
+                size_t pos = 0;
+                std::uint64_t val = std::stoull(std::string(digits), &pos, base);
+                if (pos != digits.size()) {
+                    return std::nullopt;
+                }
+                return val;
+            } catch (const std::exception &) {
+                return std::nullopt;
+            }
+        };
+
         // hex literal: 0x...
         if (source[start] == '0' && (peek() == 'x' || peek() == 'X')) {
             advance(); // consume 'x'
@@ -430,8 +469,11 @@ private:
                 return Token(TokenType::Invalid, std::string("Invalid hex literal"), Value(), line, start_col);
             }
             std::string cleaned = strip_underscores(source.substr(start, current - start));
-            int32_t val = std::stoll(cleaned, nullptr, 16);
-            return finish_numeric_token(Value(static_cast<std::int32_t>(val)), TokenType::Integer32);
+            auto raw = parse_full_width(std::string_view(cleaned).substr(2), 16);
+            if (!raw) {
+                return Token(TokenType::Invalid, std::string("Hex literal out of range"), Value(), line, start_col);
+            }
+            return finish_numeric_token(Value(*raw), TokenType::Integer32);
         }
 
         // binary literal: 0b...
@@ -441,8 +483,11 @@ private:
                 return Token(TokenType::Invalid, std::string("Invalid binary literal"), Value(), line, start_col);
             }
             std::string cleaned = strip_underscores(source.substr(start, current - start));
-            int32_t val = std::stoll(cleaned.substr(2), nullptr, 2);
-            return finish_numeric_token(Value(static_cast<std::int32_t>(val)), TokenType::Integer32);
+            auto raw = parse_full_width(std::string_view(cleaned).substr(2), 2);
+            if (!raw) {
+                return Token(TokenType::Invalid, std::string("Binary literal out of range"), Value(), line, start_col);
+            }
+            return finish_numeric_token(Value(*raw), TokenType::Integer32);
         }
 
         // octal literal: 0o...
@@ -452,8 +497,11 @@ private:
                 return Token(TokenType::Invalid, std::string("Invalid octal literal"), Value(), line, start_col);
             }
             std::string cleaned = strip_underscores(source.substr(start, current - start));
-            int32_t val = std::stoll(cleaned.substr(2), nullptr, 8);
-            return finish_numeric_token(Value(static_cast<std::int32_t>(val)), TokenType::Integer32);
+            auto raw = parse_full_width(std::string_view(cleaned).substr(2), 8);
+            if (!raw) {
+                return Token(TokenType::Invalid, std::string("Octal literal out of range"), Value(), line, start_col);
+            }
+            return finish_numeric_token(Value(*raw), TokenType::Integer32);
         }
 
         consume_digits([](char c) { return std::isdigit(static_cast<unsigned char>(c)); }, true);
@@ -484,7 +532,11 @@ private:
             return finish_numeric_token(Value(std::stod(cleaned)), TokenType::Float64);
         }
 
-        return finish_numeric_token(Value(static_cast<std::int32_t>(std::stoll(cleaned))), TokenType::Integer32);
+        auto raw = parse_full_width(cleaned, 10);
+        if (!raw) {
+            return Token(TokenType::Invalid, std::string("Integer literal out of range"), Value(), line, start_col);
+        }
+        return finish_numeric_token(Value(*raw), TokenType::Integer32);
     }
 
     //  identifier / keyword scanner
