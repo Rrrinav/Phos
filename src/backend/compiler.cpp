@@ -103,6 +103,12 @@ void Compiler::hoist_function_placeholder(Symbol_id id)
         new (closure) Closure_data();
         function_locations_[id] = closure;
     }
+
+    if (!function_global_slots_.contains(id)) {
+        // Reserve a VM global slot for the live closure instance. Populated
+        // at the function's declaration; referenced by every call site.
+        function_global_slots_[id] = ctx.registry.next_global_index++;
+    }
 }
 
 void Compiler::hoist_module_functions(const Module_unit &module)
@@ -158,14 +164,14 @@ int Compiler::resolve_local(Function_context *fctx, const std::string &name)
     return -1;
 }
 
-int Compiler::add_upvalue(Function_context *fctx, uint8_t index, bool is_local)
+int Compiler::add_upvalue(Function_context *fctx, const std::string &name, uint8_t index, bool is_local)
 {
     for (size_t i = 0; i < fctx->upvalues.size(); i++) {
         if (fctx->upvalues[i].index == index && fctx->upvalues[i].is_local == is_local) {
             return static_cast<int>(i);
         }
     }
-    fctx->upvalues.push_back({index, is_local});
+    fctx->upvalues.push_back({name, index, is_local});
     return static_cast<int>(fctx->upvalues.size() - 1);
 }
 
@@ -204,12 +210,12 @@ int Compiler::resolve_upvalue(Function_context *fctx, const std::string &name)
 
     int local_index = resolve_local(fctx->enclosing, name);
     if (local_index != -1) {
-        return add_upvalue(fctx, static_cast<uint8_t>(local_index), true);
+        return add_upvalue(fctx, name, static_cast<uint8_t>(local_index), true);
     }
 
     int upvalue_index = resolve_upvalue(fctx->enclosing, name);
     if (upvalue_index != -1) {
-        return add_upvalue(fctx, static_cast<uint8_t>(upvalue_index), false);
+        return add_upvalue(fctx, name, static_cast<uint8_t>(upvalue_index), false);
     }
 
     return -1;
@@ -225,6 +231,7 @@ Closure_data Compiler::compile_workspace([[maybe_unused]] Module_id main_mod)
     root_ctx_ = nullptr;
     current_module_ns_.clear();
     function_locations_.clear();
+    function_global_slots_.clear();
     push_context(&global_ctx);
 
     for (const auto &[name, sigs] : ctx.type_env.native_signatures) {
@@ -309,6 +316,7 @@ Closure_data Compiler::compile(const std::vector<ast::Stmt_id> &statements)
     root_ctx_ = nullptr;
     current_module_ns_.clear();
     function_locations_.clear();
+    function_global_slots_.clear();
     push_context(&global_ctx);
 
     for (const auto &[name, sigs] : ctx.type_env.native_signatures) {
@@ -434,6 +442,31 @@ vm::Opcode Compiler::cast_opcode_for(types::Type_id type) const
         return vm::Opcode::Cast_f64;
     default:
         std::println(std::cerr, "Compiler Bug: No cast opcode for type '{}'.", ctx.tt.to_string(type));
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+vm::Opcode Compiler::saturating_cast_opcode_for(types::Type_id type) const
+{
+    switch (ctx.tt.get_primitive(type)) {
+    case types::Primitive_kind::I8:
+        return vm::Opcode::Sat_cast_i8;
+    case types::Primitive_kind::I16:
+        return vm::Opcode::Sat_cast_i16;
+    case types::Primitive_kind::I32:
+        return vm::Opcode::Sat_cast_i32;
+    case types::Primitive_kind::I64:
+        return vm::Opcode::Sat_cast_i64;
+    case types::Primitive_kind::U8:
+        return vm::Opcode::Sat_cast_u8;
+    case types::Primitive_kind::U16:
+        return vm::Opcode::Sat_cast_u16;
+    case types::Primitive_kind::U32:
+        return vm::Opcode::Sat_cast_u32;
+    case types::Primitive_kind::U64:
+        return vm::Opcode::Sat_cast_u64;
+    default:
+        std::println(std::cerr, "Compiler Bug: No saturating cast opcode for type '{}'.", ctx.tt.to_string(type));
         std::exit(EXIT_FAILURE);
     }
 }
@@ -712,10 +745,35 @@ void Compiler::compile_stmt_node(const ast::Expr_stmt &stmt)
 
 void Compiler::compile_stmt_node(const ast::Var_stmt &stmt)
 {
+    const bool is_static = (stmt.kind == ast::Var_kind::Static || stmt.kind == ast::Var_kind::Static_mut);
+    const bool is_function_local_static = is_static && current_ctx_ != nullptr && current_ctx_->enclosing != nullptr;
+
+    // A `static` declared inside a function body must be initialized exactly
+    // once across all invocations (and all closures created in the function),
+    // so guard the initializer behind a flag global slot.
+    std::optional<uint32_t> guard_index;
+    size_t jump_to_init_idx = 0;
+    size_t skip_jump_idx = 0;
+
+    if (is_function_local_static) {
+        guard_index = ctx.registry.next_global_index++;
+        uint8_t guard_reg = allocate_register();
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_global, guard_reg, *guard_index));
+        jump_to_init_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, guard_reg, 0));
+        skip_jump_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+    }
+
     uint8_t target_reg = 0;
 
     if (!stmt.initializer.is_null()) {
         target_reg = compile_expr(stmt.initializer);
+        // Reading a local returns that local's own register; a `let` binding
+        // must own its own slot, so copy the value into a fresh register.
+        if (std::holds_alternative<ast::Variable_expr>(ctx.tree.get(stmt.initializer).node)) {
+            uint8_t fresh_reg = allocate_register();
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, fresh_reg, target_reg, 0));
+            target_reg = fresh_reg;
+        }
         types::Type_id source_type = ast::get_type(ctx.tree.get(stmt.initializer).node);
         if (source_type != stmt.type) {
             emit_numeric_normalize(target_reg, stmt.type);
@@ -724,40 +782,87 @@ void Compiler::compile_stmt_node(const ast::Var_stmt &stmt)
         target_reg = allocate_register();
     }
 
-    if (stmt.kind == ast::Var_kind::Static || stmt.kind == ast::Var_kind::Static_mut) {
-        std::string canonical_name = current_module_ns_ + "::" + stmt.name;
-        if (current_module_ns_ == "main" || current_module_ns_.empty()) {
-            canonical_name = stmt.name;
+    if (is_static) {
+        Symbol_id sym_id = stmt.resolved_symbol.value_or(Symbol_id::null());
+
+        if (sym_id.is_null()) {
+            std::string canonical_name = current_module_ns_ + "::" + stmt.name;
+            if (current_module_ns_ == "main" || current_module_ns_.empty()) {
+                canonical_name = stmt.name;
+            }
+            sym_id = ctx.registry.lookup_global(canonical_name).value_or(Symbol_id::null());
         }
 
-        if (auto sym_id = ctx.registry.lookup_global(canonical_name)) {
-            auto &sym = ctx.registry.get_symbol(*sym_id);
+        if (!sym_id.is_null()) {
+            auto &sym = ctx.registry.get_symbol(sym_id);
             emit(vm::Instruction::make_ri(vm::Opcode::Store_global, target_reg, *sym.global_index));
+            if (is_function_local_static) {
+                uint8_t flag_reg = allocate_register();
+                emit(vm::Instruction::make_rrr(vm::Opcode::Load_true, flag_reg, 0, 0));
+                emit(vm::Instruction::make_ri(vm::Opcode::Store_global, flag_reg, *guard_index));
+            }
         }
     } else if (stmt.kind == ast::Var_kind::Const) {
         // Do nothing! Constants are baked into the bytecode when used
     } else {
         current_ctx_->locals.push_back({stmt.name, target_reg});
     }
+
+    if (is_function_local_static) {
+        current_block().instructions[jump_to_init_idx].ri.imm = static_cast<uint16_t>(skip_jump_idx + 1);
+        current_block().instructions[skip_jump_idx].i.imm = static_cast<uint32_t>(current_block().instructions.size());
+    }
 }
 
 void Compiler::compile_stmt_node(const ast::Multi_var_stmt &stmt)
 {
-    auto store_variable = [&](const std::string &name, ast::Var_kind kind, uint8_t value_reg) {
+    const bool is_static = (stmt.kind == ast::Var_kind::Static || stmt.kind == ast::Var_kind::Static_mut);
+    const bool is_function_local_static = is_static && current_ctx_ != nullptr && current_ctx_->enclosing != nullptr;
+
+    std::optional<uint32_t> guard_index;
+    size_t jump_to_init_idx = 0;
+    size_t skip_jump_idx = 0;
+
+    if (is_function_local_static) {
+        guard_index = ctx.registry.next_global_index++;
+        uint8_t guard_reg = allocate_register();
+        emit(vm::Instruction::make_ri(vm::Opcode::Load_global, guard_reg, *guard_index));
+        jump_to_init_idx = emit(vm::Instruction::make_ri(vm::Opcode::Jump_if_false, guard_reg, 0));
+        skip_jump_idx = emit(vm::Instruction::make_i(vm::Opcode::Jump, 0));
+    }
+
+    auto store_variable = [&](const std::string &name, ast::Var_kind kind, uint8_t value_reg, size_t index) {
         if (kind == ast::Var_kind::Static || kind == ast::Var_kind::Static_mut) {
-            std::string canonical_name = current_module_ns_ + "::" + name;
-            if (current_module_ns_ == "main" || current_module_ns_.empty()) {
-                canonical_name = name;
+            Symbol_id sym_id = (index < stmt.resolved_symbols.size()) ? stmt.resolved_symbols[index] : Symbol_id::null();
+
+            if (sym_id.is_null()) {
+                std::string canonical_name = current_module_ns_ + "::" + name;
+                if (current_module_ns_ == "main" || current_module_ns_.empty()) {
+                    canonical_name = name;
+                }
+                sym_id = ctx.registry.lookup_global(canonical_name).value_or(Symbol_id::null());
             }
 
-            if (auto sym_id = ctx.registry.lookup_global(canonical_name)) {
-                auto &sym = ctx.registry.get_symbol(*sym_id);
+            if (!sym_id.is_null()) {
+                auto &sym = ctx.registry.get_symbol(sym_id);
                 emit(vm::Instruction::make_ri(vm::Opcode::Store_global, value_reg, *sym.global_index));
+                if (is_function_local_static) {
+                    uint8_t flag_reg = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Load_true, flag_reg, 0, 0));
+                    emit(vm::Instruction::make_ri(vm::Opcode::Store_global, flag_reg, *guard_index));
+                }
             }
         } else if (kind == ast::Var_kind::Const) {
             return;
         } else {
             current_ctx_->locals.push_back({name, value_reg});
+        }
+    };
+
+    auto finalize_guard = [&]() {
+        if (is_function_local_static) {
+            current_block().instructions[jump_to_init_idx].ri.imm = static_cast<uint16_t>(skip_jump_idx + 1);
+            current_block().instructions[skip_jump_idx].i.imm = static_cast<uint32_t>(current_block().instructions.size());
         }
     };
 
@@ -767,8 +872,9 @@ void Compiler::compile_stmt_node(const ast::Multi_var_stmt &stmt)
             if (ast::get_type(ctx.tree.get(stmt.initializers[i]).node) != stmt.types[i]) {
                 emit_numeric_normalize(value_reg, stmt.types[i]);
             }
-            store_variable(stmt.names[i], stmt.kind, value_reg);
+            store_variable(stmt.names[i], stmt.kind, value_reg, i);
         }
+        finalize_guard();
         return;
     }
 
@@ -777,9 +883,11 @@ void Compiler::compile_stmt_node(const ast::Multi_var_stmt &stmt)
         for (size_t i = 0; i < stmt.names.size(); ++i) {
             uint8_t value_reg = allocate_register();
             emit(vm::Instruction::make_rrr(vm::Opcode::Load_field, value_reg, source_reg, static_cast<uint8_t>(i)));
-            store_variable(stmt.names[i], stmt.kind, value_reg);
+            store_variable(stmt.names[i], stmt.kind, value_reg, i);
         }
     }
+
+    finalize_guard();
 }
 
 void Compiler::compile_stmt_node(const ast::Block_stmt &stmt)
@@ -918,11 +1026,7 @@ void Compiler::compile_stmt_node(const ast::For_in_stmt &stmt)
 
         if (model_data_ptr && model_data_ptr->methods.contains("iter")) {
             if (auto sym_id = ctx.registry.lookup_global(model_name + "::iter")) {
-                uint8_t func_reg = allocate_register();
-                Closure_data *closure = function_locations_.at(*sym_id);
-                uint16_t const_idx = add_constant(Value::make_closure(closure));
-
-                emit(vm::Instruction::make_ri(vm::Opcode::Load_const, func_reg, const_idx));
+                uint8_t func_reg = load_function_instance(*sym_id, function_locations_.at(*sym_id));
 
                 uint8_t call_base = allocate_register();
                 emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base, func_reg, 0));
@@ -954,9 +1058,7 @@ void Compiler::compile_stmt_node(const ast::For_in_stmt &stmt)
 
         uint8_t next_func = allocate_register();
         if (auto sym_id = ctx.registry.lookup_global(iter_model_name + "::next")) {
-            Closure_data *closure = function_locations_.at(*sym_id);
-            uint16_t next_idx = add_constant(Value::make_closure(closure));
-            emit(vm::Instruction::make_ri(vm::Opcode::Load_const, next_func, next_idx));
+            next_func = load_function_instance(*sym_id, function_locations_.at(*sym_id));
         }
 
         uint8_t call_base = allocate_register();
@@ -1049,6 +1151,17 @@ void Compiler::compile_stmt_node(const ast::For_in_stmt &stmt)
 void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
 {
     const std::string canonical_name = canonical_function_name(stmt);
+
+    // A `fn` declared inside another function body is a nested function: it
+    // binds its name as a local closure in the enclosing frame and can capture
+    // upvalues, exactly like `let name := fn() { ... }`.
+    const bool is_nested_function = (current_ctx_ != nullptr && current_ctx_->enclosing != nullptr);
+
+    if (is_nested_function) {
+        compile_nested_function(stmt);
+        return;
+    }
+
     const bool can_reuse_hoisted_slot = (current_ctx_->enclosing == nullptr);
     const auto *saved_returns = current_function_returns_;
 
@@ -1186,10 +1299,14 @@ void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
     closure->upvalue_count = current_ctx_->upvalues.size();
     closure->upvalues = nullptr;
 
+    function_upvalues_[*stmt.resolved_symbol] = current_ctx_->upvalues;
+
     pop_context();
     current_function_returns_ = saved_returns;
 
-    if (can_reuse_hoisted_slot && closure->upvalue_count == 0) {
+    const std::optional<uint32_t> global_slot = function_global_slot(*stmt.resolved_symbol);
+
+    if (can_reuse_hoisted_slot && !global_slot && closure->upvalue_count == 0) {
         // Restore before early exit!
         current_function_name_ = prev_func_name;
         return;
@@ -1209,9 +1326,42 @@ void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
         emit(route);
     }
 
+    if (global_slot) {
+        // Persist the live instance so any reference site (recursion, forward
+        // refs, cross-module static paths) can load it from the shared frame.
+        emit(vm::Instruction::make_ri(vm::Opcode::Store_global, dst_reg, *global_slot));
+    }
+
     current_ctx_->locals.push_back({stmt.name, dst_reg});
 
     current_function_name_ = prev_func_name;
+}
+
+void Compiler::compile_nested_function(const ast::Function_stmt &stmt)
+{
+    // Pre-register the function name as a local in the enclosing frame so that
+    // recursive references inside the body resolve (via resolve_upvalue) to the
+    // register cell that will hold this closure instance.
+    const uint8_t fn_reg = allocate_register();
+    current_ctx_->locals.push_back({stmt.name, fn_reg});
+
+    // Reuse the closure-expression compiler: it compiles the body, routes the
+    // captured upvalues, and emits Make_closure into the enclosing block.
+    ast::Closure_expr closure;
+    closure.parameters = stmt.parameters;
+    closure.returns = stmt.returns;
+    closure.body = stmt.body;
+    closure.type = ctx.tt.get_unknown();
+    closure.loc = stmt.loc;
+
+    const uint8_t closure_reg = compile_expr_node(closure);
+
+    // compile_expr_node allocates its own destination register; copy the live
+    // instance into the pre-registered cell so recursive calls and later
+    // references to the name see the closure.
+    if (closure_reg != fn_reg) {
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, fn_reg, closure_reg, 0));
+    }
 }
 
 void Compiler::compile_stmt_node(const ast::Return_stmt &stmt)
@@ -1380,9 +1530,7 @@ void Compiler::compile_stmt_node(const ast::Match_stmt &stmt)
                 auto &model_name = std::get<types::Model_type>(ctx.tt.get(pattern_type).data).name;
                 uint8_t func_reg = allocate_register();
                 if (auto sym_id = ctx.registry.lookup_global(model_name + "::__match__")) {
-                    Closure_data *closure = function_locations_.at(*sym_id);
-                    uint16_t const_idx = add_constant(Value::make_closure(closure));
-                    emit(vm::Instruction::make_ri(vm::Opcode::Load_const, func_reg, const_idx));
+                    func_reg = load_function_instance(*sym_id, function_locations_.at(*sym_id));
                 }
 
                 uint8_t call_base_reg = allocate_register();
@@ -1494,35 +1642,89 @@ uint8_t Compiler::compile_expr(ast::Expr_id expr_id)
     return result_reg;
 }
 
-uint8_t Compiler::compile_expr_node(const ast::Variable_expr &expr)
+std::optional<uint32_t> Compiler::function_global_slot(Symbol_id sym_id) const
 {
-    if (expr.resolved_symbol) {
-        const auto &sym = ctx.registry.get_symbol(*expr.resolved_symbol);
+    auto it = function_global_slots_.find(sym_id);
+    if (it == function_global_slots_.end()) {
+        return std::nullopt;
+    }
+    return it->second;
+}
 
-        if (sym.kind == Symbol_kind::Native_const || sym.kind == Symbol_kind::Phos_const) {
+uint8_t Compiler::load_function_instance(Symbol_id sym_id, Closure_data *closure)
+{
+    if (auto slot = function_global_slot(sym_id)) {
+        const bool decl_compiled = function_upvalues_.contains(sym_id);
+        const bool inside_function = (current_ctx_ != nullptr && current_ctx_->enclosing != nullptr);
+
+        const bool need_live_instance = inside_function || (decl_compiled && closure->upvalue_count > 0);
+
+        if (need_live_instance) {
             uint8_t target_reg = allocate_register();
-            uint16_t const_idx = add_constant(*sym.const_value);
-            emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
-            return target_reg;
-        }
-
-        if (sym.kind == Symbol_kind::Native_func || sym.kind == Symbol_kind::Phos_func) {
-            if (function_locations_.contains(sym.id)) {
-                uint8_t target_reg = allocate_register();
-                Closure_data *closure = function_locations_.at(sym.id);
-                uint16_t const_idx = add_constant(Value::make_closure(closure));
-                emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
-                return target_reg;
-            }
-        }
-
-        if (sym.kind == Symbol_kind::Global_var) {
-            uint8_t target_reg = allocate_register();
-            emit(vm::Instruction::make_ri(vm::Opcode::Load_global, target_reg, *sym.global_index));
+            emit(vm::Instruction::make_ri(vm::Opcode::Load_global, target_reg, *slot));
             return target_reg;
         }
     }
 
+    // Fallback: no slot (e.g. natives) or a top-level forward reference that was
+    // authored before the function declaration compiled. In that case we load a
+    // prototype constant, keeping the original top-level ordering semantics.
+    // Functions with upvalues rebuild a live instance at the reference site;
+    // upvalue-free ones just load the prototype.
+    if (closure->upvalue_count > 0) {
+        return compile_closure_value(sym_id, closure);
+    }
+    uint8_t target_reg = allocate_register();
+    uint16_t const_idx = add_constant(Value::make_closure(closure));
+    emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
+    return target_reg;
+}
+
+uint8_t Compiler::compile_closure_value(Symbol_id sym_id, Closure_data *closure)
+{
+    // Build a live closure instance at the reference site. Upvalue routes are
+    // re-resolved from the names captured at declaration, so the instance picks
+    // up the correct cells no matter which scope it is created in.
+    uint16_t const_idx = add_constant(Value::make_closure(closure));
+    uint8_t dst_reg = allocate_register();
+    emit(vm::Instruction::make_ri(vm::Opcode::Make_closure, dst_reg, const_idx));
+
+    auto it = function_upvalues_.find(sym_id);
+    if (it == function_upvalues_.end() || it->second.size() != closure->upvalue_count) {
+        std::println(std::cerr, "Compiler Bug: Missing upvalue routing for closure '{}'.", closure->name ? closure->name->chars : "");
+        std::exit(EXIT_FAILURE);
+    }
+
+    for (const auto &uv : it->second) {
+        vm::Instruction route;
+        route.rrr.op = vm::Opcode::None;
+
+        int local_idx = resolve_local(current_ctx_, uv.name);
+        if (local_idx != -1) {
+            route.rrr.src_a = 1;
+            route.rrr.src_b = static_cast<uint8_t>(local_idx);
+        } else {
+            int upval_idx = resolve_upvalue(current_ctx_, uv.name);
+            if (upval_idx == -1) {
+                std::println(std::cerr, "Compiler Bug: Could not re-resolve upvalue '{}' while creating closure '{}'.", uv.name, closure->name ? closure->name->chars : "");
+                std::exit(EXIT_FAILURE);
+            }
+            route.rrr.src_a = 0;
+            route.rrr.src_b = static_cast<uint8_t>(upval_idx);
+        }
+
+        route.rrr.dst = 0;
+        emit(route);
+    }
+
+    return dst_reg;
+}
+
+uint8_t Compiler::compile_expr_node(const ast::Variable_expr &expr)
+{
+    // Locals and upvalue-captured closure instances take precedence so that
+    // functions with upvalues are invoked through a live closure, not the raw
+    // prototype (whose upvalue table is never populated).
     int local_arg = resolve_local(current_ctx_, expr.name);
     if (local_arg != -1) {
         return static_cast<uint8_t>(local_arg);
@@ -1535,13 +1737,34 @@ uint8_t Compiler::compile_expr_node(const ast::Variable_expr &expr)
         return target_reg;
     }
 
-    if (auto sym_id = ctx.registry.lookup_global(expr.name)) {
-        if (function_locations_.contains(*sym_id)) {
+    if (expr.resolved_symbol) {
+        const auto &sym = ctx.registry.get_symbol(*expr.resolved_symbol);
+
+        if (sym.kind == Symbol_kind::Native_const || sym.kind == Symbol_kind::Phos_const) {
             uint8_t target_reg = allocate_register();
-            Closure_data *closure = function_locations_.at(*sym_id);
-            uint16_t const_idx = add_constant(Value::make_closure(closure));
+            uint16_t const_idx = add_constant(*sym.const_value);
             emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
             return target_reg;
+        }
+
+        if (sym.kind == Symbol_kind::Native_func || sym.kind == Symbol_kind::Phos_func) {
+            if (function_locations_.contains(sym.id)) {
+                Closure_data *closure = function_locations_.at(sym.id);
+                return load_function_instance(sym.id, closure);
+            }
+        }
+
+        if (sym.kind == Symbol_kind::Global_var) {
+            uint8_t target_reg = allocate_register();
+            emit(vm::Instruction::make_ri(vm::Opcode::Load_global, target_reg, *sym.global_index));
+            return target_reg;
+        }
+    }
+
+    if (auto sym_id = ctx.registry.lookup_global(expr.name)) {
+        if (function_locations_.contains(*sym_id)) {
+            Closure_data *closure = function_locations_.at(*sym_id);
+            return load_function_instance(*sym_id, closure);
         }
     }
 
@@ -1568,6 +1791,14 @@ uint8_t Compiler::compile_expr_node(const ast::Assignment_expr &expr)
     if (upval_arg != -1) {
         emit(vm::Instruction::make_rrr(vm::Opcode::Set_upvalue, static_cast<uint8_t>(upval_arg), rhs_reg, 0));
         return rhs_reg;
+    }
+
+    if (expr.resolved_symbol) {
+        const auto &sym = ctx.registry.get_symbol(*expr.resolved_symbol);
+        if (sym.kind == Symbol_kind::Global_var) {
+            emit(vm::Instruction::make_ri(vm::Opcode::Store_global, rhs_reg, *sym.global_index));
+            return rhs_reg;
+        }
     }
 
     std::string canonical_name = current_module_ns_.empty() || current_module_ns_ == "main" ? expr.name : current_module_ns_ + "::" + expr.name;
@@ -1676,11 +1907,7 @@ uint8_t Compiler::compile_expr_node(const ast::Static_path_expr &expr)
 
         if (sym.kind == Symbol_kind::Native_func || sym.kind == Symbol_kind::Phos_func) {
             if (function_locations_.contains(sym.id)) {
-                uint8_t target_reg = allocate_register();
-                Closure_data *closure = function_locations_.at(sym.id);
-                uint16_t const_idx = add_constant(Value::make_closure(closure));
-                emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
-                return target_reg;
+                return load_function_instance(sym.id, function_locations_.at(sym.id));
             } else {
                 std::println(std::cerr, "Compiler Bug: Function '{}' not found in function_locations_", sym.name);
                 std::exit(EXIT_FAILURE);
@@ -1728,11 +1955,7 @@ uint8_t Compiler::compile_expr_node(const ast::Static_path_expr &expr)
 
         if (auto sym_id = ctx.registry.lookup_global(global_func_name)) {
             if (function_locations_.contains(*sym_id)) {
-                uint8_t target_reg = allocate_register();
-                Closure_data *closure = function_locations_.at(*sym_id);
-                uint16_t const_idx = add_constant(Value::make_closure(closure));
-                emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
-                return target_reg;
+                return load_function_instance(*sym_id, function_locations_.at(*sym_id));
             }
         }
     }
@@ -1749,6 +1972,15 @@ uint8_t Compiler::compile_expr_node(const ast::Cast_expr &expr)
 
     if (source_type == expr.target_type) {
         return value_reg;
+    }
+
+    if (expr.is_saturating) {
+        uint8_t dest_reg = allocate_register();
+        if (dest_reg != value_reg) {
+            emit(vm::Instruction::make_rrr(vm::Opcode::Move, dest_reg, value_reg, 0));
+        }
+        emit(vm::Instruction::make_rrr(saturating_cast_opcode_for(expr.target_type), dest_reg, 0, 0));
+        return dest_reg;
     }
 
     if (ctx.tt.is_string(source_type) && ctx.tt.is_array(expr.target_type)) {
@@ -1774,8 +2006,12 @@ uint8_t Compiler::compile_expr_node(const ast::Cast_expr &expr)
         return value_reg;
     }
 
-    emit(vm::Instruction::make_rrr(cast_opcode_for(expr.target_type), value_reg, 0, 0));
-    return value_reg;
+    uint8_t dest_reg = allocate_register();
+    if (dest_reg != value_reg) {
+        emit(vm::Instruction::make_rrr(vm::Opcode::Move, dest_reg, value_reg, 0));
+    }
+    emit(vm::Instruction::make_rrr(cast_opcode_for(expr.target_type), dest_reg, 0, 0));
+    return dest_reg;
 }
 
 uint8_t Compiler::compile_expr_node(const ast::Closure_expr &expr)
@@ -2084,9 +2320,7 @@ uint8_t Compiler::compile_expr_node(const ast::Call_expr &expr)
 
                 uint8_t func_reg = allocate_register();
                 if (auto sym_id = ctx.registry.lookup_global(model_name + "::iter")) {
-                    Closure_data *closure = function_locations_.at(*sym_id);
-                    uint16_t const_idx = add_constant(Value::make_closure(closure));
-                    emit(vm::Instruction::make_ri(vm::Opcode::Load_const, func_reg, const_idx));
+                    func_reg = load_function_instance(*sym_id, function_locations_.at(*sym_id));
                 }
 
                 uint8_t call_base_reg = allocate_register();
@@ -2411,10 +2645,7 @@ uint8_t Compiler::compile_expr_node(const ast::Method_call_expr &expr)
 
             if (auto sym_id = ctx.registry.lookup_global(global_func_name)) {
                 if (function_locations_.contains(*sym_id)) {
-                    uint8_t func_reg = allocate_register();
-                    Closure_data *closure = function_locations_.at(*sym_id);
-                    uint16_t const_idx = add_constant(Value::make_closure(closure));
-                    emit(vm::Instruction::make_ri(vm::Opcode::Load_const, func_reg, const_idx));
+                    uint8_t func_reg = load_function_instance(*sym_id, function_locations_.at(*sym_id));
 
                     std::vector<uint8_t> arg_eval_regs;
                     for (const auto &arg : expr.arguments) {
@@ -2449,10 +2680,7 @@ uint8_t Compiler::compile_expr_node(const ast::Method_call_expr &expr)
                         arg_eval_regs.push_back(compile_expr(arg.value));
                     }
 
-                    uint8_t func_reg = allocate_register();
-                    Closure_data *closure = function_locations_.at(*sym_id);
-                    uint16_t const_idx = add_constant(Value::make_closure(closure));
-                    emit(vm::Instruction::make_ri(vm::Opcode::Load_const, func_reg, const_idx));
+                    uint8_t func_reg = load_function_instance(*sym_id, function_locations_.at(*sym_id));
 
                     uint8_t call_base_reg = allocate_register();
                     emit(vm::Instruction::make_rrr(vm::Opcode::Move, call_base_reg, func_reg, 0));

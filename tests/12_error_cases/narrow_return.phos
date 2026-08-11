@@ -1,0 +1,4 @@
+fn f() -> i32 {
+    let b: i64 = 1;
+    return b;
+}

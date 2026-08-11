@@ -349,6 +349,52 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             break;
         }
 
+        case Opcode::Sat_cast_i8:
+        case Opcode::Sat_cast_i16:
+        case Opcode::Sat_cast_i32:
+        case Opcode::Sat_cast_i64:
+        case Opcode::Sat_cast_u8:
+        case Opcode::Sat_cast_u16:
+        case Opcode::Sat_cast_u32:
+        case Opcode::Sat_cast_u64: {
+            types::Primitive_kind target_kind = types::Primitive_kind::I64;
+            switch (inst.rrr.op) {
+            case Opcode::Sat_cast_i8:
+                target_kind = types::Primitive_kind::I8;
+                break;
+            case Opcode::Sat_cast_i16:
+                target_kind = types::Primitive_kind::I16;
+                break;
+            case Opcode::Sat_cast_i32:
+                target_kind = types::Primitive_kind::I32;
+                break;
+            case Opcode::Sat_cast_i64:
+                target_kind = types::Primitive_kind::I64;
+                break;
+            case Opcode::Sat_cast_u8:
+                target_kind = types::Primitive_kind::U8;
+                break;
+            case Opcode::Sat_cast_u16:
+                target_kind = types::Primitive_kind::U16;
+                break;
+            case Opcode::Sat_cast_u32:
+                target_kind = types::Primitive_kind::U32;
+                break;
+            case Opcode::Sat_cast_u64:
+                target_kind = types::Primitive_kind::U64;
+                break;
+            default:
+                std::unreachable();
+            }
+
+            auto sat = registers[base + inst.rrr.dst].saturating_cast_numeric(target_kind);
+            if (!sat) {
+                panic("Invalid saturating cast at IP: {}", ip - 1);
+            }
+            registers[base + inst.rrr.dst] = *sat;
+            break;
+        }
+
         case Opcode::Eq_i64:
         case Opcode::Neq_i64:
         case Opcode::Lt_i64:
@@ -530,6 +576,13 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
                 panic("Arity mismatch. Expected {} arguments, got {} at IP: {}", target_closure->arity, arg_count, ip - 1);
             }
 
+            if (target_closure->upvalue_count > 0 && target_closure->upvalues == nullptr) {
+                panic(
+                    "Attempted to call closure '{}' which captured {} upvalue(s) but has no captured environment.",
+                    target_closure->name ? target_closure->name->chars : "?",
+                    target_closure->upvalue_count);
+            }
+
             if (thread->call_stack_count >= thread->call_stack_capacity) {
                 panic("Stack overflow! Maximum call depth exceeded.");
             }
@@ -602,12 +655,24 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
 
         case Opcode::Get_upvalue: {
+            if (frame->closure->upvalues == nullptr) {
+                panic(
+                    "Closure '{}' has no captured environment but references upvalue at IP: {}",
+                    frame->closure->name ? frame->closure->name->chars : "?",
+                    ip - 1);
+            }
             Upvalue_data *uv = frame->closure->upvalues[inst.rrr.src_a];
             registers[base + inst.rrr.dst] = *(uv->location);
             break;
         }
 
         case Opcode::Set_upvalue: {
+            if (frame->closure->upvalues == nullptr) {
+                panic(
+                    "Closure '{}' has no captured environment but writes to an upvalue at IP: {}",
+                    frame->closure->name ? frame->closure->name->chars : "?",
+                    ip - 1);
+            }
             Upvalue_data *uv = frame->closure->upvalues[inst.rrr.dst];
             *(uv->location) = registers[base + inst.rrr.src_a];
             break;
@@ -1000,7 +1065,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             iter->start = start;
             iter->end = end;
             iter->inclusive = (inst.rrr.op == Opcode::Make_range_in);
-            iter->cursor = start;
+            iter->cursor = start - 1;
 
             registers[base + inst.rrr.dst] = iter_val;
             break;

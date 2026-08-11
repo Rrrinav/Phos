@@ -1,0 +1,107 @@
+let a := 300;
+let b := a as u8;
+print("i32 to u8 ", b);
+let c := -5;
+let d := c as i64;
+print("i32 to i64 ", d);
+let e := 3.99;
+let f := e as i32;
+print("float to int ", f);
+let g := 7;
+let h := g as f64;
+print("int to float ", h);
+let i := 200 sat i8;
+print("200 sat i8 ", i);
+let j := 300 sat u8;
+print("300 sat u8 ", j);
+let big := 4294967295;
+let k := big as u32;
+print("big as u32 ", k);
+let n := 255u64;
+print("suffixed ", n);
+
+// negative float to int truncates toward zero
+let neg_f := -2.7;
+print("neg float to int ", neg_f as i32);
+// float to larger float
+let ff := 2.5 as f64;
+print("f32 promoted ", ff);
+// int to smaller int truncates bits
+let wide := 1000;
+print("1000 as i8 ", wide as i8);
+// negative to unsigned wraps
+let neg_v := -1;
+print("-1 as u8 ", neg_v as u8);
+// u16 to i16 wrap
+let u16v := 40000;
+print("40000 as i16 ", u16v as i16);
+// saturating negative
+let sat_neg := -200 sat i8;
+print("-200 sat i8 ", sat_neg);
+// sat upper bound
+let sat_big := 100000 sat i16;
+print("100000 sat i16 ", sat_big);
+// sat on u16 above range
+let sat_u := 70000 sat u16;
+print("70000 sat u16 ", sat_u);
+// cast chain
+let chained := ((5 as f64) / 2.0) as i32;
+print("chained ", chained);
+// cast in arithmetic
+let mix_arith := (3 as f64) * 2.5;
+print("arith ", mix_arith);
+// i64 -> f64 precision loss note
+let big_int: i64 = 9007199254740993;
+let big_f := big_int as f64;
+print("precision ", big_f);
+// f64 -> i64
+let fi := 9.99;
+print("float to i64 ", fi as i64);
+// u8 addition with cast
+let u1 := 200u8;
+let u2 := 100u8;
+print("u8 wrap ", (u1 as i32 + u2 as i32) as u8);
+// i32 to f32
+let f32v := 3.14159;
+print("to f32 ", f32v as f32);
+// bool-like checks via casts are not available; compare instead
+print("sat exact ", 127 sat i8, -128 sat i8);
+// string to bytes round trip already covered; cast byte value
+let text := "abc";
+let text_bytes: u8[] = text as u8[];
+print("bytes len ", len(text_bytes), " ", text_bytes[0]);
+// ---- implicit same-class widening ----
+// i16 -> i32
+let w1: i16 = 32000;
+let w2: i32 = w1;
+print("widen i16->i32 ", w2);
+// i32 -> i64 (var, arg, return)
+let w3: i32 = 123456;
+let w4: i64 = w3;
+print("widen i32->i64 ", w4);
+fn take_i64(v: i64) -> i64 { return v; }
+print("arg widen ", take_i64(w3));
+// u8 -> u16 -> u32 -> u64 chain
+let w5: u8 = 255;
+let w6: u32 = w5;
+let w7: u64 = w6;
+print("widen u-chain ", w7);
+// f32 -> f64
+let w8: f32 = 2.5;
+let w9: f64 = w8;
+print("widen f32->f64 ", w9);
+// mixed-size comparison is fine now
+print("cmp mixed ", w3 == w4, w5 > 0u8);
+// array of i32 to i64[] param (element widening)
+fn sum_big(arr: i64[]) -> i64 {
+    let mut total: i64 = 0;
+    for v in arr {
+        total = total + v;
+    }
+    return total;
+}
+let smalls := [1, 2, 3];
+print("array widen ", sum_big(smalls));
+// i64 variable used where u64 literal expected in arithmetic is still a cast site:
+let w10: u64 = w7 + 1u64;
+print("u64 add ", w10);

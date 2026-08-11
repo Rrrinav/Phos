@@ -255,7 +255,7 @@ void Tree_printer::print_node(const Array_assignment_expr &node)
 void Tree_printer::print_node(const Cast_expr &node)
 {
     indent();
-    print_str("Cast");
+    print_str(std::string(node.is_saturating ? "Sat_cast" : "Cast"));
     with_child(true, [&] {
         indent();
         print_str("Target Type: " + tt.to_string(node.target_type));
@@ -1015,7 +1015,8 @@ std::string Sexpr_printer::print_node(const Array_assignment_expr &node)
 
 std::string Sexpr_printer::print_node(const Cast_expr &node)
 {
-    return "(as " + print_expr(node.expression) + " " + tt.to_string(node.target_type) + ")";
+    return "(" + std::string(node.is_saturating ? "sat" : "as")
+        + " " + print_expr(node.expression) + " " + tt.to_string(node.target_type) + ")";
 }
 
 std::string Sexpr_printer::print_node(const Field_access_expr &node)

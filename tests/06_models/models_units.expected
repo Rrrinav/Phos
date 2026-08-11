@@ -1,0 +1,20 @@
+alice
+Name: alice, Age: 30
+after mutate 31
+copied alice
+Name: alice, Age: 31
+red
+other
+has value
+has nothing
+defaults 0 0
+custom 3 0
+static 10
+balance 150
+static method 42
+ok val 99
+err boom
+on
+nested bob nyc
+nested mutate sf
+enum arr 3

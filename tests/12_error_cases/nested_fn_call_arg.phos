@@ -1,0 +1,6 @@
+fn apply(f: fn() -> i32) -> i32 { return f(); }
+fn get() -> i32 {
+    let mut x := 0;
+    fn ret() -> i32 { x = x + 1; return x; }
+    return apply(ret);
+}

@@ -263,7 +263,11 @@ std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::str
 {
     std::string dir = cfg["test"];
     if (dir.empty()) {
-        bld::logger::e("Provide test directory with -test=<dir>");
+        dir = "./tests";
+    }
+
+    if (!std::filesystem::exists(dir) || !std::filesystem::is_directory(dir)) {
+        bld::logger::e("Test directory does not exist: {}", dir);
         std::exit(EXIT_FAILURE);
     }
 
@@ -271,7 +275,7 @@ std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::str
         build_interpreter(release);
     }
 
-    auto files = bld::fs::get_all_files_with_extensions(dir, {"phos"});
+    auto files = bld::fs::get_all_files_with_extensions(dir, {"phos"}, true);
     if (files.empty()) {
         bld::logger::w("No .phos test files found in: {}", dir);
         return {{}, {}};
@@ -284,7 +288,27 @@ std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::str
 
     for (const auto &f : files) {
         std::string output;
-        if (!bld::read_process_output(bld::Command{TARGET, f}, output)) {
+        const bool ran_ok = bld::read_process_output(bld::Command{TARGET, f}, output);
+
+        // Expected-error tests: a sibling "<file>.error" file contains the
+        // diagnostic substring the interpreter must produce on stderr/exit.
+        const std::string error_file = bld::fs::get_stem(f, true) + ".error";
+        std::string expected_error;
+        const bool is_error_test = std::filesystem::exists(error_file) && bld::fs::read_file(error_file, expected_error);
+
+        if (is_error_test) {
+            const std::string needle = bld::str::trim(expected_error);
+            if (!ran_ok && !needle.empty() && output.find(needle) != std::string::npos) {
+                passed.push_back(f);
+            } else {
+                std::string detail =
+                    ran_ok ? "Expected the interpreter to fail, but it ran successfully." : "Expected diagnostic not found in output:\n" + output;
+                failed.push_back({f, detail});
+            }
+            continue;
+        }
+
+        if (!ran_ok) {
             bld::logger::e("Failed to run interpreter on: {}", f);
             std::exit(EXIT_FAILURE);
         }
@@ -376,7 +400,7 @@ int main(int argc, char *argv[])
     cfg.add_flag("code-gen", "Build meta-programming utilities");
     cfg.add_flag("count", "Count lines, files, etc.");
 
-    cfg.add_option("test", "", "Run tests in given directory (e.g. -test=./tests)");
+    cfg.add_option("test", "", "Run tests in given directory (defaults to ./tests; -test runs the whole suite)");
     cfg.add_option("objs", "", "Comma-separated source files for custom build");
     cfg.add_option("compile", "", "Compile a custom source file alongside the VM");
     cfg.add_option("o", "", "Output executable name for -compile");

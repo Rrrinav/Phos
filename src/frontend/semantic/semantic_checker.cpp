@@ -944,8 +944,8 @@ err::Engine Semantic_checker::check(const std::vector<ast::Stmt_id> &statements)
 
     for (const auto &module : ctx.workspace.modules) {
         current_module_id = module.id;
-        variables.begin_scope();
-        m_nil_checked_vars_stack.emplace_back();
+variables.begin_scope();
+    m_nil_checked_vars_stack.emplace_back();
 
         for (auto stmt_id : module.ast_roots) {
             check_stmt(stmt_id);
@@ -1005,6 +1005,20 @@ bool Semantic_checker::is_compatible(types::Type_id expected, types::Type_id act
 
     if (ctx.tt.is_unknown(expected) || ctx.tt.is_unknown(actual)) {
         return true;
+    }
+
+    // Same-class numeric widening is implicit: i8->i16->i32->i64,
+    // u8->u16->u32->u64, f16->f32->f64. Narrowing, or moving between
+    // classes (signed <-> unsigned, int <-> float), needs an explicit cast.
+    if (ctx.tt.is_numeric_primitive(expected) && ctx.tt.is_numeric_primitive(actual)) {
+        auto exp_kind = ctx.tt.get_primitive(expected);
+        auto act_kind = ctx.tt.get_primitive(actual);
+        if (types::is_float_primitive(exp_kind) && types::is_float_primitive(act_kind)) {
+            return types::primitive_bit_width(exp_kind) >= types::primitive_bit_width(act_kind);
+        }
+        bool same_class = (types::is_signed_integer_primitive(exp_kind) && types::is_signed_integer_primitive(act_kind))
+            || (types::is_unsigned_integer_primitive(exp_kind) && types::is_unsigned_integer_primitive(act_kind));
+        return same_class && types::primitive_bit_width(exp_kind) >= types::primitive_bit_width(act_kind);
     }
 
     if (ctx.tt.is_function(expected) && ctx.tt.is_function(actual)) {
@@ -1113,6 +1127,18 @@ types::Type_id Semantic_checker::promote_numeric_type(types::Type_id left, types
     }
 
     return ctx.tt.primitive(types::primitive_bit_width(left_kind) >= types::primitive_bit_width(right_kind) ? left_kind : right_kind);
+}
+
+std::string Semantic_checker::numeric_cast_error_message(types::Type_id target, types::Type_id source) const
+{
+    return std::format(
+        "Cannot implicitly convert '{}' to '{}'. Only widening within the same signedness is automatic "
+        "(i8 < i16 < i32 < i64, u8 < u16 < u32 < u64, f16 < f32 < f64); you cannot go from signed to unsigned "
+        "(e.g. i32 -> u64). Use an explicit cast: `(value as {})` (wrapping) or `(value sat {})` (saturating).",
+        ctx.tt.to_string(source),
+        ctx.tt.to_string(target),
+        ctx.tt.to_string(target),
+        ctx.tt.to_string(target));
 }
 
 bool Semantic_checker::default_expr_uses_forbidden_names(ast::Expr_id expr_id, const std::unordered_set<std::string> &forbidden_names) const
@@ -1684,13 +1710,17 @@ Semantic_checker::Bound_call_arguments Semantic_checker::bind_call_arguments(
 
         auto arg_type = check_expr(arg.value, parameters[target_index].type);
         if (!is_compatible(parameters[target_index].type, arg_type)) {
-            type_error(
-                arg.loc,
-                std::format(
-                    "Argument type mismatch for parameter '{}'. Expected '{}' but got '{}'.",
-                    parameters[target_index].name,
-                    ctx.tt.to_string(parameters[target_index].type),
-                    ctx.tt.to_string(arg_type)));
+            if (ctx.tt.is_numeric_primitive(parameters[target_index].type) && ctx.tt.is_numeric_primitive(arg_type)) {
+                type_error(arg.loc, numeric_cast_error_message(parameters[target_index].type, arg_type));
+            } else {
+                type_error(
+                    arg.loc,
+                    std::format(
+                        "Argument type mismatch for parameter '{}'. Expected '{}' but got '{}'.",
+                        parameters[target_index].name,
+                        ctx.tt.to_string(parameters[target_index].type),
+                        ctx.tt.to_string(arg_type)));
+            }
             result.ok = false;
         }
 
@@ -1982,8 +2012,19 @@ void Semantic_checker::check_function_stmt(ast::Stmt_id stmt_id)
     }
     return_types = normalize_return_types(return_types, ctx.tt);
 
-    if (fn_stmt.resolved_symbol) {
+    // Nested function declarations (a `fn` inside a function body) bind their
+    // name in the enclosing lexical scope as a function value, so references
+    // and recursive calls resolve like any other local closure.
+    const bool is_nested_function = !fn_stmt.resolved_symbol.has_value();
+
+    if (is_nested_function) {
+        declare(fn_stmt.name, ctx.tt.function(param_types, return_types), false, fn_stmt.loc);
+        variables.mark_nested_function(fn_stmt.name);
+        nested_fn_stack_.push_back(fn_stmt.name);
+        function_name_stack_.push_back(fn_stmt.name);
+    } else if (fn_stmt.resolved_symbol) {
         ctx.registry.get_symbol(*fn_stmt.resolved_symbol).type = ctx.tt.function(param_types, return_types);
+        function_name_stack_.push_back(ctx.registry.get_symbol(*fn_stmt.resolved_symbol).name);
     }
 
     auto saved_return_types = current_return_types;
@@ -2030,6 +2071,13 @@ void Semantic_checker::check_function_stmt(ast::Stmt_id stmt_id)
     variables.end_scope();
     current_return_types = saved_return_types;
     current_return_params = saved_return_params;
+
+    if (is_nested_function && !nested_fn_stack_.empty()) {
+        nested_fn_stack_.pop_back();
+        function_name_stack_.pop_back();
+    } else if (!is_nested_function && !function_name_stack_.empty()) {
+        function_name_stack_.pop_back();
+    }
 }
 
 void Semantic_checker::check_var_stmt(ast::Stmt_id stmt_id)
@@ -2083,13 +2131,21 @@ void Semantic_checker::check_var_stmt(ast::Stmt_id stmt_id)
                 } else {
                     type_error(
                         loc,
-                        std::format("Numeric literal '{}' does not fit in target type '{}'.", lit.value.to_string(), ctx.tt.to_string(type)));
+                        std::format(
+                            "Numeric literal '{}' does not fit in target type '{}'. Use an explicit cast: `(value as {})` (wrapping) or "
+                            "`(value sat {})` (saturating).",
+                            lit.value.to_string(),
+                            ctx.tt.to_string(type),
+                            ctx.tt.to_string(type),
+                            ctx.tt.to_string(type)));
                 }
             } else {
                 auto diagnostic = err::msg::error(diagnostics_.phase(), loc.l, loc.c, loc.file, "Initializer type mismatch.");
                 diagnostic.expected_got(ctx.tt.to_string(type), ctx.tt.to_string(init_type));
                 diagnostics_.push(std::move(diagnostic));
             }
+        } else if (ctx.tt.is_numeric_primitive(type) && ctx.tt.is_numeric_primitive(init_type)) {
+            type_error(loc, numeric_cast_error_message(type, init_type));
         } else {
             auto diagnostic = err::msg::error(diagnostics_.phase(), loc.l, loc.c, loc.file, "Initializer type mismatch.");
             diagnostic.expected_got(ctx.tt.to_string(type), ctx.tt.to_string(init_type));
@@ -2101,13 +2157,70 @@ void Semantic_checker::check_var_stmt(ast::Stmt_id stmt_id)
 
     if (is_global) {
         auto &module = ctx.workspace.get_module(current_module_id);
-        if (auto sym_id = module.resolve_exported_symbol(name)) {
-            ctx.registry.get_symbol(*sym_id).type = type;
+        Symbol_id sym_id;
 
-            variables.declare(name, type, is_mut, *sym_id);
+        if (!function_name_stack_.empty()) {
+            // A `static` declared inside a function body: allocate a dedicated
+            // global slot so every invocation (and every closure created in the
+            // function) refers to one shared instance, like a C static local.
+            std::string local_canonical = (module.logical_namespace.empty() || module.logical_namespace == "main")
+                ? ""
+                : module.logical_namespace + "::";
+            for (const auto &fn_name : function_name_stack_) {
+                local_canonical += fn_name + "::";
+            }
+            local_canonical += name;
+
+            std::optional<Value> const_val = std::nullopt;
+            std::optional<uint32_t> global_idx = std::nullopt;
+            Symbol_kind sym_kind = Symbol_kind::Global_var;
+
+            if (kind == ast::Var_kind::Const) {
+                sym_kind = Symbol_kind::Phos_const;
+                if (!initializer.is_null()) {
+                    if (auto *lit = std::get_if<ast::Literal_expr>(&ctx.tree.get(initializer).node)) {
+                        const_val = lit->value;
+                    } else {
+                        type_error(loc, "Constants must be initialized with a primitive literal.");
+                    }
+                } else {
+                    type_error(loc, "Constants must be initialized with a primitive literal.");
+                }
+            } else {
+                global_idx = ctx.registry.next_global_index++;
+            }
+
+            Symbol sym{
+                .id = Symbol_id{0},
+                .name = local_canonical,
+                .kind = sym_kind,
+                .type = type,
+                .owner_module = current_module_id,
+                .is_public = false,
+                .const_value = const_val,
+                .global_index = global_idx,
+                .stack_offset = std::nullopt,
+                .ffi_index = std::nullopt,
+                .declaration = stmt_id};
+
+            sym_id = ctx.registry.create_symbol(std::move(sym));
+        } else if (auto found = module.resolve_exported_symbol(name)) {
+            sym_id = *found;
+            ctx.registry.get_symbol(sym_id).type = type;
+        }
+
+        if (!sym_id.is_null()) {
+            get_stmt<ast::Var_stmt>(ctx.tree, stmt_id).resolved_symbol = sym_id;
+            variables.declare(name, type, is_mut, sym_id);
         }
     } else {
         declare(name, type, is_mut, loc);
+    }
+
+    // A binding initialized from a nested `fn` statement value keeps that
+    // function from escaping through an alias; taint it identically.
+    if (!initializer.is_null() && !initializer_failed && expr_references_nested_function(initializer)) {
+        variables.mark_nested_function_value(name);
     }
 }
 
@@ -2130,9 +2243,62 @@ void Semantic_checker::check_multi_var_stmt(ast::Stmt_id stmt_id)
         final_types[index] = type;
         if (is_global) {
             auto &module = ctx.workspace.get_module(current_module_id);
-            if (auto sym_id = module.resolve_exported_symbol(stmt.names[index])) {
-                ctx.registry.get_symbol(*sym_id).type = type;
-                variables.declare(stmt.names[index], type, is_mut, *sym_id);
+            Symbol_id sym_id;
+
+            if (!function_name_stack_.empty()) {
+                // Function-local static: shared global slot, lexically scoped.
+                std::string local_canonical = (module.logical_namespace.empty() || module.logical_namespace == "main")
+                    ? ""
+                    : module.logical_namespace + "::";
+                for (const auto &fn_name : function_name_stack_) {
+                    local_canonical += fn_name + "::";
+                }
+                local_canonical += stmt.names[index];
+
+                std::optional<Value> const_val = std::nullopt;
+                std::optional<uint32_t> global_idx = std::nullopt;
+                Symbol_kind sym_kind = Symbol_kind::Global_var;
+
+                if (stmt.kind == ast::Var_kind::Const) {
+                    sym_kind = Symbol_kind::Phos_const;
+                    if (stmt.initializers.size() == stmt.names.size()) {
+                        if (auto *lit = std::get_if<ast::Literal_expr>(&ctx.tree.get(stmt.initializers[index]).node)) {
+                            const_val = lit->value;
+                        } else {
+                            type_error(stmt.loc, "Constants must be initialized with primitive literals.");
+                        }
+                    } else {
+                        type_error(stmt.loc, "Constants do not support destructuring from a runtime multi-value initializer.");
+                    }
+                } else {
+                    global_idx = ctx.registry.next_global_index++;
+                }
+
+                Symbol sym{
+                    .id = Symbol_id{0},
+                    .name = local_canonical,
+                    .kind = sym_kind,
+                    .type = type,
+                    .owner_module = current_module_id,
+                    .is_public = false,
+                    .const_value = const_val,
+                    .global_index = global_idx,
+                    .stack_offset = std::nullopt,
+                    .ffi_index = std::nullopt,
+                    .declaration = stmt_id};
+
+                sym_id = ctx.registry.create_symbol(std::move(sym));
+            } else if (auto found = module.resolve_exported_symbol(stmt.names[index])) {
+                sym_id = *found;
+                ctx.registry.get_symbol(sym_id).type = type;
+            }
+
+            if (!sym_id.is_null()) {
+                if (stmt.resolved_symbols.size() <= index) {
+                    stmt.resolved_symbols.resize(index + 1, Symbol_id::null());
+                }
+                stmt.resolved_symbols[index] = sym_id;
+                variables.declare(stmt.names[index], type, is_mut, sym_id);
             }
         } else {
             declare(stmt.names[index], type, is_mut, stmt.loc);
@@ -2149,12 +2315,20 @@ void Semantic_checker::check_multi_var_stmt(ast::Stmt_id stmt_id)
                     type_error(stmt.loc, std::format("Cannot infer type of '{}' from an empty array initializer.", stmt.names[i]));
                 }
             } else if (!is_compatible(stmt.types[i], init_type)) {
-                auto diagnostic = err::msg::error(diagnostics_.phase(), stmt.loc.l, stmt.loc.c, stmt.loc.file, "Initializer type mismatch.");
-                diagnostic.expected_got(ctx.tt.to_string(stmt.types[i]), ctx.tt.to_string(init_type));
-                diagnostics_.push(std::move(diagnostic));
+                if (ctx.tt.is_numeric_primitive(stmt.types[i]) && ctx.tt.is_numeric_primitive(init_type)) {
+                    type_error(stmt.loc, numeric_cast_error_message(stmt.types[i], init_type));
+                } else {
+                    auto diagnostic = err::msg::error(diagnostics_.phase(), stmt.loc.l, stmt.loc.c, stmt.loc.file, "Initializer type mismatch.");
+                    diagnostic.expected_got(ctx.tt.to_string(stmt.types[i]), ctx.tt.to_string(init_type));
+                    diagnostics_.push(std::move(diagnostic));
+                }
             }
 
             declare_name(i, final_type);
+
+            if (expr_references_nested_function(stmt.initializers[i])) {
+                variables.mark_nested_function_value(stmt.names[i]);
+            }
         }
     } else if (stmt.initializers.size() == 1) {
         auto init_expr = stmt.initializers.front();
@@ -2198,9 +2372,13 @@ void Semantic_checker::check_multi_var_stmt(ast::Stmt_id stmt_id)
             types::Type_id final_type = stmt.type_inferred ? extracted_type : stmt.types[i];
 
             if (!stmt.type_inferred && !is_compatible(stmt.types[i], extracted_type)) {
-                auto diagnostic = err::msg::error(diagnostics_.phase(), stmt.loc.l, stmt.loc.c, stmt.loc.file, "Initializer type mismatch.");
-                diagnostic.expected_got(ctx.tt.to_string(stmt.types[i]), ctx.tt.to_string(extracted_type));
-                diagnostics_.push(std::move(diagnostic));
+                if (ctx.tt.is_numeric_primitive(stmt.types[i]) && ctx.tt.is_numeric_primitive(extracted_type)) {
+                    type_error(stmt.loc, numeric_cast_error_message(stmt.types[i], extracted_type));
+                } else {
+                    auto diagnostic = err::msg::error(diagnostics_.phase(), stmt.loc.l, stmt.loc.c, stmt.loc.file, "Initializer type mismatch.");
+                    diagnostic.expected_got(ctx.tt.to_string(stmt.types[i]), ctx.tt.to_string(extracted_type));
+                    diagnostics_.push(std::move(diagnostic));
+                }
             }
             declare_name(i, final_type);
         }
@@ -2351,6 +2529,184 @@ void Semantic_checker::check_print_stmt(ast::Stmt_id stmt_id)
     }
 }
 
+bool Semantic_checker::expr_references_nested_function(ast::Expr_id expr_id, bool check_callees) const
+{
+    if (expr_id.is_null()) {
+        return false;
+    }
+
+    // A name refers to a nested `fn` statement (declared inside a function
+    // body) when the innermost binding with that name is such a function, or a
+    // binding that was initialized/assigned from its value (tainted alias).
+    // Binding lookups fall through the whole scope chain.
+    auto is_nested = [&](const std::string &name) {
+        if (name.empty()) {
+            return false;
+        }
+        auto sym = variables.lookup(name);
+        return sym.has_value() && (sym->is_nested_function || sym->nested_fn_value);
+    };
+
+    return std::visit(
+        [&](const auto &node) -> bool {
+            using T = std::decay_t<decltype(node)>;
+            if constexpr (std::is_same_v<T, ast::Variable_expr>) {
+                return is_nested(node.name);
+            } else if constexpr (std::is_same_v<T, ast::Binary_expr>) {
+                return expr_references_nested_function(node.left, check_callees) || expr_references_nested_function(node.right, check_callees);
+            } else if constexpr (std::is_same_v<T, ast::Unary_expr>) {
+                return expr_references_nested_function(node.right, check_callees);
+            } else if constexpr (std::is_same_v<T, ast::Call_expr>) {
+                // A call evaluated now (`ret()`) returns a normal value, so the
+                // callee does not escape. Inside deferred contexts (closure
+                // bodies) the call runs later, so the callee is captured.
+                if (check_callees && expr_references_nested_function(node.callee, check_callees)) {
+                    return true;
+                }
+                for (const auto &arg : node.arguments) {
+                    if (expr_references_nested_function(arg.value, check_callees)) {
+                        return true;
+                    }
+                }
+                return false;
+            } else if constexpr (std::is_same_v<T, ast::Assignment_expr>) {
+                return expr_references_nested_function(node.value, check_callees);
+            } else if constexpr (std::is_same_v<T, ast::Field_assignment_expr>) {
+                return expr_references_nested_function(node.object, check_callees) || expr_references_nested_function(node.value, check_callees);
+            } else if constexpr (std::is_same_v<T, ast::Array_assignment_expr>) {
+                return expr_references_nested_function(node.array, check_callees) || expr_references_nested_function(node.index, check_callees)
+                    || expr_references_nested_function(node.value, check_callees);
+            } else if constexpr (std::is_same_v<T, ast::Cast_expr>) {
+                return expr_references_nested_function(node.expression, check_callees);
+            } else if constexpr (std::is_same_v<T, ast::Field_access_expr>) {
+                return expr_references_nested_function(node.object, check_callees);
+            } else if constexpr (std::is_same_v<T, ast::Method_call_expr>) {
+                if (expr_references_nested_function(node.object, check_callees)) {
+                    return true;
+                }
+                for (const auto &arg : node.arguments) {
+                    if (expr_references_nested_function(arg.value, check_callees)) {
+                        return true;
+                    }
+                }
+                return false;
+            } else if constexpr (std::is_same_v<T, ast::Model_literal_expr>) {
+                for (const auto &field : node.fields) {
+                    if (expr_references_nested_function(field.second, check_callees)) {
+                        return true;
+                    }
+                }
+                return false;
+            } else if constexpr (std::is_same_v<T, ast::Anon_model_literal_expr>) {
+                for (const auto &field : node.fields) {
+                    if (expr_references_nested_function(field.second, check_callees)) {
+                        return true;
+                    }
+                }
+                return false;
+            } else if constexpr (std::is_same_v<T, ast::Closure_expr>) {
+                // A closure may smuggle a nested function out through its body. Its body
+                // runs later, so even plain calls to a nested function count.
+                return statement_references_nested_function(node.body, true);
+            } else if constexpr (std::is_same_v<T, ast::Array_literal_expr>) {
+                for (auto element : node.elements) {
+                    if (expr_references_nested_function(element, check_callees)) {
+                        return true;
+                    }
+                }
+                return false;
+            } else if constexpr (std::is_same_v<T, ast::Array_access_expr>) {
+                return expr_references_nested_function(node.array, check_callees) || expr_references_nested_function(node.index, check_callees);
+            } else if constexpr (std::is_same_v<T, ast::Static_path_expr>) {
+                return expr_references_nested_function(node.base, check_callees);
+            } else if constexpr (std::is_same_v<T, ast::Range_expr>) {
+                return expr_references_nested_function(node.start, check_callees) || expr_references_nested_function(node.end, check_callees);
+            } else if constexpr (std::is_same_v<T, ast::Spawn_expr>) {
+                return expr_references_nested_function(node.call, check_callees);
+            } else if constexpr (std::is_same_v<T, ast::Await_expr>) {
+                return expr_references_nested_function(node.thread, check_callees);
+            } else if constexpr (std::is_same_v<T, ast::Yield_expr>) {
+                return expr_references_nested_function(node.value, check_callees);
+            }
+            return false;
+        },
+        ctx.tree.get(expr_id).node);
+}
+
+bool Semantic_checker::statement_references_nested_function(ast::Stmt_id stmt_id, bool check_callees) const
+{
+    if (stmt_id.is_null()) {
+        return false;
+    }
+
+    return std::visit(
+        [&](const auto &stmt) -> bool {
+            using T = std::decay_t<decltype(stmt)>;
+            if constexpr (std::is_same_v<T, ast::Return_stmt>) {
+                for (auto expr : stmt.expressions) {
+                    if (expr_references_nested_function(expr, check_callees)) {
+                        return true;
+                    }
+                }
+                return false;
+            } else if constexpr (std::is_same_v<T, ast::Expr_stmt>) {
+                return expr_references_nested_function(stmt.expression, check_callees);
+            } else if constexpr (std::is_same_v<T, ast::Block_stmt>) {
+                for (auto child : stmt.statements) {
+                    if (statement_references_nested_function(child, check_callees)) {
+                        return true;
+                    }
+                }
+                return false;
+            } else if constexpr (std::is_same_v<T, ast::Var_stmt>) {
+                return !stmt.initializer.is_null() && expr_references_nested_function(stmt.initializer, check_callees);
+            } else if constexpr (std::is_same_v<T, ast::Multi_var_stmt>) {
+                for (auto init : stmt.initializers) {
+                    if (expr_references_nested_function(init, check_callees)) {
+                        return true;
+                    }
+                }
+                return false;
+            } else if constexpr (std::is_same_v<T, ast::Print_stmt>) {
+                for (auto expr : stmt.expressions) {
+                    if (expr_references_nested_function(expr, check_callees)) {
+                        return true;
+                    }
+                }
+                return false;
+            } else if constexpr (std::is_same_v<T, ast::If_stmt>) {
+                return expr_references_nested_function(stmt.condition, check_callees) || statement_references_nested_function(stmt.then_branch, check_callees)
+                    || statement_references_nested_function(stmt.else_branch, check_callees);
+            } else if constexpr (std::is_same_v<T, ast::While_stmt>) {
+                return expr_references_nested_function(stmt.condition, check_callees) || statement_references_nested_function(stmt.body, check_callees);
+            } else if constexpr (std::is_same_v<T, ast::For_stmt>) {
+                return statement_references_nested_function(stmt.initializer, check_callees) || expr_references_nested_function(stmt.condition, check_callees)
+                    || expr_references_nested_function(stmt.increment, check_callees) || statement_references_nested_function(stmt.body, check_callees);
+            } else if constexpr (std::is_same_v<T, ast::For_in_stmt>) {
+                return expr_references_nested_function(stmt.iterable, check_callees) || statement_references_nested_function(stmt.body, check_callees);
+            } else if constexpr (std::is_same_v<T, ast::Match_stmt>) {
+                if (expr_references_nested_function(stmt.subject, check_callees)) {
+                    return true;
+                }
+                for (const auto &arm : stmt.arms) {
+                    if (expr_references_nested_function(arm.pattern, check_callees) || statement_references_nested_function(arm.body, check_callees)) {
+                        return true;
+                    }
+                }
+                return false;
+            } else if constexpr (std::is_same_v<T, ast::Defer_stmt>) {
+                return statement_references_nested_function(stmt.call, check_callees);
+            } else if constexpr (std::is_same_v<T, ast::Function_stmt>) {
+                // A function *declared* inside a closure body is itself a nested
+                // function; references inside it to an outer nested function are
+                // captured through it.
+                return statement_references_nested_function(stmt.body, check_callees);
+            }
+            return false;
+        },
+        ctx.tree.get(stmt_id).node);
+}
+
 void Semantic_checker::check_return_stmt(ast::Stmt_id stmt_id)
 {
     auto expressions = get_stmt<ast::Return_stmt>(ctx.tree, stmt_id).expressions;
@@ -2359,6 +2715,21 @@ void Semantic_checker::check_return_stmt(ast::Stmt_id stmt_id)
     if (!current_return_types) {
         type_error(loc, "Return statement used outside of a function");
         return;
+    }
+
+    // A named `fn` declared inside a function body can capture the enclosing
+    // scope while it stays inside, but the function value itself cannot be
+    // captured by anything that escapes (returned, aliased out, absorbed by a
+    // returned closure). Reject any such escape and point the user at the
+    // anonymous-closure form.
+    for (auto expr : expressions) {
+        if (expr_references_nested_function(expr)) {
+            type_error(
+                ast::get_loc(ctx.tree.get(expr).node),
+                "A function declared inside another function cannot escape the enclosing function: it cannot be returned or captured "
+                "by anything that is. Assign an anonymous function to a variable to return a closure with captures: "
+                "`let x := fn(args) -> return_type { body }`.");
+        }
     }
 
     auto expected_types = normalize_return_types(*current_return_types, ctx.tt);
@@ -2399,9 +2770,13 @@ void Semantic_checker::check_return_stmt(ast::Stmt_id stmt_id)
     if (expressions.size() == 1) {
         auto val_type = check_expr(expressions.front(), expected_value_type);
         if (!is_compatible(expected_value_type, val_type)) {
-            auto diagnostic = err::msg::error(diagnostics_.phase(), loc.l, loc.c, loc.file, "Return type mismatch.");
-            diagnostic.expected_got(ctx.tt.to_string(expected_value_type), ctx.tt.to_string(val_type));
-            diagnostics_.push(std::move(diagnostic));
+            if (ctx.tt.is_numeric_primitive(expected_value_type) && ctx.tt.is_numeric_primitive(val_type)) {
+                type_error(loc, numeric_cast_error_message(expected_value_type, val_type));
+            } else {
+                auto diagnostic = err::msg::error(diagnostics_.phase(), loc.l, loc.c, loc.file, "Return type mismatch.");
+                diagnostic.expected_got(ctx.tt.to_string(expected_value_type), ctx.tt.to_string(val_type));
+                diagnostics_.push(std::move(diagnostic));
+            }
         }
         return;
     }
@@ -2418,9 +2793,13 @@ void Semantic_checker::check_return_stmt(ast::Stmt_id stmt_id)
         auto val_type = check_expr(expressions[i], expected_types[i]);
         if (!is_compatible(expected_types[i], val_type)) {
             auto expr_loc = ast::get_loc(ctx.tree.get(expressions[i]).node);
-            auto diagnostic = err::msg::error(diagnostics_.phase(), expr_loc.l, expr_loc.c, expr_loc.file, "Return type mismatch.");
-            diagnostic.expected_got(ctx.tt.to_string(expected_types[i]), ctx.tt.to_string(val_type));
-            diagnostics_.push(std::move(diagnostic));
+            if (ctx.tt.is_numeric_primitive(expected_types[i]) && ctx.tt.is_numeric_primitive(val_type)) {
+                type_error(expr_loc, numeric_cast_error_message(expected_types[i], val_type));
+            } else {
+                auto diagnostic = err::msg::error(diagnostics_.phase(), expr_loc.l, expr_loc.c, expr_loc.file, "Return type mismatch.");
+                diagnostic.expected_got(ctx.tt.to_string(expected_types[i]), ctx.tt.to_string(val_type));
+                diagnostics_.push(std::move(diagnostic));
+            }
         }
     }
 }
@@ -3083,8 +3462,17 @@ types::Type_id Semantic_checker::check_assignment_expr(ast::Expr_id expr_id, std
         return get_node<ast::Assignment_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
     }
 
+    if (!var_info_res->id.is_null()) {
+        get_node<ast::Assignment_expr>(ctx.tree, expr_id).resolved_symbol = var_info_res->id;
+    }
+
     auto var_type = var_info_res->type;
     auto val_type_res = check_expr(value_id, var_type);
+
+    // Reassigning a nested `fn` value keeps it from escaping through an alias.
+    if (expr_references_nested_function(value_id)) {
+        variables.mark_nested_function_value(name);
+    }
 
     if (!is_compatible(var_type, val_type_res)) {
         auto diagnostic = err::msg::error(diagnostics_.phase(), loc.l, loc.c, loc.file, "Assignment type mismatch.");
@@ -3507,6 +3895,22 @@ types::Type_id Semantic_checker::check_cast_expr(ast::Expr_id expr_id, std::opti
     get_node<ast::Cast_expr>(ctx.tree, expr_id).target_type = target_type;
 
     auto original_type = check_expr(child_id);
+
+    if (get_node<ast::Cast_expr>(ctx.tree, expr_id).is_saturating) {
+        if (ctx.tt.is_unknown(original_type)) {
+            return target_type;
+        }
+        if (!(ctx.tt.is_numeric_primitive(original_type) && ctx.tt.is_integer_primitive(target_type))) {
+            type_error(
+                loc,
+                std::format(
+                    "Saturating cast requires a numeric source and an integer target.\n   source: '{}'\n   target: '{}'",
+                    ctx.tt.to_string(original_type),
+                    ctx.tt.to_string(target_type)));
+            get_node<ast::Cast_expr>(ctx.tree, expr_id).target_type = ctx.tt.get_unknown();
+        }
+        return get_node<ast::Cast_expr>(ctx.tree, expr_id).target_type;
+    }
 
     bool is_str_to_byte_arr = ctx.tt.is_string(original_type) && ctx.tt.is_array(target_type)
         && (ctx.tt.get_array_elem(target_type) == ctx.tt.get_u8() || ctx.tt.get_array_elem(target_type) == ctx.tt.get_i8());

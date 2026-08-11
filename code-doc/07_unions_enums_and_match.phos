@@ -34,7 +34,7 @@ enum HttpVerb: string {
 // Union construction prefers literal syntax.
 let ok_reply := Reply.{ Ok: "done" };
 let error_reply := Reply.{ Error: "try again" };
-let casual_greeting := Greeting.{ Casual };
+let casual_greeting := Greeting.{ Casual : "hi" };
 
 // Contextual anonymous literals work too.
 let contextual_reply: Reply = .{ Ok: "from context" };

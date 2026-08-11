@@ -1,0 +1,25 @@
+cmptruetruetruetruetruetrue
+u8255
+i8-112
+bit_and3
+bit_or7
+bit_xor4
+shl16
+shr4
+not_boolfalsetrue
+bool_andfalsetrue
+bool_ortruefalse
+unsigned4294967295
+neg-5
+bita214
+str eqtruefalsetrue
+float eqtruetrue
+var cmpfalsetruetrue
+bool chaintruetrue
+bool mixtruetrue
+u16 bits51112
+shifts64109951162777646116860184273879041
+bitnot-6
+xor op12
+bit3216015
+not cmptruefalse

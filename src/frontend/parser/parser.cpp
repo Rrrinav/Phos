@@ -1667,18 +1667,20 @@ Result<ast::Expr_id> Parser::factor()
     return expr;
 }
 
-// cast -> unary ("as" type)*
+// cast -> unary (("as" | "sat") type)*
 Result<ast::Expr_id> Parser::cast()
 {
     DECL_OR_RETURN(expr, unary());
 
-    while (match({lex::TokenType::As})) {
+    while (match({lex::TokenType::As, lex::TokenType::Sat})) {
+        bool is_saturating = previous().type == lex::TokenType::Sat;
         DECL_OR_RETURN(target_type, parse_type());
         auto loc = ast::get_loc(ctx_.tree.get(expr).node);
         expr = ctx_.tree.add_expr(ast::Expr{ast::Cast_expr{
             .expression = expr,
             .target_type = target_type,
             .loc = loc,
+            .is_saturating = is_saturating,
         }});
     }
     return expr;

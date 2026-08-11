@@ -1,0 +1,16 @@
+inner 40
+counter 3
+double 42
+bump1 1
+bump2 2
+bump3 3
+apply 36
+add2 5
+ops 6 15
+layered 3
+arr captured [1, 2, 3, 4, 5]
+via ref 1
+scoped 6
+nested fact 720
+local store 15
+loop capture 30

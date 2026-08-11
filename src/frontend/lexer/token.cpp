@@ -56,6 +56,7 @@ std::string phos::lex::token_to_string(phos::lex::TokenType t)
     case TokenType::Print:                   return "Print";
     case TokenType::PrintErr:                return "PrintErr";
     case TokenType::As:                      return "As";
+    case TokenType::Sat:                     return "Sat";
     case TokenType::This:                    return "This";
     case TokenType::Import:                  return "Import";
     case TokenType::Plus:                    return "Plus";

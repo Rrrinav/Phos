@@ -1,0 +1,32 @@
+i32 to u8 44
+i32 to i64 -5
+float to int 3
+int to float 7
+200 sat i8 127
+300 sat u8 255
+big as u32 4294967295
+suffixed 255
+neg float to int -2
+f32 promoted 2.5
+1000 as i8 -24
+-1 as u8 255
+40000 as i16 -25536
+-200 sat i8 -127
+100000 sat i16 32767
+70000 sat u16 65535
+chained 2
+arith 7.5
+precision 9007199254740992
+float to i64 9
+u8 wrap 44
+to f32 3.141590118408203
+sat exact 127-127
+bytes len 3 97
+widen i16->i32 32000
+widen i32->i64 123456
+arg widen 123456
+widen u-chain 255
+widen f32->f64 2.5
+cmp mixed truetrue
+array widen 6
+u64 add 256

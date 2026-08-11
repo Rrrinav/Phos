@@ -1,0 +1,124 @@
+fn add(a: i32, b: i32) -> i32 {
+    return a + b;
+}
+
+fn greet(name: string) {
+    print("hello ", name);
+}
+
+fn no_args() -> i64 {
+    return 7;
+}
+
+fn classify(n: i32) -> string {
+    if n > 0 {
+        return "positive";
+    } else if n < 0 {
+        return "negative";
+    }
+    return "zero";
+}
+
+fn fact(n: i32) -> i64 {
+    if n <= 1 {
+        return 1;
+    }
+    return n as i64 * fact(n - 1);
+}
+
+fn sum_to(n: i32) -> i32 {
+    let mut total := 0;
+    for i in 0..n + 1 {
+        total = total + i;
+    }
+    return total;
+}
+print("add ", add(3, 4));
+greet("world");
+print("no args ", no_args());
+print(classify(-5));
+print(classify(0));
+print(classify(9));
+print("fact ", fact(5));
+print("sum ", sum_to(10));
+let f := add;
+print("call via var ", f(2, 3));
+
+// default arguments
+fn greet2(name: string, punctuation: string = "!") {
+    print("greet2 ", name, punctuation);
+}
+greet2("phos");
+greet2("phos", "?");
+// named arguments
+fn build(size: i32, color: string, label: string) {
+    print("build ", size, " ", color, " ", label);
+}
+build(label = "box", size = 3, color = "red");
+// multiple returns
+fn divmod(a: i32, b: i32) -> q: i32, r: i32 {
+    return a / b, a % b;
+}
+let q1, r1 := divmod(17, 5);
+print("divmod ", q1, " ", r1);
+// named returns with defaults + naked return
+fn pos() -> x: i32 = 3, y: i32 = 4 {
+    return;
+}
+let px, py := pos();
+print("defaults ", px, " ", py);
+// named return modified before naked return
+fn bump_defaults() -> a: i32 = 1, b: i32 = 2 {
+    a = 100;
+    return;
+}
+let ba, bb := bump_defaults();
+print("bumped ", ba, " ", bb);
+// closure as function argument
+fn apply_twice(v: i32, op: fn(i32) -> i32) -> i32 {
+    return op(op(v));
+}
+let quadruple := apply_twice(5, fn(v: i32) -> i32 { return v * 2; });
+print("apply twice ", quadruple);
+// recursion depth
+fn fib(n: i32) -> i64 {
+    if n < 2 {
+        return n as i64;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+print("fib ", fib(15));
+// mutual recursion (functions are hoisted)
+fn is_even(n: i32) -> bool {
+    if n == 0 {
+        return true;
+    }
+    return is_odd(n - 1);
+}
+fn is_odd(n: i32) -> bool {
+    if n == 0 {
+        return false;
+    }
+    return is_even(n - 1);
+}
+fn is_even(n: i32) -> bool {
+    if n == 0 {
+        return true;
+    }
+    return is_odd(n - 1);
+}
+print("mutual ", is_even(10), " ", is_odd(7));
+// string return
+fn shout(s: string) -> string {
+    return s + "!";
+}
+print(shout("hey"));
+// nested call
+print("nested ", add(add(1, 2), add(3, 4)));
+// function as return type value (via let + closure)
+fn make_adder(n: i32) -> fn(i32) -> i32 {
+    let adder := fn(v: i32) -> i32 { return v + n; };
+    return adder;
+}
+let add5 := make_adder(5);
+print("adder ", add5(10));

@@ -94,6 +94,7 @@ struct Assignment_expr
     Expr_id value;
     types::Type_id type;
     Source_location loc;
+    std::optional<Symbol_id> resolved_symbol = std::nullopt;
 };
 
 struct Field_assignment_expr
@@ -119,6 +120,7 @@ struct Cast_expr
     Expr_id expression;
     types::Type_id target_type;
     Source_location loc;
+    bool is_saturating = false;
 };
 
 struct Field_access_expr
@@ -307,6 +309,7 @@ struct Var_stmt
     Expr_id initializer = Expr_id::null();
     bool type_inferred = false;
     Source_location loc;
+    std::optional<Symbol_id> resolved_symbol = std::nullopt;
 };
 
 struct Multi_var_stmt
@@ -317,6 +320,8 @@ struct Multi_var_stmt
     std::vector<Expr_id> initializers;
     bool type_inferred = false;
     Source_location loc;
+    // Parallel to `names`; filled for static/const bindings (global slot).
+    std::vector<Symbol_id> resolved_symbols;
 };
 
 enum class Print_stream { STDOUT, STDERR };

@@ -240,6 +240,8 @@ int64_t Value::as_int() const
         }
         return static_cast<int64_t>(as.u64);
     }
+    case Value_tag::Bool:
+        return as.boolean ? 1 : 0;
     default:
         return 0;
     }
@@ -264,6 +266,8 @@ uint64_t Value::as_uint() const
         return as.u32;
     case Value_tag::U64:
         return as.u64;
+    case Value_tag::Bool:
+        return as.boolean ? 1 : 0;
     default:
         return 0;
     }
@@ -281,6 +285,9 @@ double Value::as_float() const
     default:
         if (is_integer()) {
             return static_cast<double>(as_int());
+        }
+        if (tag_ == Value_tag::Bool) {
+            return as.boolean ? 1.0 : 0.0;
         }
         return 0.0;
     }
@@ -361,7 +368,14 @@ std::optional<Value> Value::cast_numeric(types::Primitive_kind target_type) cons
     }
 
     if (types::is_unsigned_integer_primitive(target_type)) {
-        uint64_t val = is_bool() ? static_cast<uint64_t>(as_bool()) : ((is_float() && as_float() < 0) ? 0 : as_uint());
+        uint64_t val;
+        if (is_bool()) {
+            val = as_bool() ? 1 : 0;
+        } else if (is_float()) {
+            val = as_float() < 0 ? 0 : static_cast<uint64_t>(as_float());
+        } else {
+            val = as_uint();
+        }
         if (target_type == types::Primitive_kind::U8) {
             return Value(static_cast<uint8_t>(val));
         }
@@ -374,7 +388,14 @@ std::optional<Value> Value::cast_numeric(types::Primitive_kind target_type) cons
         return Value(val);
     }
 
-    int64_t val = is_bool() ? static_cast<int64_t>(as_bool()) : as_int();
+    int64_t val;
+    if (is_bool()) {
+        val = as_bool() ? 1 : 0;
+    } else if (is_float()) {
+        val = static_cast<int64_t>(as_float());
+    } else {
+        val = as_int();
+    }
     if (target_type == types::Primitive_kind::I8) {
         return Value(static_cast<int8_t>(val));
     }
@@ -385,6 +406,117 @@ std::optional<Value> Value::cast_numeric(types::Primitive_kind target_type) cons
         return Value(static_cast<int32_t>(val));
     }
     return Value(val);
+}
+
+std::optional<Value> Value::saturating_cast_numeric(types::Primitive_kind target_type) const
+{
+    if ((!is_number() && !is_bool()) || !types::is_integer_primitive(target_type)) {
+        return std::nullopt;
+    }
+
+    auto clamp_signed = [](int64_t v, int64_t lo, int64_t hi) {
+        return v < lo ? lo : (v > hi ? hi : v);
+    };
+
+    if (is_float()) {
+        long double val = static_cast<long double>(as_float());
+        switch (target_type) {
+        case types::Primitive_kind::I8:
+            return Value(static_cast<int8_t>(clamp_signed(static_cast<int64_t>(val), -128, 127)));
+        case types::Primitive_kind::I16:
+            return Value(static_cast<int16_t>(clamp_signed(static_cast<int64_t>(val), -32768, 32767)));
+        case types::Primitive_kind::I32:
+            return Value(static_cast<int32_t>(clamp_signed(static_cast<int64_t>(val), -2147483648LL, 2147483647LL)));
+        case types::Primitive_kind::I64:
+            return Value(clamp_signed(static_cast<int64_t>(val), std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::max()));
+        case types::Primitive_kind::U8: {
+            uint64_t u = val < 0 ? 0 : static_cast<uint64_t>(val);
+            return Value(static_cast<uint8_t>(u > 255 ? 255 : u));
+        }
+        case types::Primitive_kind::U16: {
+            uint64_t u = val < 0 ? 0 : static_cast<uint64_t>(val);
+            return Value(static_cast<uint16_t>(u > 65535 ? 65535 : u));
+        }
+        case types::Primitive_kind::U32: {
+            uint64_t u = val < 0 ? 0 : static_cast<uint64_t>(val);
+            return Value(static_cast<uint32_t>(u > 4294967295ULL ? 4294967295ULL : u));
+        }
+        case types::Primitive_kind::U64:
+            return Value(val < 0 ? 0 : static_cast<uint64_t>(val));
+        default:
+            return std::nullopt;
+        }
+    }
+
+    if (is_bool()) {
+        int64_t val = as_bool() ? 1 : 0;
+        switch (target_type) {
+        case types::Primitive_kind::I8:
+            return Value(static_cast<int8_t>(val));
+        case types::Primitive_kind::I16:
+            return Value(static_cast<int16_t>(val));
+        case types::Primitive_kind::I32:
+            return Value(static_cast<int32_t>(val));
+        case types::Primitive_kind::I64:
+            return Value(val);
+        case types::Primitive_kind::U8:
+            return Value(static_cast<uint8_t>(val));
+        case types::Primitive_kind::U16:
+            return Value(static_cast<uint16_t>(val));
+        case types::Primitive_kind::U32:
+            return Value(static_cast<uint32_t>(val));
+        case types::Primitive_kind::U64:
+            return Value(static_cast<uint64_t>(val));
+        default:
+            return std::nullopt;
+        }
+    }
+
+    if (tag_ >= Value_tag::U8 && tag_ <= Value_tag::U64) {
+        uint64_t val = as_uint();
+        switch (target_type) {
+        case types::Primitive_kind::I8:
+            return Value(static_cast<int8_t>(val > 127 ? 127 : val));
+        case types::Primitive_kind::I16:
+            return Value(static_cast<int16_t>(val > 32767 ? 32767 : val));
+        case types::Primitive_kind::I32:
+            return Value(static_cast<int32_t>(val > 2147483647ULL ? 2147483647LL : val));
+        case types::Primitive_kind::I64:
+            return Value(static_cast<int64_t>(val > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) ? std::numeric_limits<int64_t>::max() : val));
+        case types::Primitive_kind::U8:
+            return Value(static_cast<uint8_t>(val > 255 ? 255 : val));
+        case types::Primitive_kind::U16:
+            return Value(static_cast<uint16_t>(val > 65535 ? 65535 : val));
+        case types::Primitive_kind::U32:
+            return Value(static_cast<uint32_t>(val > 4294967295ULL ? 4294967295ULL : val));
+        case types::Primitive_kind::U64:
+            return Value(val);
+        default:
+            return std::nullopt;
+        }
+    }
+
+    int64_t val = as_int();
+    switch (target_type) {
+    case types::Primitive_kind::I8:
+        return Value(static_cast<int8_t>(clamp_signed(val, -128, 127)));
+    case types::Primitive_kind::I16:
+        return Value(static_cast<int16_t>(clamp_signed(val, -32768, 32767)));
+    case types::Primitive_kind::I32:
+        return Value(static_cast<int32_t>(clamp_signed(val, -2147483648LL, 2147483647LL)));
+    case types::Primitive_kind::I64:
+        return Value(val);
+    case types::Primitive_kind::U8:
+        return Value(static_cast<uint8_t>(clamp_signed(val, 0, 255)));
+    case types::Primitive_kind::U16:
+        return Value(static_cast<uint16_t>(clamp_signed(val, 0, 65535)));
+    case types::Primitive_kind::U32:
+        return Value(static_cast<uint32_t>(clamp_signed(val, 0, 4294967295LL)));
+    case types::Primitive_kind::U64:
+        return Value(static_cast<uint64_t>(val < 0 ? 0 : val));
+    default:
+        return std::nullopt;
+    }
 }
 
 std::optional<Value> Value::coerce_literal(types::Primitive_kind target_type) const

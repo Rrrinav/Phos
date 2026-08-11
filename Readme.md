@@ -67,7 +67,7 @@ g++ ./bld.cpp -o ./bld
 
 ## TODO
 
-- [ ] Add a saturation cast (limits to size, not truncate bits)
+- [x] Add a saturation cast (limits to size, not truncate bits) — `expr sat i8`
 - [ ] Concurrency (green threads)
 - [ ] Proper I/O (reading input, file streams)
 - [ ] Optimisations

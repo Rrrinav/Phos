@@ -1,0 +1,137 @@
+static mut counter := 0;
+static greeting := "hi";
+static base_value := 100;
+
+fn bump() {
+    counter = counter + 1;
+}
+
+fn reset() {
+    counter = 0;
+}
+
+bump();
+bump();
+bump();
+print("counter ", counter);
+reset();
+print("after reset ", counter);
+
+fn show_statics() {
+    print(greeting);
+    print(base_value);
+}
+
+show_statics();
+
+fn count_down(n: i32) {
+    if n > 0 {
+        count_down(n - 1);
+    }
+    counter = counter + n;
+    print("rec n=", n, " counter=", counter);
+}
+
+count_down(2);
+print("final counter ", counter);
+
+// statics persist across function calls
+static mut calls := 0;
+fn counted_call(msg: string) {
+    calls = calls + 1;
+    print(msg, " call#", calls);
+}
+counted_call("first");
+counted_call("second");
+counted_call("third");
+print("total calls ", calls);
+
+// static read from inside closure
+static mut shared := 10;
+fn mutate_shared() {
+    shared = shared + 5;
+}
+let read_shared := fn() -> i32 { return shared; };
+mutate_shared();
+print("closure reads static ", read_shared());
+print("static value ", shared);
+
+// static string mutation
+static mut label := "start";
+fn relabel() {
+    label = label + "-mid";
+}
+relabel();
+relabel();
+print("static string ", label);
+
+// static used as accumulator in loop
+static mut acc := 0;
+for i in 1..=5 {
+    acc = acc + i;
+}
+print("static acc ", acc);
+
+// two statics interacting
+static mut a2 := 1;
+static mut b2 := 0;
+fn swap2() {
+    let t := a2;
+    a2 = b2;
+    b2 = t;
+}
+a2 = 7;
+b2 = 9;
+swap2();
+print("swapped ", a2, " ", b2);
+
+// static function-level state: each call increments
+static mut level := 0;
+fn deep() {
+    level = level + 1;
+    if level < 3 {
+        deep();
+    }
+    level = level - 1;
+}
+deep();
+print("level back to ", level);
+// function-local static: one shared instance across all calls
+fn local_counter() -> i64 {
+    static mut x := 1;
+    x = x + 1;
+    return x;
+}
+print("local counter ", local_counter());
+print("local counter ", local_counter());
+
+// function-local static shared across closures created in the function
+fn make_closures() -> fn() -> i32 {
+    static mut n := 0;
+    return fn() -> i32 { n = n + 1; return n; };
+}
+let c1 := make_closures();
+let c2 := make_closures();
+print("closure a ", c1());
+print("closure b ", c2());
+print("closure a2 ", c1());
+
+// function-local static shared across recursive calls
+fn recurse() -> i64 {
+    static mut depth := 0;
+    depth = depth + 1;
+    if depth < 3 {
+        recurse();
+    }
+    return depth;
+}
+print("recursive depth ", recurse());
+
+// function-local static mut tuple
+fn two_slots() -> i64 {
+    static mut p, q := 5, 6;
+    p = p + 1;
+    return p * 100 + q;
+}
+print("two slots ", two_slots());
+print("two slots ", two_slots());

@@ -1,0 +1,3 @@
+fn f(a: i32) { print(a); }
+let v: i64 = 5;
+f(v);

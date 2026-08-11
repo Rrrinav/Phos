@@ -1,0 +1,134 @@
+fn outer() {
+    let factor := 10;
+    let inner := fn(x: i32) -> i32 {
+        return x * factor;
+    };
+    print("inner ", inner(4));
+}
+
+outer();
+
+let mut counter := 0;
+
+fn inc() {
+    counter = counter + 1;
+}
+inc();
+inc();
+inc();
+print("counter ", counter);
+
+let double := fn(x: i32) -> i32 {
+    return x * 2;
+};
+
+print("double ", double(21));
+
+// closure mutating captured variable
+fn run_counter() {
+    let mut c := 0;
+    let bump := fn() -> i32 {
+        c = c + 1;
+        return c;
+    };
+    print("bump1 ", bump());
+    print("bump2 ", bump());
+    print("bump3 ", bump());
+}
+run_counter();
+
+// closure passed as argument
+fn apply(v: i32, op: fn(i32) -> i32) -> i32 {
+    return op(v);
+}
+print("apply ", apply(6, fn(x: i32) -> i32 { return x * x; }));
+
+// closure returning closure
+fn make_adder(n: i32) -> fn(i32) -> i32 {
+    return fn(x: i32) -> i32 { return x + n; };
+}
+let add2 := make_adder(2);
+print("add2 ", add2(3));
+
+// closure in array
+let ops := [fn(x: i32) -> i32 { return x + 1; }, fn(x: i32) -> i32 { return x + 10; }];
+print("ops ", ops[0](5), " ", ops[1](5));
+
+// closure with multiple capture layers
+fn layered() -> i32 {
+    let a := 1;
+    let layer1 := fn() -> i32 {
+        let b := 2;
+        let layer2 := fn() -> i32 {
+            return a + b;
+        };
+        return layer2();
+    };
+    return layer1();
+}
+print("layered ", layered());
+
+// closure capturing array and mutating it
+fn array_capture() {
+    let mut arr := [1, 2, 3];
+    let mut last := 3;
+    let add_one := fn() {
+        last = last + 1;
+        arr.push(last);
+    };
+    add_one();
+    add_one();
+    print("arr captured ", arr);
+}
+array_capture();
+
+// closure equality via call (no direct fn compare)
+fn identity(v: i32) -> i32 { return v; }
+let id_ref := identity;
+print("via ref ", id_ref(1));
+
+// nested function statements (scoped helpers, capture is allowed locally)
+fn scoped_helpers() -> i32 {
+    let mut x := 0;
+    fn inc_local() -> i32 {
+        x = x + 1;
+        return x;
+    }
+    fn twice(v: i32) -> i32 {
+        return v * 2;
+    }
+    let r := inc_local() + inc_local();
+    return twice(r);
+}
+print("scoped ", scoped_helpers());
+
+// nested fn with recursion
+fn nested_fact(n: i32) -> i64 {
+    fn fact(k: i32) -> i64 {
+        if k <= 1 {
+            return 1;
+        }
+        return k as i64 * fact(k - 1);
+    }
+    return fact(n);
+}
+print("nested fact ", nested_fact(6));
+
+// capturing isn't allowed to escape: closure stored then locally called fine
+fn local_store() -> i32 {
+    let base := 10;
+    let inc_by_base := fn(v: i32) -> i32 { return v + base; };
+    return inc_by_base(5);
+}
+print("local store ", local_store());
+
+// closure capturing loop variable (fresh binding per iteration)
+fn capture_loop() -> i32 {
+    let mut results: i32[] = [];
+    for i in 0..3 {
+        let capture := fn() -> i32 { return i * 10; };
+        results.push(capture());
+    }
+    return results[0] + results[1] + results[2];
+}
+print("loop capture ", capture_loop());

@@ -1,0 +1,52 @@
+let mut nums := [3, 1, 4, 1, 5];
+print("len ", len(nums));
+print("first ", nums[0]);
+print("last ", nums[4]);
+nums.push(9);
+print("after push ", len(nums));
+nums[0] = 100;
+print("after set ", nums[0]);
+let mut names := ["alice", "bob"];
+names.push("carol");
+print("names ", names[2]);
+let mut matrix: i32[][] = [];
+let row: i32[] = [1, 2, 3];
+matrix.push(row);
+print("matrix ", matrix[0][1]);
+
+// pop returns optional
+let mut stack := [10, 20, 30];
+let popped := stack.pop();
+print("popped ", popped.has_val(), " ", popped.get());
+print("after pop ", len(stack));
+// empty pop -> nil
+let mut empty_: i32[] = [];
+let none := empty_.pop();
+print("empty pop ", none.has_val(), " ", none.is_nil());
+// array value sharing note: push on one alias is visible in the other
+let mut sarr := [1, 2];
+let sarr2 := sarr;
+sarr.push(3);
+print("shared ", sarr2);
+// u8 index into array
+let idx: u8 = 1;
+print("u8 index ", nums[idx]);
+// index with computed value
+print("computed idx ", nums[1 + 1]);
+// nested array literal
+let grid := [[1, 2], [3, 4], [5, 6]];
+print("grid ", grid[2][0]);
+// len on nested
+print("grid len ", len(grid), " ", len(grid[0]));
+// array literal of strings
+let tags := ["a", "b", "c"];
+print("tags ", tags[2]);
+// write into nested array
+grid[0][1] = 99;
+print("grid write ", grid[0][1]);
+// for over array
+let mut sum := 0;
+for v in nums {
+    sum = sum + v;
+}
+print("for sum ", sum);

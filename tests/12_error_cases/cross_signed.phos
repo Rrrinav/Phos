@@ -1,0 +1,3 @@
+let a: u32 = 5;
+let x: i64 = a;
+print(x);

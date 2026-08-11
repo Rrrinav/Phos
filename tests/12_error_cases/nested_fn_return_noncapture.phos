@@ -1,0 +1,4 @@
+fn get() -> fn() -> i32 {
+    fn ret() -> i32 { return 5; }
+    return ret;
+}

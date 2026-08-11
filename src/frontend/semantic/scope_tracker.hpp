@@ -16,6 +16,13 @@ struct Scope_symbol
     Symbol_id id;
     bool is_mut;
     int depth;
+    // True when this binding was created by a `fn name() {}` statement nested
+    // inside another function body.
+    bool is_nested_function = false;
+    // True when this binding may hold the value of a nested function: it was
+    // initialized or assigned from a nested `fn` statement binding (possibly
+    // transitively through other bindings).
+    bool nested_fn_value = false;
 };
 
 class Scope_tracker
@@ -73,6 +80,27 @@ public:
             return it->second.back();
         }
         return std::nullopt;
+    }
+
+    // Marks the most recently declared binding of `name` as a nested-function
+    // declaration. Used by the checker after declaring a `fn name() {}` inside
+    // a function body.
+    void mark_nested_function(const std::string &name)
+    {
+        auto it = symbols_.find(name);
+        if (it != symbols_.end() && !it->second.empty()) {
+            it->second.back().is_nested_function = true;
+        }
+    }
+
+    // Marks the most recently declared binding of `name` as possibly holding
+    // the value of a nested function (initialized or assigned from one).
+    void mark_nested_function_value(const std::string &name)
+    {
+        auto it = symbols_.find(name);
+        if (it != symbols_.end() && !it->second.empty()) {
+            it->second.back().nested_fn_value = true;
+        }
     }
 
     int current_depth() const

@@ -1,0 +1,43 @@
+let a := 10;
+let b: i64 = 3;
+print("add", a + b);
+print("sub", a - b);
+print("mul", a * b);
+print("div", (a as f64) / (b as f64));
+print("mod", a % b);
+print("neg", -a);
+print("precedence", 2 + 3 * 4);
+print("parens", (2 + 3) * 4);
+let x := 10.0;
+let y := 4.0;
+print("fdiv", x / y);
+print("fmul", x * y);
+print("mix", (a as f64) + 0.5);
+
+// integer division truncates toward zero
+let ia := 17;
+let ib := 5;
+print("int_div", ia / ib);
+print("int_mod", ia % ib);
+// float modulo
+print("fmod", 17.5 % 4.0);
+// chained arithmetic
+print("chain", 1 + 2 * 3 - 4 / 2);
+print("chain2", ((2 + 3) * (4 - 1)) as i64);
+// unary minus inside larger expr
+let neg_v := -8;
+print("neg_v", neg_v + 3, -neg_v);
+// associativity: left-to-right for - and /
+print("assoc", 20 - 6 - 4, 100 / 5 / 2);
+// mixed float precision
+print("f_mix", 1.0 / 3.0);
+print("f_add", 0.1 + 0.2);
+let big := 1_000_000 * 1_000_000;
+print("big mul", big);
+let big64: i64 = 1_000_000i64 * 1_000_000i64;
+print("big mul 64", big64);
+// u64 arithmetic
+let ua: u64 = 4000000000;
+let ub: u64 = 7000000000;
+print("u add", ua + ub);
+print("sub result", 5 - 7);

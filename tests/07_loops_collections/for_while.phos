@@ -1,0 +1,143 @@
+let nums := [5, 2, 8, 1, 9];
+for v in nums {
+    print("val ", v);
+}
+let mut total := 0;
+for v in nums {
+    total = total + v;
+}
+print("sum ", total);
+for i in 0..5 {
+    print("i ", i);
+}
+for i in 0..10 {
+    if i % 2 == 0 {
+        continue;
+    }
+    if i > 6 {
+        break;
+    }
+    print("odd ", i);
+}
+let mut count := 0;
+while count < 3 {
+    count = count + 1;
+}
+print("while count ", count);
+
+// while with complex condition
+let mut a := 0;
+let mut b := 10;
+while a < b {
+    a = a + 2;
+    b = b - 1;
+}
+print("while complex ", a, " ", b);
+
+// infinite loop with labeled break
+let mut found := -1;
+for i in 0..100 {
+    if i * i >= 50 {
+        found = i;
+        break;
+    }
+}
+print("found ", found);
+
+// nested loops with break only inner
+let mut pairs := "";
+for i in 0..3 {
+    for j in 0..3 {
+        if j == 2 {
+            break;
+        }
+        pairs = pairs + to_string(i) + to_string(j) + " ";
+    }
+}
+print("pairs ", pairs);
+
+// labeled loop: break outer
+@outer: for (let mut i := 0; i < 3; i = i + 1) {
+    @inner: for (let mut j := 0; j < 3; j = j + 1) {
+        if j == 1 {
+            continue @inner;
+        }
+        if i == 1 {
+            break @outer;
+        }
+        print("labeled ", i, j);
+    }
+}
+
+// for-in over string (iterating what the iterator yields)
+let letters := ["p", "h", "o", "s"];
+let mut word := "";
+for ch in letters {
+    word = word + ch;
+}
+print("word ", word);
+
+// range with step via arithmetic in loop var
+let mut evens2 := "";
+for (let mut i := 0; i <= 10; i = i + 2) {
+    evens2 = evens2 + to_string(i) + " ";
+}
+print("evens2 ", evens2);
+
+// descending c-style for
+let mut desc := "";
+for (let mut i := 5; i > 0; i = i - 1) {
+    desc = desc + to_string(i) + " ";
+}
+print("desc ", desc);
+
+// sum of squares
+let mut sq := 0;
+for i in 1..=10 {
+    sq = sq + i * i;
+}
+print("sq sum ", sq);
+
+// collect matches into array via push
+let mut matches: i32[] = [];
+for i in 0..20 {
+    if i % 3 == 0 {
+        matches.push(i);
+    }
+}
+print("matches ", matches);
+
+// while with continue guard
+let mut wcnt := 0;
+let mut wi := 0;
+while wi < 10 {
+    wi = wi + 1;
+    if wi % 2 == 0 {
+        continue;
+    }
+    wcnt = wcnt + 1;
+}
+print("wcnt ", wcnt);
+
+// loop over optional value (single element)
+let opt: i32? = 42;
+for v in opt {
+    print("opt iter ", v);
+}
+
+// loop over empty optional
+let none: i32? = nil;
+for v in none {
+    print("should not print ", v);
+}
+
+// manual iterator protocol
+let iter_nums := [10, 20, 30];
+let it := iter(iter_nums);
+while true {
+    let val := it.next();
+    if val.is_nil() {
+        break;
+    }
+    print("manual ", val.get());
+}

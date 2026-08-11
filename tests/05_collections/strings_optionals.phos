@@ -1,0 +1,63 @@
+let greeting := "hello" + " " + "phos";
+print("concat ", greeting);
+let s1 := "abc";
+print("strlen ", len(s1));
+print("char ", s1[0]);
+let n := 42;
+print("to_string ", to_string(n));
+let f := 2.5;
+print("fto_string ", to_string(f));
+
+// string methods
+let raw := "  phos language  ";
+let clean := raw.trim();
+print("trim [" + clean + "]");
+let words := clean.split(" ");
+print("split ", words);
+print("starts ", clean.starts_with("phos"));
+print("ends ", clean.ends_with("language"));
+print("contains idx ", clean.index_of("lang"));
+print("missing idx ", clean.index_of("xyz").is_nil());
+// string to bytes
+let bytes: u8[] = "Hi" as u8[];
+print("bytes ", bytes);
+// bytes to string
+let back: string = bytes as string;
+print("from bytes ", back);
+
+// optionals
+let maybe: i32? = 5;
+print("opt ", maybe.has_val(), " ", maybe.get());
+let missing: i32? = nil;
+print("missing ", missing.is_nil());
+print("value_or ", missing.value_or(99));
+print("fill ", maybe.value_or(0));
+// optional with flow narrowing via cast
+if maybe.has_val() {
+    let unwrapped := maybe as i32;
+    print("narrowed ", unwrapped);
+}
+// optional string
+let os: string? = "hello";
+print("opt str ", os.get());
+// array of optionals
+let opts: i32?[] = [1, nil, 3];
+print("opt array ", opts);
+// optional arithmetic after unwrap
+let ot: i32? = 7;
+if ot.has_val() {
+    let doubled := (ot as i32) * 2;
+    print("doubled ", doubled);
+}
+// in-place concat of converted values
+print("concat in place ", to_string(1) + " plus " + to_string(2));
+// string length is in bytes (UTF-8); é is 2 bytes
+let uni := "héllo";
+print("byte len ", len(uni));
+// multiline-ish concat
+let a := "foo";
+let b := "bar";
+print("ab ", a + b);
+// substring via slicing index range
+let slice := clean.index_of(" ").get();
+print("space at ", slice);

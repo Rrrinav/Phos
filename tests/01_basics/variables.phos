@@ -1,0 +1,62 @@
+let a := 5;
+let b: i64 = 10;
+let c := -3;
+let d := 2.5;
+let name := "phos";
+print("ints ", a, ", ", b, ", ", c);
+print("float ", d);
+print("string ", name);
+let mut m := 1;
+m = m + 10;
+print("mutable ", m);
+const K := 100;
+print("const ", K);
+print("typed i64: ", b);
+print("negative: ", c);
+print("inferred i32: ", a);
+
+let flag := true;
+print("bool true ", flag);
+let no := false;
+print("bool false ", no);
+let nothing := nil;
+print("nil ", nothing);
+let small: i8 = 12;
+print("i8 ", small);
+let unsigned: u32 = 4000000000;
+print("u32 ", unsigned);
+let small_float: f32 = 1.25f32;
+print("f32 ", small_float);
+let f16_val: f16 = 1.5f16;
+print("f16 ", f16_val);
+let hex_val := 0xff;
+print("hex ", hex_val);
+let bin_val := 0b1010;
+print("bin ", bin_val);
+let oct_val := 0o755;
+print("oct ", oct_val);
+let suffix_val := 1i16;
+print("suffix ", suffix_val);
+let sep_int := 1_000_000;
+print("sep int ", sep_int);
+let sci := 1.5e2;
+print("sci ", sci);
+
+let mut sa := "one";
+sa = "two";
+print("mut string ", sa);
+const KK: i64 = 50;
+print("typed const ", KK);
+
+let mut x2 := 5;
+let mut y2 := 3;
+let tmp := x2;
+x2 = y2;
+y2 = tmp;
+print("swap ", x2, " ", y2);
+
+{
+    let block_scoped := 99;
+    print("block ", block_scoped);
+}
+print("after block ok");

@@ -1,0 +1,7 @@
+fn g() -> a: i64, b: i64 {
+    return 3, 4;
+}
+fn f() -> i32, i64 {
+    let a, b := g();
+    return a, b;
+}

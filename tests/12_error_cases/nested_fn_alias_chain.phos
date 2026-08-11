@@ -1,0 +1,7 @@
+fn get() -> fn() -> i32 {
+    let mut x := 0;
+    fn ret() -> i32 { x = x + 1; return x; }
+    let a := ret;
+    let b := a;
+    return b;
+}

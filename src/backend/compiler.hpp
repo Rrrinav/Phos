@@ -15,6 +15,7 @@ namespace phos::vm {
 
 struct Compiler_upvalue
 {
+    std::string name;
     uint8_t index;
     bool is_local;
 };
@@ -69,6 +70,13 @@ class Compiler
     Function_context *root_ctx_{nullptr};
 
     std::unordered_map<Symbol_id, Closure_data *> function_locations_;
+    std::unordered_map<Symbol_id, std::vector<Compiler_upvalue>> function_upvalues_;
+
+    // Every hoisted module-level function/method gets a dedicated VM global
+    // slot. The live closure instance is created once at its declaration and
+    // stored there, so recursion, forward references, and cross-module calls
+    // all resolve through the slot instead of a bare prototype.
+    std::unordered_map<Symbol_id, uint32_t> function_global_slots_;
     std::string current_module_ns_;
     std::string current_function_name_ = "<top_level>";
     const std::vector<ast::Function_param> *current_function_returns_{nullptr};
@@ -91,10 +99,19 @@ class Compiler
     // Variable Resolution Magic
     int resolve_local(Function_context *ctx, const std::string &name);
     int resolve_upvalue(Function_context *ctx, const std::string &name);
-    int add_upvalue(Function_context *ctx, uint8_t index, bool is_local);
+    int add_upvalue(Function_context *ctx, const std::string &name, uint8_t index, bool is_local);
     void push_scope();
     void pop_scope();
     void emit_defers(size_t target_depth);
+
+    // Builds a live closure instance for a function that captures upvalues
+    uint8_t compile_closure_value(Symbol_id sym_id, Closure_data *closure);
+
+    // Resolves a function symbol to a register holding a callable value.
+    // Prefers the live instance stored in the function's VM global slot so
+    // recursion / forward refs / cross-module calls see routed upvalues.
+    uint8_t load_function_instance(Symbol_id sym_id, Closure_data *closure);
+    std::optional<uint32_t> function_global_slot(Symbol_id sym_id) const;
 
 public:
     explicit Compiler(phos::Compiler_context &ctx);
@@ -110,6 +127,7 @@ public:
     uint16_t add_constant(Value val);
     void emit_numeric_normalize(uint8_t reg, types::Type_id type);
     vm::Opcode cast_opcode_for(types::Type_id type) const;
+    vm::Opcode saturating_cast_opcode_for(types::Type_id type) const;
     vm::Opcode arithmetic_opcode_for(lex::TokenType op, types::Type_id type) const;
     vm::Opcode comparison_opcode_for(lex::TokenType op, types::Type_id left_type, types::Type_id right_type) const;
     vm::Opcode bitwise_opcode_for(lex::TokenType op, types::Type_id type) const;
@@ -125,6 +143,7 @@ public:
     void compile_stmt_node(const ast::While_stmt &stmt);
     void compile_stmt_node(const ast::For_stmt &stmt);
     void compile_stmt_node(const ast::Function_stmt &stmt);
+    void compile_nested_function(const ast::Function_stmt &stmt);
     void compile_stmt_node(const ast::Return_stmt &stmt);
     void compile_stmt_node(const ast::Model_stmt &stmt);
     void compile_stmt_node(const ast::Union_stmt &stmt);

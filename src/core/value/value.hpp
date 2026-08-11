@@ -458,6 +458,7 @@ public:
 
     types::Primitive_kind numeric_type() const;
     std::optional<Value> cast_numeric(types::Primitive_kind target_type) const;
+    std::optional<Value> saturating_cast_numeric(types::Primitive_kind target_type) const;
     std::optional<Value> coerce_literal(types::Primitive_kind target_type) const;
 
     std::string to_string() const;

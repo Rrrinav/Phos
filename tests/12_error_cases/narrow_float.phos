@@ -1,0 +1,3 @@
+let a: f64 = 2.5;
+let x: f32 = a;
+print(x);

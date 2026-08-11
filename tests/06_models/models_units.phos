@@ -1,0 +1,174 @@
+model person {
+    name: string;
+    age: i32;
+}
+
+bind person {
+    fn describe() -> string {
+        return "Name: " + this.name + ", Age: " + to_string(this.age);
+    }
+}
+
+let mut p: person = .{ name: "alice", age: 30 };
+print(p.name);
+print(p.describe());
+p.age = 31;
+print("after mutate ", p.age);
+let q := p;
+print("copied ", q.name);
+print(q.describe());
+
+enum color {
+    red,
+    green,
+    blue,
+}
+
+let c := color::red;
+match c {
+    color::red => {
+        print("red");
+    },
+    color::green => {
+        print("green");
+    },
+    _ => {
+        print("other");
+    },
+}
+let c2 := color::blue;
+match c2 {
+    color::red => {
+        print("red");
+    },
+    color::green => {
+        print("green");
+    },
+    _ => {
+        print("other");
+    },
+}
+
+union maybe_num {
+    value: i32;
+    nothing: string;
+}
+
+let m: maybe_num = maybe_num.{ value: 42 };
+match m {
+    .value => {
+        print("has value");
+    },
+    .nothing => {
+        print("has nothing");
+    },
+}
+let n: maybe_num = maybe_num.{ nothing: "nope" };
+match n {
+    .value => {
+        print("has value");
+    },
+    .nothing => {
+        print("has nothing");
+    },
+}
+
+// model with defaulted fields
+model point {
+    x: i32 = 0;
+    y: i32 = 0;
+}
+let origin := point.{};
+let custom := point.{ x: 3 };
+print("defaults ", origin.x, " ", origin.y);
+print("custom ", custom.x, " ", custom.y);
+
+// model with static field
+model counter_box {
+    instances: i32 = 0;
+    static limit: i32 = 10;
+}
+print("static ", counter_box::limit);
+
+// methods mutating this (needs mut receiver usage via assignment)
+model account {
+    balance: i64;
+}
+bind account {
+    fn deposit(amount: i64) {
+        this.balance = this.balance + amount;
+    }
+    fn balance_of() -> i64 {
+        return this.balance;
+    }
+}
+let mut acc := account.{ balance: 100 };
+acc.deposit(50);
+print("balance ", acc.balance_of());
+
+// static method
+model math_util {
+    value: i32;
+}
+bind math_util {
+    static fn double(v: i32) -> i32 {
+        return v * 2;
+    }
+}
+print("static method ", math_util::double(21));
+
+// union with payload binding in match
+union result_ {
+    ok: i32;
+    err: string;
+}
+let r1 := result_.{ ok: 99 };
+match r1 {
+    .ok(v) => {
+        print("ok val ", v);
+    },
+    .err(msg) => {
+        print("err ", msg);
+    },
+}
+let r2 := result_.{ err: "boom" };
+match r2 {
+    .ok(v) => {
+        print("ok ", v);
+    },
+    .err(msg) => {
+        print("err ", msg);
+    },
+}
+
+// enum with explicit base value
+enum status: u16 {
+    off = 0,
+    on = 1,
+}
+let st := status::on;
+match st {
+    status::off => {
+        print("off");
+    },
+    status::on => {
+        print("on");
+    },
+}
+
+// model containing model
+model address {
+    city: string;
+}
+model user {
+    name: string;
+    addr: address;
+}
+let u := user.{ name: "bob", addr: address.{ city: "nyc" } };
+print("nested ", u.name, " ", u.addr.city);
+u.addr.city = "sf";
+print("nested mutate ", u.addr.city);
+
+// enum member in array
+let colors := [color::red, color::green, color::blue];
+print("enum arr ", len(colors));

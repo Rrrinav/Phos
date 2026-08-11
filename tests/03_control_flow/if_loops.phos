@@ -1,0 +1,125 @@
+let x := 10;
+if x > 5 {
+    print("greater");
+} else {
+    print("less");
+}
+if x > 20 {
+    print("unreachable");
+} else if x > 8 {
+    print("elif");
+} else {
+    print("else");
+}
+let mut count := 0;
+while count < 3 {
+    count = count + 1;
+    print("while ", count);
+}
+let mut total := 0;
+for i in 0..5 {
+    total = total + i;
+}
+print("for sum ", total);
+let mut reached := false;
+for i in 0..10 {
+    if i == 4 {
+        reached = true;
+        break;
+    }
+}
+print("break ", reached);
+let mut evens := 0;
+for i in 0..8 {
+    if i % 2 == 0 {
+        continue;
+    }
+    evens = evens + i;
+}
+print("continue odds ", evens);
+
+// if without else
+let mut flagged := false;
+if x == 10 {
+    flagged = true;
+}
+print("no else ", flagged);
+// nested if/else
+let score := 85;
+if score >= 90 {
+    print("A");
+} else if score >= 80 {
+    if score >= 85 {
+        print("B+");
+    } else {
+        print("B");
+    }
+} else {
+    print("C");
+}
+// while with break
+let mut n := 0;
+while true {
+    n = n + 1;
+    if n >= 5 {
+        break;
+    }
+}
+print("while break ", n);
+// while with continue
+let mut wsum := 0;
+let mut w := 1;
+while w <= 10 {
+    w = w + 1;
+    if w % 3 == 0 {
+        continue;
+    }
+    wsum = wsum + w;
+}
+print("while continue ", wsum);
+// C-style for
+let mut csum := 0;
+for (let mut i := 1; i <= 5; i = i + 1) {
+    csum = csum + i;
+}
+print("c for ", csum);
+// inclusive range
+let mut rsum := 0;
+for i in 1..=5 {
+    rsum = rsum + i;
+}
+print("inclusive ", rsum);
+// for over array
+let vals := [2, 4, 6, 8];
+let mut asum := 0;
+for v in vals {
+    asum = asum + v;
+}
+print("array for ", asum);
+// break inside nested loop only breaks inner
+let mut outer_count := 0;
+for i in 0..5 {
+    for j in 0..5 {
+        break;
+    }
+    outer_count = outer_count + 1;
+}
+print("nested break ", outer_count);
+// conditional expression in condition
+let mut guard := 10;
+let mut hits := 0;
+while (guard > 0 && hits < 3) {
+    guard = guard - 1;
+    hits = hits + 1;
+}
+print("cond while ", guard, " ", hits);
+// if with boolean variable
+let enabled := true;
+if enabled {
+    print("enabled branch");
+}
+// scope isolation: loop var dies after loop
+for i in 0..2 {
+    print("loop var ", i);
+}
+print("after loop");

@@ -1,0 +1,18 @@
+len 5
+first 3
+last 5
+after push 6
+after set 100
+names carol
+matrix 2
+popped true 30
+after pop 2
+empty pop false true
+shared [1, 2, 3]
+u8 index 1
+computed idx 4
+grid 5
+grid len 3 2
+tags c
+grid write 99
+for sum 120

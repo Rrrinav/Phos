@@ -101,6 +101,13 @@ public:
     std::vector<std::string> loop_label_stack_;
     std::vector<Label_scope> label_scopes_;
 
+    // Stack of `fn name() {}` statements currently being checked inside another
+    // function body, used to scope their body checks.
+    std::vector<std::string> nested_fn_stack_;
+    // Canonical names of the enclosing named functions, used to scope
+    // function-local `static` variables (each gets its own global slot).
+    std::vector<std::string> function_name_stack_;
+
     /*
      * [check] -> diagnostics
      * entry point for semantic analysis
@@ -122,9 +129,13 @@ public:
      */
     bool is_compatible(types::Type_id expected, types::Type_id actual) const;
     types::Type_id promote_numeric_type(types::Type_id left, types::Type_id right) const;
+    std::string numeric_cast_error_message(types::Type_id target, types::Type_id source) const;
 
     void declare(const std::string &name, types::Type_id type, bool is_mut, const ast::Source_location &loc);
     std::optional<Scope_symbol> lookup(const std::string &name, const ast::Source_location &loc);
+
+    bool expr_references_nested_function(ast::Expr_id expr, bool check_callees = false) const;
+    bool statement_references_nested_function(ast::Stmt_id stmt, bool check_callees = false) const;
 
     void hoist_globals(Module_id mod_id);
 

@@ -2614,11 +2614,15 @@ namespace bld
       if (!str::starts_with(arg, "-"))
         continue;
 
+      size_t dash_count = 0;
+      while (dash_count < arg.size() && arg[dash_count] == '-')
+        dash_count++;
+
       auto eq_pos = arg.find('=');
 
       if (eq_pos == std::string::npos)
       {
-        std::string flag = arg.substr(1);
+        std::string flag = arg.substr(dash_count);
         flags.insert(flag);
         values.erase(flag);  // Remove from values if it was there
 
@@ -2646,7 +2650,7 @@ namespace bld
       else
       {
         // Key=value pair like -compiler=g++, -test=yes
-        std::string key = arg.substr(1, eq_pos - 1);
+        std::string key = arg.substr(dash_count, eq_pos - dash_count);
         std::string value = arg.substr(eq_pos + 1);
 
         values[key] = value;

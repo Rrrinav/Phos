@@ -1,0 +1,26 @@
+counter 3
+after reset 0
+hi
+100
+rec n=0 counter=0
+rec n=1 counter=1
+rec n=2 counter=3
+final counter 3
+first call#1
+second call#2
+third call#3
+total calls 3
+closure reads static 15
+static value 15
+static string start-mid-mid
+static acc 15
+swapped 9 7
+level back to 0
+local counter 2
+local counter 3
+closure a 1
+closure b 2
+closure a2 3
+recursive depth 3
+two slots 606
+two slots 706

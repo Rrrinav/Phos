@@ -311,6 +311,14 @@ std::string Assembler::disassemble_instruction(Instruction inst, const Closure_d
     case Opcode::Cast_f16:
     case Opcode::Cast_f32:
     case Opcode::Cast_f64:
+    case Opcode::Sat_cast_i8:
+    case Opcode::Sat_cast_i16:
+    case Opcode::Sat_cast_i32:
+    case Opcode::Sat_cast_i64:
+    case Opcode::Sat_cast_u8:
+    case Opcode::Sat_cast_u16:
+    case Opcode::Sat_cast_u32:
+    case Opcode::Sat_cast_u64:
         asm_str = std::format("{:<14} %r{}", name, inst.rrr.dst);
         break;
     case Opcode::Cast_str_to_arr:

@@ -41,6 +41,14 @@ std::string phos::vm::opcode_to_string(Opcode code)
     case Opcode::Cast_f64:                   return "Cast_f64";
     case Opcode::Cast_str_to_arr:            return "Cast_str_to_arr";
     case Opcode::Cast_arr_to_str:            return "Cast_arr_to_str";
+    case Opcode::Sat_cast_i8:                 return "Sat_cast_i8";
+    case Opcode::Sat_cast_i16:                return "Sat_cast_i16";
+    case Opcode::Sat_cast_i32:                return "Sat_cast_i32";
+    case Opcode::Sat_cast_i64:                return "Sat_cast_i64";
+    case Opcode::Sat_cast_u8:                 return "Sat_cast_u8";
+    case Opcode::Sat_cast_u16:                return "Sat_cast_u16";
+    case Opcode::Sat_cast_u32:                return "Sat_cast_u32";
+    case Opcode::Sat_cast_u64:                return "Sat_cast_u64";
     case Opcode::Eq_i64:                     return "Eq_i64";
     case Opcode::Neq_i64:                    return "Neq_i64";
     case Opcode::Lt_i64:                     return "Lt_i64";
@@ -219,6 +227,30 @@ phos::vm::Opcode phos::vm::string_to_opcode(std::string code)
     }
     if (code == "Cast_arr_to_str") {
         return Opcode::Cast_arr_to_str;
+    }
+    if (code == "Sat_cast_i8") {
+        return Opcode::Sat_cast_i8;
+    }
+    if (code == "Sat_cast_i16") {
+        return Opcode::Sat_cast_i16;
+    }
+    if (code == "Sat_cast_i32") {
+        return Opcode::Sat_cast_i32;
+    }
+    if (code == "Sat_cast_i64") {
+        return Opcode::Sat_cast_i64;
+    }
+    if (code == "Sat_cast_u8") {
+        return Opcode::Sat_cast_u8;
+    }
+    if (code == "Sat_cast_u16") {
+        return Opcode::Sat_cast_u16;
+    }
+    if (code == "Sat_cast_u32") {
+        return Opcode::Sat_cast_u32;
+    }
+    if (code == "Sat_cast_u64") {
+        return Opcode::Sat_cast_u64;
     }
     if (code == "Eq_i64") {
         return Opcode::Eq_i64;

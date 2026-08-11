@@ -1,0 +1,19 @@
+foo body
+defer executed
+defer order bodyab
+five!
+wildcard
+defer after val
+defer val 42
+multi body
+third registered
+second registered
+first registered
+deferred sees 99
+grades ABCDF
+band high
+is apple
+odd small
+matched three
+goto 0123456
+label count 9

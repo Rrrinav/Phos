@@ -1,0 +1,26 @@
+ints 5, 10, -3
+float 2.5
+string phos
+mutable 11
+const 100
+typed i64: 10
+negative: -3
+inferred i32: 5
+bool true true
+bool false false
+nil nil
+i8 12
+u32 4000000000
+f32 1.25
+f16 1.5
+hex 255
+bin 10
+oct 493
+suffix 1
+sep int 1000000
+sci 150
+mut string two
+typed const 50
+swap 3 5
+block 99
+after block ok

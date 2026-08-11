@@ -28,7 +28,7 @@ fn quick_sort(mut arr: i64[], low: i64, high: i64) {
 let mut my_data := [10, 7, 8, 9, 1, 5];
 print("Original:");
 print(my_data);
-quick_sort(my_data, 0, len(my_data) - 1);
+quick_sort(my_data, 0, (len(my_data) as i64) - 1);
 print("Quick Sort Result:");
 print(my_data);
 

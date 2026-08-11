@@ -1,0 +1,30 @@
+val 5
+val 2
+val 8
+val 1
+val 9
+sum 25
+i 0
+i 1
+i 2
+i 3
+i 4
+odd 1
+odd 3
+odd 5
+while count 3
+while complex 8 6
+found 8
+pairs 00 01 10 11 20 21 
+labeled 00
+labeled 02
+word phos
+evens2 0 2 4 6 8 10 
+desc 5 4 3 2 1 
+sq sum 385
+matches [0, 3, 6, 9, 12, 15, 18]
+wcnt 5
+opt iter 42
+manual 10
+manual 20
+manual 30

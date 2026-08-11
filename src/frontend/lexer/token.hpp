@@ -80,6 +80,7 @@ enum class TokenType : uint8_t {
     Print,
     PrintErr,
     As,
+    Sat,
     This,
     Import,
 
@@ -209,6 +210,7 @@ static const std::flat_map<std::string_view, TokenType> token_keywords = {
     {"print", TokenType::Print},
     {"eprint", TokenType::PrintErr},
     {"as", TokenType::As},
+    {"sat", TokenType::Sat},
     {"this", TokenType::This},
     {"nil", TokenType::Nil},
     {"import", TokenType::Import},

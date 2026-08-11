@@ -1,0 +1,9 @@
+model holder {
+    f: fn() -> i32;
+}
+fn get() -> fn() -> i32 {
+    let mut x := 0;
+    fn ret() -> i32 { x = x + 1; return x; }
+    let h := holder.{ f: ret };
+    return h.f;
+}

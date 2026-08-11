@@ -63,6 +63,10 @@ enum class Opcode : uint8_t {
     Cast_str_to_arr, // dst, src_a (string), src_b (1 for signed i8, 0 for unsigned u8)
     Cast_arr_to_str, // dst, src_a (array), src_b (unused)
 
+    // Saturating casts (clamp to target range instead of truncating bits)
+    Sat_cast_i8, Sat_cast_i16, Sat_cast_i32, Sat_cast_i64,
+    Sat_cast_u8, Sat_cast_u16, Sat_cast_u32, Sat_cast_u64,
+
     // Comparison
     Eq_i64, Neq_i64, Lt_i64, Lte_i64, Gt_i64, Gte_i64, // dest, src_a, src_b
     Eq_u64, Neq_u64, Lt_u64, Lte_u64, Gt_u64, Gte_u64, // dest, src_a, src_b

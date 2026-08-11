@@ -1,0 +1,143 @@
+fn foo() {
+    defer {
+        print("defer executed");
+    }
+    print("foo body");
+}
+foo();
+let mut order := "";
+fn append(v: string) {
+    order = order + v;
+}
+fn test() {
+    defer {
+        append("b");
+    }
+    defer {
+        append("a");
+    }
+    append("body");
+}
+test();
+print("defer order ", order);
+let x1 := 5;
+match x1 {
+    1 => {
+        print("one");
+    },
+    5 => {
+        print("five!");
+    },
+    _ => {
+        print("other");
+    },
+}
+let y1 := 9;
+match y1 {
+    1 => {
+        print("one");
+    },
+    _ => {
+        print("wildcard");
+    },
+}
+
+// defer with value (expression form)
+fn defer_val() -> i32 {
+    defer print("defer after val");
+    return 42;
+}
+let dv := defer_val();
+print("defer val ", dv);
+
+// multiple defers LIFO
+fn multi_defer() {
+    defer { print("first registered"); }
+    defer { print("second registered"); }
+    defer { print("third registered"); }
+    print("multi body");
+}
+multi_defer();
+
+// defer sees enclosing locals (evaluated at end)
+fn defer_capture() {
+    let mut v := 1;
+    defer { print("deferred sees ", v); }
+    v = 99;
+}
+defer_capture();
+
+// match with ranges (inclusive and exclusive)
+fn grade(n: i32) -> string {
+    match n {
+        90..=100 => { return "A"; },
+        80..=89 => { return "B"; },
+        70..=79 => { return "C"; },
+        60..=69 => { return "D"; },
+        _ => { return "F"; },
+    }
+}
+print("grades ", grade(95), grade(82), grade(74), grade(63), grade(40));
+let mut band := "";
+let b := 75;
+match b {
+    0..=49 => { band = "low"; },
+    50..=74 => { band = "mid"; },
+    75..=100 => { band = "high"; },
+    _ => { band = "?"; },
+}
+print("band ", band);
+
+// match on strings
+let fruit := "apple";
+match fruit {
+    "apple" => { print("is apple"); },
+    "banana" => { print("is banana"); },
+    _ => { print("other fruit"); },
+}
+
+// multiple literal arms
+let num := 3;
+match num {
+    1 => { print("one or three? no, one"); },
+    3 => { print("odd small"); },
+    6 => { print("even small"); },
+    _ => { print("big"); },
+}
+
+// match as expression-ish via assignment inside arms
+let mut matched := "";
+match num {
+    3 => { matched = "three"; },
+    _ => { matched = "other"; },
+}
+print("matched ", matched);
+
+// goto label
+fn goto_demo() -> string {
+    let mut out := "";
+    for i in 0..10 {
+        if i == 7 {
+            goto @done;
+        }
+        out = out + to_string(i);
+    }
+    @done:
+    return out;
+}
+print("goto ", goto_demo());
+
+// loop label break (already covered in 07; here with for-in)
+let mut lc := 0;
+@outer2: for i in 0..5 {
+    for j in 0..5 {
+        if j > 2 {
+            break;
+        }
+        if i == 3 {
+            break @outer2;
+        }
+        lc = lc + 1;
+    }
+}
+print("label count ", lc);

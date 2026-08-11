@@ -1,0 +1,25 @@
+concat hello phos
+strlen 3
+char a
+to_string 42
+fto_string 2.5
+trim [phos language]
+split ["phos", "language"]
+starts true
+ends true
+contains idx 5
+missing idx true
+bytes [72, 105]
+from bytes Hi
+opt true 5
+missing true
+value_or 99
+fill 5
+narrowed 5
+opt str hello
+opt array [1?, nil, 3?]
+doubled 14
+concat in place 1 plus 2
+byte len 6
+ab foobar
+space at 4

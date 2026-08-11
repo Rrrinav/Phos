@@ -1,0 +1,43 @@
+print("cmp", 1 < 2, 2 <= 2, 3 > 2, 3 >= 3, 4 == 4, 4 != 5);
+print("u8", 255 as u8);
+print("i8", 400 as i8);
+let a := 7;
+let b := 3;
+print("bit_and", a & b);
+print("bit_or", a | b);
+print("bit_xor", a ^ b);
+print("shl", 1 << 4);
+print("shr", 16 >> 2);
+print("not_bool", !true, !false);
+print("bool_and", true && false, true && true);
+print("bool_or", false || true, false || false);
+print("unsigned", 4294967295 as u32);
+print("neg", -5);
+let a2 := 6;
+print("bita", a2 & 3, a2 | 8);
+
+// equality on strings and floats
+print("str eq", "abc" == "abc", "abc" == "abd", "abc" != "abd");
+print("float eq", 1.5 == 1.5, 1.5 != 2.5);
+// comparing variables
+let v1 := 42;
+let v2 := 43;
+print("var cmp", v1 == v2, v1 != v2, v1 < v2);
+// chain-case: 1 < 2 && 3 > 2
+print("bool chain", 1 < 2 && 3 > 2, 5 >= 5 && 6 < 7);
+// bool mixing
+print("bool mix", (1 < 2) || (10 < 2), !(1 > 2));
+// bitwise on u16 literals with suffix
+print("u16 bits", 0b1111u16 & 0b0101u16, 0b1000u16 | 0b0011u16, 0b1111u16 ^ 0b0011u16);
+// shifts on u64
+print("shifts64", 1u64 << 40u64, 1u64 << 62u64, 4294967296u64 >> 32u64);
+// bitwise not (signed only; unsigned bitnot is a known panic, see error tests)
+print("bitnot", ~5);
+// xor swap style arithmetic
+let x := 5;
+let y := 9;
+print("xor op", x ^ y);
+// larger bit ops
+print("bit32", 0b1010_1010 & 0b1111_0000, 0b1111_0000 >> 4);
+// not on comparisons
+print("not cmp", !(3 > 5), !(7 == 7));
