@@ -28,6 +28,8 @@ struct Symbol
     std::optional<uint16_t> stack_offset;
     std::optional<size_t> ffi_index;
 
+    bool is_mut = false; // Registry-level mutability (REPL top-level bindings)
+
     ast::Stmt_id declaration = ast::Stmt_id::null();
 };
 

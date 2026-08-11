@@ -1,5 +1,6 @@
 #include "cli-args.hpp"
 #include "phos.hpp"
+#include "repl.hpp"
 
 #include <cstdlib>
 #include <fstream>
@@ -31,6 +32,12 @@ int main(int argc, char *argv[])
     engine.vm.cfg.out = &std::cout;
     engine.vm.cfg.err = &std::cerr;
     engine.vm.cmd_args = config.program_args;
+
+    if (config.repl) {
+        phos::Repl repl;
+        repl.run();
+        return EXIT_SUCCESS;
+    }
 
     if (!engine.compile_file(config.input_file)) {
         return EXIT_FAILURE;

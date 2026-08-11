@@ -20,6 +20,7 @@ struct Phos_config
 
     bool trace_vm = false;
     bool help = false;
+    bool repl = false;
 
     // Positional
     std::string input_file = "";
@@ -47,6 +48,7 @@ inline void print_help()
               << "  --print_ir      Print Intermediate Representation (IR)\n"
               << "  -o <file>       Specify output file for IR (default: ir.phosasm)\n"
               << "  --trace_vm      Enable VM execution tracing\n"
+              << "  -repl           Start an interactive session\n"
               << "  -h, --help      Print this help message\n\n"
               << "EXAMPLE:\n"
               << "  phos ast print --unicode main.phos\n"
@@ -90,6 +92,8 @@ inline Parse_result parse_args(int argc, char *argv[])
             }
         } else if (arg == "--trace_vm") {
             cfg.trace_vm = true;
+        } else if (arg == "-repl" || arg == "--repl") {
+            cfg.repl = true;
         } else if (arg == "--args" || arg == "--") {
             // Everything after '--' gets forwarded to the running Phos program
             for (size_t j = i + 1; j < args.size(); ++j) {
@@ -108,8 +112,8 @@ inline Parse_result parse_args(int argc, char *argv[])
         }
     }
 
-    // Enforce Rule 5: Cannot run without a file (unless -h was passed)
-    if (!cfg.help && cfg.input_file.empty()) {
+    // Enforce Rule 5: Cannot run without a file (unless -h or -repl was passed)
+    if (!cfg.help && !cfg.repl && cfg.input_file.empty()) {
         return {cfg, false, "Error: No input file specified."};
     }
 

@@ -222,18 +222,8 @@ int Compiler::resolve_upvalue(Function_context *fctx, const std::string &name)
 }
 
 // MAIN COMPILATION FLOW
-Closure_data Compiler::compile_workspace([[maybe_unused]] Module_id main_mod)
+void Compiler::bind_natives()
 {
-    Function_context global_ctx;
-    global_ctx.enclosing = nullptr;
-    global_ctx.current_register = 0;
-    current_ctx_ = nullptr;
-    root_ctx_ = nullptr;
-    current_module_ns_.clear();
-    function_locations_.clear();
-    function_global_slots_.clear();
-    push_context(&global_ctx);
-
     for (const auto &[name, sigs] : ctx.type_env.native_signatures) {
         if (sigs.empty() || sigs[0].func == nullptr) {
             continue;
@@ -260,6 +250,21 @@ Closure_data Compiler::compile_workspace([[maybe_unused]] Module_id main_mod)
             std::exit(EXIT_FAILURE);
         }
     }
+}
+
+Closure_data Compiler::compile_workspace([[maybe_unused]] Module_id main_mod)
+{
+    Function_context global_ctx;
+    global_ctx.enclosing = nullptr;
+    global_ctx.current_register = 0;
+    current_ctx_ = nullptr;
+    root_ctx_ = nullptr;
+    current_module_ns_.clear();
+    function_locations_.clear();
+    function_global_slots_.clear();
+    push_context(&global_ctx);
+
+    bind_natives();
 
     for (const auto &module : ctx.workspace.modules) {
         hoist_module_functions(module);
@@ -273,6 +278,63 @@ Closure_data Compiler::compile_workspace([[maybe_unused]] Module_id main_mod)
         for (auto stmt_id : module.ast_roots) {
             compile_stmt(stmt_id);
         }
+    }
+
+    emit(vm::Instruction::make_rrr(vm::Opcode::Return, 0, 0, 0));
+
+    // Patch any top-level unresolved gotos (though unlikely outside a function)
+    for (const auto &[label_name, jump_idx] : current_ctx_->unresolved_gotos) {
+        if (current_ctx_->labels.contains(label_name)) {
+            current_ctx_->block.instructions[jump_idx].i.imm = current_ctx_->labels.at(label_name);
+        } else {
+            std::println(std::cerr, "Compiler Bug: Unresolved goto label '{}' bypassed semantic checker.", label_name);
+            std::exit(EXIT_FAILURE);
+        }
+    }
+
+    Closure_data data{};
+    auto &final_block = current_block();
+
+    data.code_count = final_block.instructions.size();
+    if (data.code_count > 0) {
+        data.code = ctx.arena.allocate<vm::Instruction>(data.code_count);
+        std::copy(final_block.instructions.begin(), final_block.instructions.end(), data.code);
+    }
+
+    data.constant_count = final_block.constants.size();
+    if (data.constant_count > 0) {
+        data.constants = ctx.arena.allocate<Value>(data.constant_count);
+        std::copy(final_block.constants.begin(), final_block.constants.end(), data.constants);
+    }
+
+    pop_context();
+    return data;
+}
+
+// Incremental compile for REPL sessions: binds natives on the first entry,
+// hoists only the given module's functions, and compiles only its roots.
+// All compiler state (function_locations_, function_global_slots_) persists
+// across calls so closures and function slots survive between entries.
+Closure_data Compiler::compile_module_only(Module_id mod_id)
+{
+    if (function_locations_.empty()) {
+        bind_natives();
+    }
+
+    const auto &module = ctx.workspace.get_module(mod_id);
+
+    Function_context global_ctx;
+    global_ctx.enclosing = nullptr;
+    global_ctx.current_register = 0;
+    current_ctx_ = nullptr;
+    root_ctx_ = nullptr;
+    current_module_ns_ = module.logical_namespace;
+    push_context(&global_ctx);
+
+    hoist_module_functions(module);
+
+    for (auto stmt_id : module.ast_roots) {
+        compile_stmt(stmt_id);
     }
 
     emit(vm::Instruction::make_rrr(vm::Opcode::Return, 0, 0, 0));
@@ -745,7 +807,8 @@ void Compiler::compile_stmt_node(const ast::Expr_stmt &stmt)
 
 void Compiler::compile_stmt_node(const ast::Var_stmt &stmt)
 {
-    const bool is_static = (stmt.kind == ast::Var_kind::Static || stmt.kind == ast::Var_kind::Static_mut);
+    const bool is_static = (stmt.kind == ast::Var_kind::Static || stmt.kind == ast::Var_kind::Static_mut)
+                           || (ctx.repl_force_global && current_ctx_ != nullptr && current_ctx_->enclosing == nullptr);
     const bool is_function_local_static = is_static && current_ctx_ != nullptr && current_ctx_->enclosing != nullptr;
 
     // A `static` declared inside a function body must be initialized exactly
@@ -816,7 +879,8 @@ void Compiler::compile_stmt_node(const ast::Var_stmt &stmt)
 
 void Compiler::compile_stmt_node(const ast::Multi_var_stmt &stmt)
 {
-    const bool is_static = (stmt.kind == ast::Var_kind::Static || stmt.kind == ast::Var_kind::Static_mut);
+    const bool is_static = (stmt.kind == ast::Var_kind::Static || stmt.kind == ast::Var_kind::Static_mut)
+                           || (ctx.repl_force_global && current_ctx_ != nullptr && current_ctx_->enclosing == nullptr);
     const bool is_function_local_static = is_static && current_ctx_ != nullptr && current_ctx_->enclosing != nullptr;
 
     std::optional<uint32_t> guard_index;

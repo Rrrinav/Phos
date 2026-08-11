@@ -22,6 +22,10 @@ struct Compiler_context
     Symbol_registry registry;
     Type_environment type_env;
 
+    // In REPL sessions, top-level `let` / `mut` bindings are backed by VM
+    // global slots so they survive across input entries.
+    bool repl_force_global = false;
+
     // Clean constructor
     Compiler_context(mem::Arena &a) : arena(a), type_env(tt)
     {}

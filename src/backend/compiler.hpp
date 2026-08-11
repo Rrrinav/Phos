@@ -95,6 +95,7 @@ class Compiler
     void set_closure_name(Closure_data &closure, std::string_view name);
     void hoist_function_placeholder(Symbol_id id);
     void hoist_module_functions(const Module_unit &module);
+    void bind_natives();
 
     // Variable Resolution Magic
     int resolve_local(Function_context *ctx, const std::string &name);
@@ -117,6 +118,7 @@ public:
     explicit Compiler(phos::Compiler_context &ctx);
     Closure_data compile(const std::vector<ast::Stmt_id> &statements);
     Closure_data compile_workspace(Module_id main_mod);
+    Closure_data compile_module_only(Module_id mod_id);
 
     // Register management for the current block
     uint8_t allocate_register();

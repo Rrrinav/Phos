@@ -849,6 +849,10 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
 
 err::Engine Semantic_checker::check_workspace()
 {
+    // Each call only checks modules that were added since the last call, so
+    // the report must contain only this round's diagnostics.
+    diagnostics_ = err::Engine{};
+
     label_scopes_.push_back({});
     for (const auto &[name, sigs] : ctx.type_env.native_signatures) {
         if (!ctx.registry.lookup_global(name)) {
@@ -991,6 +995,15 @@ std::optional<Scope_symbol> Semantic_checker::lookup(const std::string &name, co
         }
         types::Type_id func_id = ctx.tt.function(params, declared_return_types(decl->returns, ctx.tt));
         return Scope_symbol{func_id, Symbol_id::null(), false, 0};
+    }
+
+    // Fall back to registry-backed globals (module statics, REPL bindings) so
+    // assignments and other lookup-based paths see them across modules.
+    if (auto global_sym_id = ctx.registry.lookup_global(name)) {
+        auto &sym = ctx.registry.get_symbol(*global_sym_id);
+        if (sym.kind == Symbol_kind::Global_var) {
+            return Scope_symbol{resolve_symbol_type(ctx, *global_sym_id, *this), *global_sym_id, sym.is_mut, 0};
+        }
     }
 
     type_error(loc, std::format("Undefined variable, function, or type '{}'", name));
@@ -2152,14 +2165,15 @@ void Semantic_checker::check_var_stmt(ast::Stmt_id stmt_id)
             diagnostics_.push(std::move(diagnostic));
         }
     }
-    bool is_global = (kind == ast::Var_kind::Const || kind == ast::Var_kind::Static || kind == ast::Var_kind::Static_mut);
+    bool is_global = (kind == ast::Var_kind::Const || kind == ast::Var_kind::Static || kind == ast::Var_kind::Static_mut)
+                     || (ctx.repl_force_global && function_name_stack_.empty());
     bool is_mut = (kind == ast::Var_kind::Mut || kind == ast::Var_kind::Static_mut);
 
     if (is_global) {
         auto &module = ctx.workspace.get_module(current_module_id);
         Symbol_id sym_id;
 
-        if (!function_name_stack_.empty()) {
+        if (!function_name_stack_.empty() || ctx.repl_force_global) {
             // A `static` declared inside a function body: allocate a dedicated
             // global slot so every invocation (and every closure created in the
             // function) refers to one shared instance, like a C static local.
@@ -2201,6 +2215,7 @@ void Semantic_checker::check_var_stmt(ast::Stmt_id stmt_id)
                 .global_index = global_idx,
                 .stack_offset = std::nullopt,
                 .ffi_index = std::nullopt,
+                .is_mut = is_mut,
                 .declaration = stmt_id};
 
             sym_id = ctx.registry.create_symbol(std::move(sym));
@@ -2234,7 +2249,8 @@ void Semantic_checker::check_multi_var_stmt(ast::Stmt_id stmt_id)
         }
     }
 
-    const bool is_global = (stmt.kind == ast::Var_kind::Const || stmt.kind == ast::Var_kind::Static || stmt.kind == ast::Var_kind::Static_mut);
+    const bool is_global = (stmt.kind == ast::Var_kind::Const || stmt.kind == ast::Var_kind::Static || stmt.kind == ast::Var_kind::Static_mut)
+                             || (ctx.repl_force_global && function_name_stack_.empty());
     const bool is_mut = (stmt.kind == ast::Var_kind::Mut || stmt.kind == ast::Var_kind::Static_mut);
 
     std::vector<types::Type_id> final_types(stmt.names.size(), ctx.tt.get_unknown());
@@ -2245,7 +2261,7 @@ void Semantic_checker::check_multi_var_stmt(ast::Stmt_id stmt_id)
             auto &module = ctx.workspace.get_module(current_module_id);
             Symbol_id sym_id;
 
-            if (!function_name_stack_.empty()) {
+            if (!function_name_stack_.empty() || ctx.repl_force_global) {
                 // Function-local static: shared global slot, lexically scoped.
                 std::string local_canonical = (module.logical_namespace.empty() || module.logical_namespace == "main")
                     ? ""
@@ -2285,6 +2301,7 @@ void Semantic_checker::check_multi_var_stmt(ast::Stmt_id stmt_id)
                     .global_index = global_idx,
                     .stack_offset = std::nullopt,
                     .ffi_index = std::nullopt,
+                    .is_mut = is_mut,
                     .declaration = stmt_id};
 
                 sym_id = ctx.registry.create_symbol(std::move(sym));
@@ -3450,7 +3467,7 @@ types::Type_id Semantic_checker::check_assignment_expr(ast::Expr_id expr_id, std
         }
 
         if (sym.kind == Symbol_kind::Global_var) {
-            if (sym.owner_module != current_module_id) {
+            if (!ctx.repl_force_global && sym.owner_module != current_module_id) {
                 type_error(loc, std::format("Cannot mutate foreign static variable '{}'. It is read-only outside its module.", sym.name));
                 return get_node<ast::Assignment_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
             }
