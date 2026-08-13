@@ -1,0 +1,7 @@
+fn triple(x: i32) -> i32 {
+    return x * 3;
+}
+
+let mut visits := 0;
+
+print("loaded helper")

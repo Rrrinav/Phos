@@ -350,6 +350,11 @@ static bool contains_key(const Vec &vec, const std::string &key)
 Semantic_checker::Semantic_checker(Compiler_context &ctx) : ctx(ctx)
 {}
 
+types::Type_id Semantic_checker::resolve_symbol(Symbol_id id)
+{
+    return resolve_symbol_type(ctx, id, *this);
+}
+
 void Semantic_checker::type_error(const ast::Source_location &loc, const std::string &message)
 {
     diagnostics_.error(loc.l, loc.c, loc.file, "{}", message);
@@ -575,7 +580,8 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
         } else if (std::holds_alternative<ast::Model_stmt>(ctx.tree.get(stmt_id).node)) {
             auto &model = get_stmt<ast::Model_stmt>(ctx.tree, stmt_id);
 
-            std::string canonical_name = (module.logical_namespace == "main" || module.logical_namespace.empty()) ? model.name : module.logical_namespace + "::" + model.name;
+            std::string canonical_name =
+                (module.logical_namespace == "main" || module.logical_namespace.empty()) ? model.name : module.logical_namespace + "::" + model.name;
 
             std::vector<std::pair<std::string, types::Type_id>> tt_fields;
             for (const auto &field : model.fields) {
@@ -804,9 +810,9 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
             }
 
             for (size_t i = 0; i < vars.names.size(); ++i) {
-                std::string canonical_name =
-                    (module.logical_namespace == "main" || module.logical_namespace.empty()) ? vars.names[i]
-                                                                                              : module.logical_namespace + "::" + vars.names[i];
+                std::string canonical_name = (module.logical_namespace == "main" || module.logical_namespace.empty())
+                    ? vars.names[i]
+                    : module.logical_namespace + "::" + vars.names[i];
 
                 std::optional<Value> const_val = std::nullopt;
                 std::optional<uint32_t> global_idx = std::nullopt;
@@ -867,8 +873,7 @@ err::Engine Semantic_checker::check_workspace()
                 .global_index = std::nullopt,
                 .stack_offset = std::nullopt,
                 .ffi_index = std::nullopt,
-                .declaration = ast::Stmt_id::null()
-            };
+                .declaration = ast::Stmt_id::null()};
             ctx.registry.create_symbol(std::move(sym));
         }
     }
@@ -936,8 +941,7 @@ err::Engine Semantic_checker::check(const std::vector<ast::Stmt_id> &statements)
                 .global_index = std::nullopt,
                 .stack_offset = std::nullopt,
                 .ffi_index = std::nullopt,
-                .declaration = ast::Stmt_id::null()
-            };
+                .declaration = ast::Stmt_id::null()};
             ctx.registry.create_symbol(std::move(sym));
         }
     }
@@ -948,8 +952,8 @@ err::Engine Semantic_checker::check(const std::vector<ast::Stmt_id> &statements)
 
     for (const auto &module : ctx.workspace.modules) {
         current_module_id = module.id;
-variables.begin_scope();
-    m_nil_checked_vars_stack.emplace_back();
+        variables.begin_scope();
+        m_nil_checked_vars_stack.emplace_back();
 
         for (auto stmt_id : module.ast_roots) {
             check_stmt(stmt_id);
@@ -2093,6 +2097,62 @@ void Semantic_checker::check_function_stmt(ast::Stmt_id stmt_id)
     }
 }
 
+ast::Expr_id Semantic_checker::synthesize_default_initializer(types::Type_id type, const ast::Source_location &loc)
+{
+    // Only optionals may start out nil. Models auto-construct from their field
+    // defaults, numeric/bool primitives zero, strings become empty, and
+    // everything else (closures, unions, enums, ...) stays nil as before.
+    if (ctx.tt.is_model(type)) {
+        const auto &model_type = ctx.tt.get(type).as<types::Model_type>();
+        return ctx.tree.add_expr(ast::Expr{ast::Model_literal_expr{
+            .model_name = model_type.name,
+            .fields = {},
+            .type = ctx.tt.get_unknown(),
+            .loc = loc,
+        }});
+    }
+    if (ctx.tt.is_optional(type)) {
+        return ctx.tree.add_expr(ast::Expr{ast::Literal_expr{
+            .value = Value(),
+            .type = type,
+            .loc = loc,
+        }});
+    }
+    if (ctx.tt.is_numeric_primitive(type)) {
+        return ctx.tree.add_expr(ast::Expr{ast::Literal_expr{
+            .value = Value(static_cast<int64_t>(0)),
+            .type = type,
+            .loc = loc,
+        }});
+    }
+    if (ctx.tt.is_bool(type)) {
+        return ctx.tree.add_expr(ast::Expr{ast::Literal_expr{
+            .value = Value(false),
+            .type = type,
+            .loc = loc,
+        }});
+    }
+    if (ctx.tt.is_string(type)) {
+        return ctx.tree.add_expr(ast::Expr{ast::Literal_expr{
+            .value = Value::make_string(ctx.arena, ""),
+            .type = type,
+            .loc = loc,
+        }});
+    }
+    if (ctx.tt.is_array(type)) {
+        return ctx.tree.add_expr(ast::Expr{ast::Array_literal_expr{
+            .elements = {},
+            .type = type,
+            .loc = loc,
+        }});
+    }
+    return ctx.tree.add_expr(ast::Expr{ast::Literal_expr{
+        .value = Value(),
+        .type = type,
+        .loc = loc,
+    }});
+}
+
 void Semantic_checker::check_var_stmt(ast::Stmt_id stmt_id)
 {
     auto type_inferred = get_stmt<ast::Var_stmt>(ctx.tree, stmt_id).type_inferred;
@@ -2105,6 +2165,13 @@ void Semantic_checker::check_var_stmt(ast::Stmt_id stmt_id)
     if (!type_inferred) {
         type = resolve_type_recursively(type, loc);
         get_stmt<ast::Var_stmt>(ctx.tree, stmt_id).type = type;
+    }
+
+    // A bare declaration with no initializer: synthesize a default value so
+    // only optionals ever start out nil (models auto-construct).
+    if (initializer.is_null() && !type_inferred) {
+        initializer = synthesize_default_initializer(type, loc);
+        get_stmt<ast::Var_stmt>(ctx.tree, stmt_id).initializer = initializer;
     }
 
     types::Type_id init_type = ctx.tt.get_void();
@@ -2166,59 +2233,71 @@ void Semantic_checker::check_var_stmt(ast::Stmt_id stmt_id)
         }
     }
     bool is_global = (kind == ast::Var_kind::Const || kind == ast::Var_kind::Static || kind == ast::Var_kind::Static_mut)
-                     || (ctx.repl_force_global && function_name_stack_.empty());
+        || (ctx.repl_force_global && function_name_stack_.empty());
     bool is_mut = (kind == ast::Var_kind::Mut || kind == ast::Var_kind::Static_mut);
 
     if (is_global) {
         auto &module = ctx.workspace.get_module(current_module_id);
-        Symbol_id sym_id;
+        Symbol_id sym_id = Symbol_id::null();
 
         if (!function_name_stack_.empty() || ctx.repl_force_global) {
             // A `static` declared inside a function body: allocate a dedicated
             // global slot so every invocation (and every closure created in the
             // function) refers to one shared instance, like a C static local.
-            std::string local_canonical = (module.logical_namespace.empty() || module.logical_namespace == "main")
-                ? ""
-                : module.logical_namespace + "::";
-            for (const auto &fn_name : function_name_stack_) {
-                local_canonical += fn_name + "::";
+            // Module-level Const/Static/Static_mut were already registered by
+            // hoist_globals; reuse that symbol and adopt the resolved type.
+            if (function_name_stack_.empty()
+                && (kind == ast::Var_kind::Const || kind == ast::Var_kind::Static || kind == ast::Var_kind::Static_mut)) {
+                if (auto found = module.resolve_exported_symbol(name)) {
+                    sym_id = *found;
+                    ctx.registry.get_symbol(sym_id).type = type;
+                    ctx.registry.get_symbol(sym_id).is_mut = is_mut;
+                }
             }
-            local_canonical += name;
 
-            std::optional<Value> const_val = std::nullopt;
-            std::optional<uint32_t> global_idx = std::nullopt;
-            Symbol_kind sym_kind = Symbol_kind::Global_var;
+            if (sym_id.is_null()) {
+                std::string local_canonical =
+                    (module.logical_namespace.empty() || module.logical_namespace == "main") ? "" : module.logical_namespace + "::";
+                for (const auto &fn_name : function_name_stack_) {
+                    local_canonical += fn_name + "::";
+                }
+                local_canonical += name;
 
-            if (kind == ast::Var_kind::Const) {
-                sym_kind = Symbol_kind::Phos_const;
-                if (!initializer.is_null()) {
-                    if (auto *lit = std::get_if<ast::Literal_expr>(&ctx.tree.get(initializer).node)) {
-                        const_val = lit->value;
+                std::optional<Value> const_val = std::nullopt;
+                std::optional<uint32_t> global_idx = std::nullopt;
+                Symbol_kind sym_kind = Symbol_kind::Global_var;
+
+                if (kind == ast::Var_kind::Const) {
+                    sym_kind = Symbol_kind::Phos_const;
+                    if (!initializer.is_null()) {
+                        if (auto *lit = std::get_if<ast::Literal_expr>(&ctx.tree.get(initializer).node)) {
+                            const_val = lit->value;
+                        } else {
+                            type_error(loc, "Constants must be initialized with a primitive literal.");
+                        }
                     } else {
                         type_error(loc, "Constants must be initialized with a primitive literal.");
                     }
                 } else {
-                    type_error(loc, "Constants must be initialized with a primitive literal.");
+                    global_idx = ctx.registry.next_global_index++;
                 }
-            } else {
-                global_idx = ctx.registry.next_global_index++;
+
+                Symbol sym{
+                    .id = Symbol_id{0},
+                    .name = local_canonical,
+                    .kind = sym_kind,
+                    .type = type,
+                    .owner_module = current_module_id,
+                    .is_public = false,
+                    .const_value = const_val,
+                    .global_index = global_idx,
+                    .stack_offset = std::nullopt,
+                    .ffi_index = std::nullopt,
+                    .is_mut = is_mut,
+                    .declaration = stmt_id};
+
+                sym_id = ctx.registry.create_symbol(std::move(sym));
             }
-
-            Symbol sym{
-                .id = Symbol_id{0},
-                .name = local_canonical,
-                .kind = sym_kind,
-                .type = type,
-                .owner_module = current_module_id,
-                .is_public = false,
-                .const_value = const_val,
-                .global_index = global_idx,
-                .stack_offset = std::nullopt,
-                .ffi_index = std::nullopt,
-                .is_mut = is_mut,
-                .declaration = stmt_id};
-
-            sym_id = ctx.registry.create_symbol(std::move(sym));
         } else if (auto found = module.resolve_exported_symbol(name)) {
             sym_id = *found;
             ctx.registry.get_symbol(sym_id).type = type;
@@ -2250,7 +2329,7 @@ void Semantic_checker::check_multi_var_stmt(ast::Stmt_id stmt_id)
     }
 
     const bool is_global = (stmt.kind == ast::Var_kind::Const || stmt.kind == ast::Var_kind::Static || stmt.kind == ast::Var_kind::Static_mut)
-                             || (ctx.repl_force_global && function_name_stack_.empty());
+        || (ctx.repl_force_global && function_name_stack_.empty());
     const bool is_mut = (stmt.kind == ast::Var_kind::Mut || stmt.kind == ast::Var_kind::Static_mut);
 
     std::vector<types::Type_id> final_types(stmt.names.size(), ctx.tt.get_unknown());
@@ -2259,52 +2338,64 @@ void Semantic_checker::check_multi_var_stmt(ast::Stmt_id stmt_id)
         final_types[index] = type;
         if (is_global) {
             auto &module = ctx.workspace.get_module(current_module_id);
-            Symbol_id sym_id;
+            Symbol_id sym_id = Symbol_id::null();
 
             if (!function_name_stack_.empty() || ctx.repl_force_global) {
-                // Function-local static: shared global slot, lexically scoped.
-                std::string local_canonical = (module.logical_namespace.empty() || module.logical_namespace == "main")
-                    ? ""
-                    : module.logical_namespace + "::";
-                for (const auto &fn_name : function_name_stack_) {
-                    local_canonical += fn_name + "::";
+                // Module-level Const/Static/Static_mut were already registered
+                // by hoist_globals; reuse that symbol and adopt the resolved type.
+                if (function_name_stack_.empty()
+                    && (stmt.kind == ast::Var_kind::Const || stmt.kind == ast::Var_kind::Static || stmt.kind == ast::Var_kind::Static_mut)) {
+                    if (auto found = module.resolve_exported_symbol(stmt.names[index])) {
+                        sym_id = *found;
+                        ctx.registry.get_symbol(sym_id).type = type;
+                        ctx.registry.get_symbol(sym_id).is_mut = is_mut;
+                    }
                 }
-                local_canonical += stmt.names[index];
 
-                std::optional<Value> const_val = std::nullopt;
-                std::optional<uint32_t> global_idx = std::nullopt;
-                Symbol_kind sym_kind = Symbol_kind::Global_var;
+                if (sym_id.is_null()) {
+                    // Function-local static: shared global slot, lexically scoped.
+                    std::string local_canonical =
+                        (module.logical_namespace.empty() || module.logical_namespace == "main") ? "" : module.logical_namespace + "::";
+                    for (const auto &fn_name : function_name_stack_) {
+                        local_canonical += fn_name + "::";
+                    }
+                    local_canonical += stmt.names[index];
 
-                if (stmt.kind == ast::Var_kind::Const) {
-                    sym_kind = Symbol_kind::Phos_const;
-                    if (stmt.initializers.size() == stmt.names.size()) {
-                        if (auto *lit = std::get_if<ast::Literal_expr>(&ctx.tree.get(stmt.initializers[index]).node)) {
-                            const_val = lit->value;
+                    std::optional<Value> const_val = std::nullopt;
+                    std::optional<uint32_t> global_idx = std::nullopt;
+                    Symbol_kind sym_kind = Symbol_kind::Global_var;
+
+                    if (stmt.kind == ast::Var_kind::Const) {
+                        sym_kind = Symbol_kind::Phos_const;
+                        if (stmt.initializers.size() == stmt.names.size()) {
+                            if (auto *lit = std::get_if<ast::Literal_expr>(&ctx.tree.get(stmt.initializers[index]).node)) {
+                                const_val = lit->value;
+                            } else {
+                                type_error(stmt.loc, "Constants must be initialized with primitive literals.");
+                            }
                         } else {
-                            type_error(stmt.loc, "Constants must be initialized with primitive literals.");
+                            type_error(stmt.loc, "Constants do not support destructuring from a runtime multi-value initializer.");
                         }
                     } else {
-                        type_error(stmt.loc, "Constants do not support destructuring from a runtime multi-value initializer.");
+                        global_idx = ctx.registry.next_global_index++;
                     }
-                } else {
-                    global_idx = ctx.registry.next_global_index++;
+
+                    Symbol sym{
+                        .id = Symbol_id{0},
+                        .name = local_canonical,
+                        .kind = sym_kind,
+                        .type = type,
+                        .owner_module = current_module_id,
+                        .is_public = false,
+                        .const_value = const_val,
+                        .global_index = global_idx,
+                        .stack_offset = std::nullopt,
+                        .ffi_index = std::nullopt,
+                        .is_mut = is_mut,
+                        .declaration = stmt_id};
+
+                    sym_id = ctx.registry.create_symbol(std::move(sym));
                 }
-
-                Symbol sym{
-                    .id = Symbol_id{0},
-                    .name = local_canonical,
-                    .kind = sym_kind,
-                    .type = type,
-                    .owner_module = current_module_id,
-                    .is_public = false,
-                    .const_value = const_val,
-                    .global_index = global_idx,
-                    .stack_offset = std::nullopt,
-                    .ffi_index = std::nullopt,
-                    .is_mut = is_mut,
-                    .declaration = stmt_id};
-
-                sym_id = ctx.registry.create_symbol(std::move(sym));
             } else if (auto found = module.resolve_exported_symbol(stmt.names[index])) {
                 sym_id = *found;
                 ctx.registry.get_symbol(sym_id).type = type;
@@ -2321,6 +2412,14 @@ void Semantic_checker::check_multi_var_stmt(ast::Stmt_id stmt_id)
             declare(stmt.names[index], type, is_mut, stmt.loc);
         }
     };
+
+    // A bare multi-variable declaration with no initializer: synthesize a
+    // default value for each declared type so only optionals start out nil.
+    if (stmt.initializers.empty() && !stmt.type_inferred) {
+        for (size_t i = 0; i < stmt.names.size(); ++i) {
+            stmt.initializers.push_back(synthesize_default_initializer(stmt.types[i], stmt.loc));
+        }
+    }
 
     if (stmt.initializers.size() == stmt.names.size()) {
         for (size_t i = 0; i < stmt.names.size(); ++i) {
@@ -2692,21 +2791,27 @@ bool Semantic_checker::statement_references_nested_function(ast::Stmt_id stmt_id
                 }
                 return false;
             } else if constexpr (std::is_same_v<T, ast::If_stmt>) {
-                return expr_references_nested_function(stmt.condition, check_callees) || statement_references_nested_function(stmt.then_branch, check_callees)
+                return expr_references_nested_function(stmt.condition, check_callees)
+                    || statement_references_nested_function(stmt.then_branch, check_callees)
                     || statement_references_nested_function(stmt.else_branch, check_callees);
             } else if constexpr (std::is_same_v<T, ast::While_stmt>) {
-                return expr_references_nested_function(stmt.condition, check_callees) || statement_references_nested_function(stmt.body, check_callees);
+                return expr_references_nested_function(stmt.condition, check_callees)
+                    || statement_references_nested_function(stmt.body, check_callees);
             } else if constexpr (std::is_same_v<T, ast::For_stmt>) {
-                return statement_references_nested_function(stmt.initializer, check_callees) || expr_references_nested_function(stmt.condition, check_callees)
-                    || expr_references_nested_function(stmt.increment, check_callees) || statement_references_nested_function(stmt.body, check_callees);
+                return statement_references_nested_function(stmt.initializer, check_callees)
+                    || expr_references_nested_function(stmt.condition, check_callees)
+                    || expr_references_nested_function(stmt.increment, check_callees)
+                    || statement_references_nested_function(stmt.body, check_callees);
             } else if constexpr (std::is_same_v<T, ast::For_in_stmt>) {
-                return expr_references_nested_function(stmt.iterable, check_callees) || statement_references_nested_function(stmt.body, check_callees);
+                return expr_references_nested_function(stmt.iterable, check_callees)
+                    || statement_references_nested_function(stmt.body, check_callees);
             } else if constexpr (std::is_same_v<T, ast::Match_stmt>) {
                 if (expr_references_nested_function(stmt.subject, check_callees)) {
                     return true;
                 }
                 for (const auto &arm : stmt.arms) {
-                    if (expr_references_nested_function(arm.pattern, check_callees) || statement_references_nested_function(arm.body, check_callees)) {
+                    if (expr_references_nested_function(arm.pattern, check_callees)
+                        || statement_references_nested_function(arm.body, check_callees)) {
                         return true;
                     }
                 }
@@ -3907,7 +4012,8 @@ types::Type_id Semantic_checker::check_cast_expr(ast::Expr_id expr_id, std::opti
 {
     (void)context_type;
     auto child_id = get_node<ast::Cast_expr>(ctx.tree, expr_id).expression;
-    auto target_type = resolve_type_recursively(get_node<ast::Cast_expr>(ctx.tree, expr_id).target_type, get_node<ast::Cast_expr>(ctx.tree, expr_id).loc);
+    auto target_type =
+        resolve_type_recursively(get_node<ast::Cast_expr>(ctx.tree, expr_id).target_type, get_node<ast::Cast_expr>(ctx.tree, expr_id).loc);
     auto loc = get_node<ast::Cast_expr>(ctx.tree, expr_id).loc;
     get_node<ast::Cast_expr>(ctx.tree, expr_id).target_type = target_type;
 
@@ -4811,12 +4917,12 @@ types::Type_id Semantic_checker::check_method_call_expr(ast::Expr_id expr_id, st
             get_node<ast::Method_call_expr>(ctx.tree, expr_id).arguments = std::move(bound.ordered_arguments);
 
             if (!bound.ok) {
-                return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type
-                    = effective_return_type(declared_return_types(decl->returns, ctx.tt), ctx.tt);
+                return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type =
+                           effective_return_type(declared_return_types(decl->returns, ctx.tt), ctx.tt);
             }
 
-            return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type
-                = effective_return_type(declared_return_types(decl->returns, ctx.tt), ctx.tt);
+            return get_node<ast::Method_call_expr>(ctx.tree, expr_id).type =
+                       effective_return_type(declared_return_types(decl->returns, ctx.tt), ctx.tt);
         }
 
         std::string native_model_method_name = model_name + "::" + method_name;

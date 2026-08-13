@@ -116,6 +116,9 @@ public:
     err::Engine check_workspace();
     void check_module(Module_id mod_id);
 
+    // Resolves a registry symbol's concrete type (functions get a signature).
+    types::Type_id resolve_symbol(Symbol_id id);
+
     /*
      * [diagnostics]
      * emit compilation messages
@@ -150,7 +153,8 @@ public:
 
     std::optional<Access_path> extract_access_path(ast::Expr_id expr_id) const;
 
-    void collect_nil_check_from_comparison(const ast::Binary_expr &expr, lex::TokenType target_op, std::unordered_set<Access_path, Access_path_hash> &out);
+    void
+    collect_nil_check_from_comparison(const ast::Binary_expr &expr, lex::TokenType target_op, std::unordered_set<Access_path, Access_path_hash> &out);
     void collect_nil_check_from_optional_method(
         const ast::Method_call_expr &expr, bool target_truthy_branch, std::unordered_set<Access_path, Access_path_hash> &out);
     void collect_nil_checked_vars_for_then(ast::Expr_id expr, std::unordered_set<Access_path, Access_path_hash> &out);
@@ -221,6 +225,7 @@ public:
     void check_return_stmt(ast::Stmt_id stmt_id);
     void check_var_stmt(ast::Stmt_id stmt_id);
     void check_multi_var_stmt(ast::Stmt_id stmt_id);
+    ast::Expr_id synthesize_default_initializer(types::Type_id type, const ast::Source_location &loc);
     void check_stmt_node(const ast::Break_stmt &stmt);
     void check_stmt_node(const ast::Continue_stmt &stmt);
     void check_stmt_node(const ast::Goto_stmt &stmt);

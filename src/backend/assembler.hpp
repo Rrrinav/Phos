@@ -1,8 +1,8 @@
 #pragma once
 
 #include "core/arena.hpp"
-#include "core/value/value.hpp"
 #include "core/instruction/instruction.hpp"
+#include "core/value/value.hpp"
 
 #include <string>
 

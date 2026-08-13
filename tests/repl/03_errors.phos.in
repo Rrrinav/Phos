@@ -1,0 +1,8 @@
+undefined_thing
+let mut x := 5
+print(nope)
+x = 99
+print(x)
+fn f(q: i32) -> i32 { return q + 1; }
+print(f(1))
+:type nope

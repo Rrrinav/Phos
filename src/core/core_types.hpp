@@ -28,7 +28,8 @@ struct Strong_id
         return Strong_id{static_cast<size_t>(-1)};
     }
 
-    operator bool() const {
+    operator bool() const
+    {
         return is_null();
     }
 };

@@ -1,0 +1,9 @@
+Phos REPL
+  Type Phos statements directly. Use print(...) to see output.
+  Commands: :help, :quit
+<repl>:1:1: [error]: Undefined variable, function, or type 'undefined_thing'
+<repl>:1:7: [error]: Undefined variable, function, or type 'nope'
+99
+99
+2
+<repl>:1:1: [error]: Undefined variable, function, or type 'nope'

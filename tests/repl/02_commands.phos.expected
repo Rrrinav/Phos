@@ -1,0 +1,22 @@
+Phos REPL
+  Type Phos statements directly. Use print(...) to see output.
+  Commands: :help, :quit
+x: i32
+fib: fn(i32) -> i32
+greet: fn(string) -> string
+a: i32
+b: i32
+TAX: i32
+i32
+fn(i32) -> i32
+i32
+string
+i32
+i8
+string
+u64
+i32
+(session cleared)
+(no session bindings)
+g: fn() -> i32
+42

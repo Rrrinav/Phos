@@ -1,7 +1,7 @@
 #pragma once
 
-#include "frontend/lexer/token.hpp"
 #include "core/value/value.hpp"
+#include "frontend/lexer/token.hpp"
 
 #include <concepts>
 

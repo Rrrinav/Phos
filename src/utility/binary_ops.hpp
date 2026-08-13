@@ -1,8 +1,8 @@
 #pragma once
 
 #include "core/error/result.hpp"
-#include "frontend/parser/ast.hpp"
 #include "core/value/value.hpp"
+#include "frontend/parser/ast.hpp"
 
 namespace phos::util {
 
@@ -26,8 +26,7 @@ inline std::optional<types::Primitive_kind> promote_numeric_kind(types::Primitiv
 }
 
 template <typename Op>
-inline Result<Value>
-apply_promoted_numeric_op(const Value &l, const Value &r, ast::Source_location loc, Op &&op, const std::string &message)
+inline Result<Value> apply_promoted_numeric_op(const Value &l, const Value &r, ast::Source_location loc, Op &&op, const std::string &message)
 {
     if (!is_numeric(l) || !is_numeric(r)) {
         return std::unexpected(err::msg(message, "vm", loc.l, loc.c));
@@ -94,12 +93,7 @@ inline Result<Value> add_op(const Value &l, const Value &r, ast::Source_location
     if (is_string(l) && is_string(r)) {
         return Value(get_string(l) + get_string(r));
     }
-    return apply_promoted_numeric_op(
-        l,
-        r,
-        loc,
-        [](auto lhs, auto rhs) { return lhs + rhs; },
-        "Operands must be two numbers or two strings for '+'.");
+    return apply_promoted_numeric_op(l, r, loc, [](auto lhs, auto rhs) { return lhs + rhs; }, "Operands must be two numbers or two strings for '+'.");
 }
 
 inline Result<Value> subtract_op(const Value &l, const Value &r, ast::Source_location loc)
@@ -182,42 +176,22 @@ inline Result<Value> modulo_op(const Value &l, const Value &r, ast::Source_locat
 // --- Relational Operators (Strict Type Matching) ---
 inline Result<Value> less_op(const Value &l, const Value &r, ast::Source_location loc)
 {
-    return apply_promoted_numeric_op(
-        l,
-        r,
-        loc,
-        [](auto lhs, auto rhs) { return lhs < rhs; },
-        "Operands must be compatible numbers for '<'.");
+    return apply_promoted_numeric_op(l, r, loc, [](auto lhs, auto rhs) { return lhs < rhs; }, "Operands must be compatible numbers for '<'.");
 }
 
 inline Result<Value> less_equal_op(const Value &l, const Value &r, ast::Source_location loc)
 {
-    return apply_promoted_numeric_op(
-        l,
-        r,
-        loc,
-        [](auto lhs, auto rhs) { return lhs <= rhs; },
-        "Operands must be compatible numbers for '<='.");
+    return apply_promoted_numeric_op(l, r, loc, [](auto lhs, auto rhs) { return lhs <= rhs; }, "Operands must be compatible numbers for '<='.");
 }
 
 inline Result<Value> greater_op(const Value &l, const Value &r, ast::Source_location loc)
 {
-    return apply_promoted_numeric_op(
-        l,
-        r,
-        loc,
-        [](auto lhs, auto rhs) { return lhs > rhs; },
-        "Operands must be compatible numbers for '>'.");
+    return apply_promoted_numeric_op(l, r, loc, [](auto lhs, auto rhs) { return lhs > rhs; }, "Operands must be compatible numbers for '>'.");
 }
 
 inline Result<Value> greater_equal_op(const Value &l, const Value &r, ast::Source_location loc)
 {
-    return apply_promoted_numeric_op(
-        l,
-        r,
-        loc,
-        [](auto lhs, auto rhs) { return lhs >= rhs; },
-        "Operands must be compatible numbers for '>='.");
+    return apply_promoted_numeric_op(l, r, loc, [](auto lhs, auto rhs) { return lhs >= rhs; }, "Operands must be compatible numbers for '>='.");
 }
 
 inline Result<Value> equal_op(const Value &l, const Value &r, ast::Source_location loc)

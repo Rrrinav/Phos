@@ -148,15 +148,12 @@ inline void register_time(Type_environment &env)
     // 1. Register the DateTime Model
     auto datetime_type = env.define_native_model(
         "time::Date_time",
-        {
-            {"year", env.tt.get_i64()},
-            {"month", env.tt.get_i64()},
-            {"day", env.tt.get_i64()},
-            {"hour", env.tt.get_i64()},
-            {"minute", env.tt.get_i64()},
-            {"second", env.tt.get_i64()}
-        }
-    );
+        {{"year", env.tt.get_i64()},
+         {"month", env.tt.get_i64()},
+         {"day", env.tt.get_i64()},
+         {"hour", env.tt.get_i64()},
+         {"minute", env.tt.get_i64()},
+         {"second", env.tt.get_i64()}});
 
     // Cache the signature for the FFI builder
     time_datetime_sig = env.tt.get(datetime_type).as<types::Model_type>();

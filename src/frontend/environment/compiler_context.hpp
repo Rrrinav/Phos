@@ -2,11 +2,10 @@
 
 #include "core/arena.hpp"
 #include "core/value/type.hpp"
-#include "frontend/parser/ast.hpp"
-
 #include "frontend/environment/symbol.hpp"
 #include "frontend/environment/type_environment.hpp"
 #include "frontend/environment/workspace.hpp"
+#include "frontend/parser/ast.hpp"
 
 namespace phos {
 

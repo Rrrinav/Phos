@@ -53,14 +53,7 @@ struct msg
         return sev == Severity::Warning ? "warning" : "error";
     }
 
-    static msg make(
-        Severity sev,
-        std::string phase,
-        size_t line,
-        size_t column,
-        std::string filename,
-        std::string_view fmt,
-        std::format_args args)
+    static msg make(Severity sev, std::string phase, size_t line, size_t column, std::string filename, std::string_view fmt, std::format_args args)
     {
         return msg(std::vformat(fmt, args), std::move(phase), line, column, std::move(filename), sev);
     }
@@ -209,10 +202,7 @@ public:
 
     void append(std::vector<msg> other)
     {
-        diagnostics_.insert(
-            diagnostics_.end(),
-            std::make_move_iterator(other.begin()),
-            std::make_move_iterator(other.end()));
+        diagnostics_.insert(diagnostics_.end(), std::make_move_iterator(other.begin()), std::make_move_iterator(other.end()));
     }
 
     [[nodiscard]] bool empty() const

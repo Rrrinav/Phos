@@ -1,9 +1,9 @@
 #pragma once
 
-#include "core/error/result.hpp"
 #include "core/error/err.hpp"
-#include "frontend/lexer/token.hpp"
+#include "core/error/result.hpp"
 #include "frontend/environment/compiler_context.hpp"
+#include "frontend/lexer/token.hpp"
 #include "frontend/parser/ast.hpp"
 
 #include <optional>
@@ -86,9 +86,9 @@ private:
     Result<ast::Stmt_id> print_statement(ast::Print_stream stream = ast::Print_stream::STDOUT);
     Result<ast::Stmt_id> block_statement();
     Result<ast::Stmt_id> if_statement();
-    Result<ast::Stmt_id> while_statement(const std::string& label = "");
-    Result<ast::Stmt_id> for_statement(const std::string& label = "");
-    Result<ast::Stmt_id> for_in_statement(const std::string& label = "");
+    Result<ast::Stmt_id> while_statement(const std::string &label = "");
+    Result<ast::Stmt_id> for_statement(const std::string &label = "");
+    Result<ast::Stmt_id> for_in_statement(const std::string &label = "");
     Result<ast::Stmt_id> match_statement();
     Result<ast::Stmt_id> return_statement();
     Result<ast::Stmt_id> expression_statement();

@@ -120,6 +120,14 @@ public:
     Closure_data compile_workspace(Module_id main_mod);
     Closure_data compile_module_only(Module_id mod_id);
 
+    // Drops cached per-symbol compilation state (REPL :clear).
+    void clear_session()
+    {
+        function_locations_.clear();
+        function_upvalues_.clear();
+        function_global_slots_.clear();
+    }
+
     // Register management for the current block
     uint8_t allocate_register();
     void reset_registers();

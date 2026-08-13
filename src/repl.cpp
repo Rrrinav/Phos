@@ -4,18 +4,36 @@
 #include "frontend/lexer/lexer.hpp"
 #include "frontend/parser/parser.hpp"
 
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
+
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace phos {
 
+namespace {
+
+// True when stdin is an interactive terminal rather than a pipe or file.
+bool stdin_is_interactive()
+{
+#ifdef _WIN32
+    return _isatty(_fileno(stdin)) != 0;
+#else
+    return isatty(STDIN_FILENO) != 0;
+#endif
+}
+
+} // namespace
+
 Repl::Repl(std::ostream *out, std::ostream *err)
-    : arena(1024 * 1024 * 10),
-      ctx(arena),
-      gc_heap(),
-      vm(gc_heap, arena),
-      checker(ctx),
-      compiler(ctx),
-      out_(out ? out : &std::cout),
+    : arena(1024 * 1024 * 10), ctx(arena), gc_heap(), vm(gc_heap, arena), checker(ctx), compiler(ctx), out_(out ? out : &std::cout),
       err_(err ? err : &std::cerr)
 {
     ctx.repl_force_global = true;
@@ -42,9 +60,16 @@ void Repl::print_banner() const
 void Repl::print_help() const
 {
     *out_ << "Phos REPL commands:\n"
-          << "  :help            show this help\n"
-          << "  :quit, :exit     leave the REPL\n"
-          << "  Ctrl-D           leave the REPL\n"
+          << "  :help             show this help\n"
+          << "  :quit, :exit      leave the REPL\n"
+          << "  :clear            reset all session bindings and functions\n"
+          << "  :vars             list session variables and functions\n"
+          << "  :type <expr>      show the type of an expression without running it\n"
+          << "  :load <file>      run a .phos file in the session\n"
+          << "  Ctrl-D            leave the REPL\n"
+          << "\n"
+          << "Editing: Up/Down history, Left/Right cursor, Home/End, Backspace,\n"
+          << "         Ctrl-A/E line edges, Ctrl-U kill line, Ctrl-C abort line.\n"
           << "\n"
           << "Examples:\n"
           << "  >>> let x := 5\n"
@@ -135,6 +160,24 @@ Repl::Attempt Repl::parse_attempt(const std::string &text)
     return result;
 }
 
+// Like parse_attempt, but treats an unfinished construct as an error instead
+// of requesting more input (used by :type and :load, whose input is complete).
+Repl::Attempt Repl::parse_full(const std::string &text)
+{
+    Attempt attempt = parse_attempt(text);
+    if (attempt.status == Parse_status::Error && attempt.semicolon_sugar) {
+        Attempt retry = parse_attempt(text + ";");
+        if (retry.status == Parse_status::Ok) {
+            return retry;
+        }
+        attempt = std::move(retry);
+    }
+    if (attempt.status == Parse_status::Incomplete) {
+        attempt.status = Parse_status::Error;
+    }
+    return attempt;
+}
+
 void Repl::submit_entry(Attempt &attempt)
 {
     auto statements = std::move(attempt.statements);
@@ -142,16 +185,22 @@ void Repl::submit_entry(Attempt &attempt)
     // Echo: a bare expression entry prints its value.
     if (statements.size() == 1 && std::holds_alternative<ast::Expr_stmt>(ctx.tree.get(statements[0]).node)) {
         auto &expr_stmt = std::get<ast::Expr_stmt>(ctx.tree.get(statements[0]).node);
-        ast::Stmt_id print_id = ctx.tree.add_stmt(ast::Stmt{ast::Print_stmt{
-            .stream = ast::Print_stream::STDOUT,
-            .expressions = {expr_stmt.expression},
-            .sep = " ",
-            .end = "\n",
-            .loc = expr_stmt.loc,
-        }});
+        ast::Stmt_id print_id = ctx.tree.add_stmt(
+            ast::Stmt{ast::Print_stmt{
+                .stream = ast::Print_stream::STDOUT,
+                .expressions = {expr_stmt.expression},
+                .sep = " ",
+                .end = "\n",
+                .loc = expr_stmt.loc,
+            }});
         statements[0] = print_id;
     }
 
+    submit_statements(std::move(statements));
+}
+
+void Repl::submit_statements(std::vector<ast::Stmt_id> statements)
+{
     Module_id mod_id = ctx.workspace.create_module("", "<repl-" + std::to_string(entry_index_++) + ">");
     for (auto stmt_id : statements) {
         ctx.workspace.get_module(mod_id).add_ast_root(stmt_id);
@@ -193,21 +242,144 @@ void Repl::execute_closure(const Closure_data &closure)
     vm.execute(&main_thread);
 }
 
+void Repl::clear_session()
+{
+    ctx.workspace.modules.clear();
+
+    ctx.registry.symbols.clear();
+    ctx.registry.global_index.clear();
+    ctx.registry.next_global_index = 0;
+
+    ctx.type_env.global_types.clear();
+    ctx.type_env.functions.clear();
+    ctx.type_env.model_data.clear();
+    ctx.type_env.union_data.clear();
+    ctx.type_env.enum_data.clear();
+
+    checker.hoisted_modules.clear();
+    checker.checked_modules.clear();
+
+    compiler.clear_session();
+
+    vm.globals.clear();
+}
+
+void Repl::print_vars()
+{
+    bool any = false;
+    for (const auto &sym : ctx.registry.symbols) {
+        if (sym.kind != Symbol_kind::Global_var && sym.kind != Symbol_kind::Phos_func && sym.kind != Symbol_kind::Phos_const) {
+            continue;
+        }
+        if (sym.kind == Symbol_kind::Phos_const && sym.type == ctx.tt.get_unknown()) {
+            continue;
+        }
+        std::string type_str;
+        if (sym.kind == Symbol_kind::Phos_func) {
+            type_str = ctx.tt.to_string(checker.resolve_symbol(sym.id));
+        } else {
+            type_str = ctx.tt.to_string(sym.type);
+        }
+        *out_ << sym.name << ": " << type_str << "\n";
+        any = true;
+    }
+    if (!any) {
+        *out_ << "(no session bindings)\n";
+    }
+}
+
+void Repl::print_type(const std::string &text)
+{
+    Attempt attempt = parse_full(text);
+    if (attempt.status == Parse_status::Error) {
+        attempt.diagnostics.print(*err_);
+        return;
+    }
+
+    if (attempt.statements.size() != 1 || !std::holds_alternative<ast::Expr_stmt>(ctx.tree.get(attempt.statements[0]).node)) {
+        *out_ << "<expected a single expression>\n";
+        return;
+    }
+
+    auto &expr_stmt = std::get<ast::Expr_stmt>(ctx.tree.get(attempt.statements[0]).node);
+    ast::Expr_id expr_id = expr_stmt.expression;
+
+    // A throwaway module lets the semantic pass resolve and stamp the
+    // expression's type without compiling or executing anything.
+    Module_id mod_id = ctx.workspace.create_module("", "<repl-type>");
+    ast::Stmt_id wrapper = ctx.tree.add_stmt(
+        ast::Stmt{ast::Print_stmt{
+            .stream = ast::Print_stream::STDOUT,
+            .expressions = {expr_id},
+            .sep = " ",
+            .end = "\n",
+            .loc = expr_stmt.loc,
+        }});
+    ctx.workspace.get_module(mod_id).add_ast_root(wrapper);
+
+    auto semantic_errors = checker.check_workspace();
+    if (semantic_errors.has_errors()) {
+        semantic_errors.print(*err_);
+        return;
+    }
+
+    // Cast_expr carries its result in target_type; every other expression
+    // node stores its resolved type in .type.
+    types::Type_id expr_type = std::visit(
+        [](const auto &node) -> types::Type_id {
+            if constexpr (std::is_same_v<std::decay_t<decltype(node)>, ast::Cast_expr>) {
+                return node.target_type;
+            } else {
+                return node.type;
+            }
+        },
+        ctx.tree.get(expr_id).node);
+    *out_ << ctx.tt.to_string(expr_type) << "\n";
+}
+
+void Repl::load_file(const std::string &path)
+{
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        *err_ << "<repl>: error: cannot open file '" << path << "'\n";
+        return;
+    }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+
+    Attempt attempt = parse_full(buffer.str());
+    if (attempt.status == Parse_status::Error) {
+        attempt.diagnostics.print(*err_);
+        return;
+    }
+
+    submit_statements(std::move(attempt.statements));
+}
+
 void Repl::run()
 {
     print_banner();
+
+    editor.set_interactive(stdin_is_interactive());
 
     std::string buffer;
     std::string line;
 
     for (;;) {
-        *out_ << (buffer.empty() ? ">>> " : "... ");
-        out_->flush();
-
-        if (!std::getline(std::cin, line)) {
-            *out_ << "\n";
+        std::string prompt = buffer.empty() ? ">>> " : "... ";
+        auto result = editor.read(*out_, prompt);
+        if (result.status == Line_editor::Result::Status::Eof) {
+            if (!editor.interactive()) {
+                *out_ << "\n";
+            }
             break;
         }
+        if (result.status == Line_editor::Result::Status::Interrupt) {
+            buffer.clear();
+            continue;
+        }
+        line = std::move(result.line);
 
         if (buffer.empty()) {
             if (line == ":quit" || line == ":exit") {
@@ -217,7 +389,28 @@ void Repl::run()
                 print_help();
                 continue;
             }
+            if (line == ":clear") {
+                clear_session();
+                *out_ << "(session cleared)\n";
+                continue;
+            }
+            if (line == ":vars") {
+                print_vars();
+                continue;
+            }
+            if (line.starts_with(":type ")) {
+                print_type(line.substr(6));
+                continue;
+            }
+            if (line.starts_with(":load ")) {
+                load_file(line.substr(6));
+                continue;
+            }
             if (line.empty()) {
+                continue;
+            }
+            if (line[0] == ':') {
+                *err_ << "Unknown command '" << line << "'. Try :help.\n";
                 continue;
             }
         }
@@ -231,7 +424,6 @@ void Repl::run()
             continue;
         }
 
-        // Sugar: `2 + 3` without a trailing semicolon.
         if (attempt.status == Parse_status::Error && attempt.semicolon_sugar) {
             Attempt retry = parse_attempt(buffer + ";");
             if (retry.status == Parse_status::Ok) {

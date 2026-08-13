@@ -307,7 +307,7 @@ void Parser::stamp_stmt(ast::Stmt_id stmt_id)
             using T = std::decay_t<decltype(s)>;
 
             if constexpr (std::is_same_v<T, ast::Return_stmt>) {
-                for (auto& e : s.expressions) {
+                for (auto &e : s.expressions) {
                     stamp_expr(e);
                 }
             } else if constexpr (std::is_same_v<T, ast::Function_stmt>) {
@@ -419,19 +419,21 @@ Result<std::vector<ast::Call_argument>> Parser::parse_call_arguments()
             TRY_IGNORE(consume(lex::TokenType::Assign, "Expect '=' after argument name"));
             DECL_OR_RETURN(value, expression());
 
-            arguments.push_back(ast::Call_argument{
-                .name = name.lexeme,
-                .value = value,
-                .loc = {name.line, name.column},
-            });
+            arguments.push_back(
+                ast::Call_argument{
+                    .name = name.lexeme,
+                    .value = value,
+                    .loc = {name.line, name.column},
+                });
         } else {
             DECL_OR_RETURN(value, expression());
 
-            arguments.push_back(ast::Call_argument{
-                .name = "",
-                .value = value,
-                .loc = ast::get_loc(ctx_.tree.get(value).node),
-            });
+            arguments.push_back(
+                ast::Call_argument{
+                    .name = "",
+                    .value = value,
+                    .loc = ast::get_loc(ctx_.tree.get(value).node),
+                });
         }
     } while (match({lex::TokenType::Comma}));
 
@@ -503,13 +505,7 @@ Result<ast::Function_param> Parser::parse_return_parameter()
             ASSIGN_OR_RETURN(default_val, expression());
         }
 
-        return ast::Function_param{
-            .name = name.lexeme,
-            .type = type,
-            .is_mut = true,
-            .default_value = default_val,
-            .loc = {name.line, name.column}
-        };
+        return ast::Function_param{.name = name.lexeme, .type = type, .is_mut = true, .default_value = default_val, .loc = {name.line, name.column}};
     }
 
     // Case: Anonymous return (e.g., -> i32)
@@ -521,8 +517,7 @@ Result<ast::Function_param> Parser::parse_return_parameter()
         .type = type,
         .is_mut = false,
         .default_value = ast::Expr_id::null(),
-        .loc = {type_start.line, type_start.column}
-    };
+        .loc = {type_start.line, type_start.column}};
 }
 
 // fn_decl -> ("fn" | "proc") IDENT "(" param* ")" ("->" ret_param ("," ret_param)*)? block
@@ -559,15 +554,16 @@ Result<ast::Stmt_id> Parser::function_declaration()
     TRY_IGNORE(consume(lex::TokenType::LeftBrace, "Expect '{' before function body"));
     DECL_OR_RETURN(body, block_statement());
 
-    return ctx_.tree.add_stmt(ast::Stmt{ast::Function_stmt{
-        .name = name.lexeme,
-        .is_static = false,
-        .is_pure = is_pure,
-        .parameters = std::move(parameters),
-        .returns = std::move(returns),
-        .body = body,
-        .loc = {name.line, name.column},
-    }});
+    return ctx_.tree.add_stmt(
+        ast::Stmt{ast::Function_stmt{
+            .name = name.lexeme,
+            .is_static = false,
+            .is_pure = is_pure,
+            .parameters = std::move(parameters),
+            .returns = std::move(returns),
+            .body = body,
+            .loc = {name.line, name.column},
+        }});
 }
 
 // model_decl -> "model" IDENT "{" field_decl* "}"
@@ -595,12 +591,13 @@ Result<ast::Stmt_id> Parser::model_declaration()
     TRY_IGNORE(consume(lex::TokenType::RightBrace, "Expect '};' after model body"));
     current_model_.clear();
 
-    ast::Stmt_id stmt_id = ctx_.tree.add_stmt(ast::Stmt{ast::Model_stmt{
-        .name = name.lexeme,
-        .fields = fields,
-        .methods = methods,
-        .loc = {name.line, name.column},
-    }});
+    ast::Stmt_id stmt_id = ctx_.tree.add_stmt(
+        ast::Stmt{ast::Model_stmt{
+            .name = name.lexeme,
+            .fields = fields,
+            .methods = methods,
+            .loc = {name.line, name.column},
+        }});
 
     // Save a direct ID to the Model AST node so 'bind' can find it later!
     parsed_models[name.lexeme] = stmt_id;
@@ -667,12 +664,13 @@ Result<ast::Stmt_id> Parser::union_declaration()
             ASSIGN_OR_RETURN(default_value, expression());
         }
 
-        variants.push_back(ast::Typed_member_decl{
-            .name = variant_name.lexeme,
-            .type = variant_type,
-            .default_value = default_value,
-            .loc = {variant_name.line, variant_name.column},
-        });
+        variants.push_back(
+            ast::Typed_member_decl{
+                .name = variant_name.lexeme,
+                .type = variant_type,
+                .default_value = default_value,
+                .loc = {variant_name.line, variant_name.column},
+            });
 
         if (!check(lex::TokenType::RightBrace)) {
             TRY_IGNORE(consume(lex::TokenType::Semicolon, "Expect ';' after variant declaration"));
@@ -683,11 +681,12 @@ Result<ast::Stmt_id> Parser::union_declaration()
 
     TRY_IGNORE(consume(lex::TokenType::RightBrace, "Expect '}' after union body"));
 
-    return ctx_.tree.add_stmt(ast::Stmt{ast::Union_stmt{
-        .name = name.lexeme,
-        .variants = variants,
-        .loc = {name.line, name.column},
-    }});
+    return ctx_.tree.add_stmt(
+        ast::Stmt{ast::Union_stmt{
+            .name = name.lexeme,
+            .variants = variants,
+            .loc = {name.line, name.column},
+        }});
 }
 
 // enum_decl -> "enum" IDENT (":" type)? "{" (IDENT ("=" INT | STRING)? ","?)* "}"
@@ -742,12 +741,13 @@ Result<ast::Stmt_id> Parser::enum_declaration()
 
     TRY_IGNORE(consume(lex::TokenType::RightBrace, "Expect '}' after enum body"));
 
-    return ctx_.tree.add_stmt(ast::Stmt{ast::Enum_stmt{
-        .name = name.lexeme,
-        .base_type = base_type,
-        .variants = variants,
-        .loc = {name.line, name.column},
-    }});
+    return ctx_.tree.add_stmt(
+        ast::Stmt{ast::Enum_stmt{
+            .name = name.lexeme,
+            .base_type = base_type,
+            .variants = variants,
+            .loc = {name.line, name.column},
+        }});
 }
 
 // field_decl -> IDENT ":" type ";"
@@ -888,18 +888,20 @@ Result<ast::Stmt_id> Parser::var_declaration(ast::Var_kind kind)
         return std::unexpected(create_error(first_name, "Variable count and type count must match in multi-variable declarations"));
     }
     if (initializers.size() > 1 && initializers.size() != names.size()) {
-        return std::unexpected(create_error(first_name, "Variable count and initializer count must match unless using a single multi-value initializer"));
+        return std::unexpected(
+            create_error(first_name, "Variable count and initializer count must match unless using a single multi-value initializer"));
     }
 
     if (names.size() == 1) {
-        return ctx_.tree.add_stmt(ast::Stmt{ast::Var_stmt{
-            .kind = var_kind,
-            .name = first_name.lexeme,
-            .type = type_inferred ? ctx_.tt.get_unknown() : declared_types.front(),
-            .initializer = initializers.empty() ? ast::Expr_id::null() : initializers.front(),
-            .type_inferred = type_inferred,
-            .loc = {first_name.line, first_name.column},
-        }});
+        return ctx_.tree.add_stmt(
+            ast::Stmt{ast::Var_stmt{
+                .kind = var_kind,
+                .name = first_name.lexeme,
+                .type = type_inferred ? ctx_.tt.get_unknown() : declared_types.front(),
+                .initializer = initializers.empty() ? ast::Expr_id::null() : initializers.front(),
+                .type_inferred = type_inferred,
+                .loc = {first_name.line, first_name.column},
+            }});
     }
 
     std::vector<std::string> var_names;
@@ -908,14 +910,15 @@ Result<ast::Stmt_id> Parser::var_declaration(ast::Var_kind kind)
         var_names.push_back(name.lexeme);
     }
 
-    return ctx_.tree.add_stmt(ast::Stmt{ast::Multi_var_stmt{
-        .kind = var_kind,
-        .names = std::move(var_names),
-        .types = std::move(declared_types),
-        .initializers = std::move(initializers),
-        .type_inferred = type_inferred,
-        .loc = {first_name.line, first_name.column},
-    }});
+    return ctx_.tree.add_stmt(
+        ast::Stmt{ast::Multi_var_stmt{
+            .kind = var_kind,
+            .names = std::move(var_names),
+            .types = std::move(declared_types),
+            .initializers = std::move(initializers),
+            .type_inferred = type_inferred,
+            .loc = {first_name.line, first_name.column},
+        }});
 }
 
 // import_stmt       ::= "import" module_path ( "::" symbol_extraction )? ";"
@@ -1107,13 +1110,14 @@ Result<ast::Stmt_id> Parser::print_statement(ast::Print_stream stream)
     if (check(lex::TokenType::RightParen)) {
         advance();
         TRY_IGNORE(consume(lex::TokenType::Semicolon, "Expect ';' after print statement"));
-        return ctx_.tree.add_stmt(ast::Stmt{ast::Print_stmt{
-            .stream = stream,
-            .expressions = {},
-            .sep = "",
-            .end = "\n",
-            .loc = {previous().line, previous().column},
-        }});
+        return ctx_.tree.add_stmt(
+            ast::Stmt{ast::Print_stmt{
+                .stream = stream,
+                .expressions = {},
+                .sep = "",
+                .end = "\n",
+                .loc = {previous().line, previous().column},
+            }});
     }
 
     bool seen_named = false;
@@ -1165,13 +1169,14 @@ Result<ast::Stmt_id> Parser::print_statement(ast::Print_stream stream)
     TRY_IGNORE(consume(lex::TokenType::RightParen, "Expect ')' after print arguments"));
     TRY_IGNORE(consume(lex::TokenType::Semicolon, "Expect ';' after print statement"));
 
-    return ctx_.tree.add_stmt(ast::Stmt{ast::Print_stmt{
-        .stream = stream,
-        .expressions = std::move(expressions),
-        .sep = sep,
-        .end = end,
-        .loc = {previous().line, previous().column},
-    }});
+    return ctx_.tree.add_stmt(
+        ast::Stmt{ast::Print_stmt{
+            .stream = stream,
+            .expressions = std::move(expressions),
+            .sep = sep,
+            .end = end,
+            .loc = {previous().line, previous().column},
+        }});
 }
 
 // block -> "{" declaration* "}"
@@ -1193,10 +1198,11 @@ Result<ast::Stmt_id> Parser::block_statement()
 
     TRY_IGNORE(consume(lex::TokenType::RightBrace, "Expect '}' after block"));
 
-    return ctx_.tree.add_stmt(ast::Stmt{ast::Block_stmt{
-        .statements = statements,
-        .loc = {line, column},
-    }});
+    return ctx_.tree.add_stmt(
+        ast::Stmt{ast::Block_stmt{
+            .statements = statements,
+            .loc = {line, column},
+        }});
 }
 
 // if_stmt -> "if" expr "{" declaration* "}" ("else" (if_stmt | "{" declaration* "}"))?
@@ -1217,12 +1223,13 @@ Result<ast::Stmt_id> Parser::if_statement()
         }
     }
 
-    return ctx_.tree.add_stmt(ast::Stmt{ast::If_stmt{
-        .condition = condition_result,
-        .then_branch = then_branch_result,
-        .else_branch = else_branch,
-        .loc = {previous().line, previous().column},
-    }});
+    return ctx_.tree.add_stmt(
+        ast::Stmt{ast::If_stmt{
+            .condition = condition_result,
+            .then_branch = then_branch_result,
+            .else_branch = else_branch,
+            .loc = {previous().line, previous().column},
+        }});
 }
 
 // while_stmt -> "while" expr "{" declaration* "}"
@@ -1302,8 +1309,7 @@ Result<ast::Stmt_id> Parser::for_in_statement(const std::string &label)
             .iterable = iterable,
             .body = body,
             .loc = {var_name.line, var_name.column},
-        }}
-    );
+        }});
 }
 
 // match_stmt -> "match" expr "{" match_arm* "}"
@@ -1362,11 +1368,12 @@ Result<ast::Stmt_id> Parser::match_statement()
 
     TRY_IGNORE(consume(lex::TokenType::RightBrace, "Expect '}' after match arms"));
 
-    return ctx_.tree.add_stmt(ast::Stmt{ast::Match_stmt{
-        .subject = subject,
-        .arms = std::move(arms),
-        .loc = loc,
-    }});
+    return ctx_.tree.add_stmt(
+        ast::Stmt{ast::Match_stmt{
+            .subject = subject,
+            .arms = std::move(arms),
+            .loc = loc,
+        }});
 }
 
 // return_stmt -> "return" (expr ("," expr)*)? ";"
@@ -1384,10 +1391,7 @@ Result<ast::Stmt_id> Parser::return_statement()
 
     TRY_IGNORE(consume(lex::TokenType::Semicolon, "Expect ';' after return value"));
 
-    return ctx_.tree.add_stmt(ast::Stmt{ast::Return_stmt{
-        .expressions = std::move(values),
-        .loc = {keyword.line, keyword.column}
-    }});
+    return ctx_.tree.add_stmt(ast::Stmt{ast::Return_stmt{.expressions = std::move(values), .loc = {keyword.line, keyword.column}}});
 }
 
 // expr_stmt -> expr ";"
@@ -1433,21 +1437,23 @@ Result<ast::Expr_id> Parser::assignment()
         if (auto *var_expr = std::get_if<ast::Variable_expr>(&expr_ref.node)) {
             return ctx_.tree.add_expr(ast::Expr{ast::Assignment_expr{var_expr->name, value_result, var_expr->type, {equals.line, equals.column}}});
         } else if (auto *field_access_expr = std::get_if<ast::Field_access_expr>(&expr_ref.node)) {
-            return ctx_.tree.add_expr(ast::Expr{ast::Field_assignment_expr{
-                .object = field_access_expr->object,
-                .field_name = field_access_expr->field_name,
-                .value = value_result,
-                .type = ctx_.tt.get_unknown(),
-                .loc = {equals.line, equals.column},
-            }});
+            return ctx_.tree.add_expr(
+                ast::Expr{ast::Field_assignment_expr{
+                    .object = field_access_expr->object,
+                    .field_name = field_access_expr->field_name,
+                    .value = value_result,
+                    .type = ctx_.tt.get_unknown(),
+                    .loc = {equals.line, equals.column},
+                }});
         } else if (auto *array_access_expr = std::get_if<ast::Array_access_expr>(&expr_ref.node)) {
-            return ctx_.tree.add_expr(ast::Expr{ast::Array_assignment_expr{
-                .array = array_access_expr->array,
-                .index = array_access_expr->index,
-                .value = value_result,
-                .type = ctx_.tt.get_unknown(),
-                .loc = {equals.line, equals.column},
-            }});
+            return ctx_.tree.add_expr(
+                ast::Expr{ast::Array_assignment_expr{
+                    .array = array_access_expr->array,
+                    .index = array_access_expr->index,
+                    .value = value_result,
+                    .type = ctx_.tt.get_unknown(),
+                    .loc = {equals.line, equals.column},
+                }});
         }
 
         return std::unexpected(create_error(equals, "Invalid assignment target"));
@@ -1465,13 +1471,14 @@ Result<ast::Expr_id> Parser::range_expr()
         lex::Token op = previous();
         DECL_OR_RETURN(end_expr, logical_or());
 
-        return ctx_.tree.add_expr(ast::Expr{ast::Range_expr{
-            .start = expr,
-            .end = end_expr,
-            .inclusive = inclusive,
-            .type = ctx_.tt.get_unknown(),
-            .loc = {op.line, op.column},
-        }});
+        return ctx_.tree.add_expr(
+            ast::Expr{ast::Range_expr{
+                .start = expr,
+                .end = end_expr,
+                .inclusive = inclusive,
+                .type = ctx_.tt.get_unknown(),
+                .loc = {op.line, op.column},
+            }});
     }
 
     return expr;
@@ -1485,13 +1492,14 @@ Result<ast::Expr_id> Parser::logical_or()
     while (match({lex::TokenType::LogicalOr})) {
         lex::Token op = previous();
         DECL_OR_RETURN(right, logical_and());
-        expr = ctx_.tree.add_expr(ast::Expr{ast::Binary_expr{
-            .left = expr,
-            .op = op.type,
-            .right = right,
-            .type = ctx_.tt.get_bool(),
-            .loc = {op.line, op.column},
-        }});
+        expr = ctx_.tree.add_expr(
+            ast::Expr{ast::Binary_expr{
+                .left = expr,
+                .op = op.type,
+                .right = right,
+                .type = ctx_.tt.get_bool(),
+                .loc = {op.line, op.column},
+            }});
     }
     return expr;
 }
@@ -1504,13 +1512,14 @@ Result<ast::Expr_id> Parser::logical_and()
     while (match({lex::TokenType::LogicalAnd})) {
         lex::Token op = previous();
         DECL_OR_RETURN(right, bitwise_or());
-        expr = ctx_.tree.add_expr(ast::Expr{ast::Binary_expr{
-            .left = expr,
-            .op = op.type,
-            .right = right,
-            .type = ctx_.tt.get_bool(),
-            .loc = {op.line, op.column},
-        }});
+        expr = ctx_.tree.add_expr(
+            ast::Expr{ast::Binary_expr{
+                .left = expr,
+                .op = op.type,
+                .right = right,
+                .type = ctx_.tt.get_bool(),
+                .loc = {op.line, op.column},
+            }});
     }
     return expr;
 }
@@ -1523,13 +1532,14 @@ Result<ast::Expr_id> Parser::bitwise_or()
     while (match({lex::TokenType::Pipe})) {
         lex::Token op = previous();
         DECL_OR_RETURN(right, bitwise_xor());
-        expr = ctx_.tree.add_expr(ast::Expr{ast::Binary_expr{
-            .left = expr,
-            .op = op.type,
-            .right = right,
-            .type = ctx_.tt.get_bool(),
-            .loc = {op.line, op.column},
-        }});
+        expr = ctx_.tree.add_expr(
+            ast::Expr{ast::Binary_expr{
+                .left = expr,
+                .op = op.type,
+                .right = right,
+                .type = ctx_.tt.get_bool(),
+                .loc = {op.line, op.column},
+            }});
     }
     return expr;
 }
@@ -1542,13 +1552,14 @@ Result<ast::Expr_id> Parser::bitwise_xor()
     while (match({lex::TokenType::BitXor})) {
         lex::Token op = previous();
         DECL_OR_RETURN(right, bitwise_and());
-        expr = ctx_.tree.add_expr(ast::Expr{ast::Binary_expr{
-            .left = expr,
-            .op = op.type,
-            .right = right,
-            .type = ctx_.tt.get_bool(),
-            .loc = {op.line, op.column},
-        }});
+        expr = ctx_.tree.add_expr(
+            ast::Expr{ast::Binary_expr{
+                .left = expr,
+                .op = op.type,
+                .right = right,
+                .type = ctx_.tt.get_bool(),
+                .loc = {op.line, op.column},
+            }});
     }
     return expr;
 }
@@ -1561,13 +1572,14 @@ Result<ast::Expr_id> Parser::bitwise_and()
     while (match({lex::TokenType::BitAnd})) {
         lex::Token op = previous();
         DECL_OR_RETURN(right, equality());
-        expr = ctx_.tree.add_expr(ast::Expr{ast::Binary_expr{
-            .left = expr,
-            .op = op.type,
-            .right = right,
-            .type = ctx_.tt.get_unknown(),
-            .loc = {op.line, op.column},
-        }});
+        expr = ctx_.tree.add_expr(
+            ast::Expr{ast::Binary_expr{
+                .left = expr,
+                .op = op.type,
+                .right = right,
+                .type = ctx_.tt.get_unknown(),
+                .loc = {op.line, op.column},
+            }});
     }
     return expr;
 }
@@ -1580,13 +1592,14 @@ Result<ast::Expr_id> Parser::equality()
     while (match({lex::TokenType::Equal, lex::TokenType::NotEqual})) {
         lex::Token op = previous();
         DECL_OR_RETURN(right, comparison());
-        expr = ctx_.tree.add_expr(ast::Expr{ast::Binary_expr{
-            .left = expr,
-            .op = op.type,
-            .right = right,
-            .type = ctx_.tt.get_bool(),
-            .loc = {op.line, op.column},
-        }});
+        expr = ctx_.tree.add_expr(
+            ast::Expr{ast::Binary_expr{
+                .left = expr,
+                .op = op.type,
+                .right = right,
+                .type = ctx_.tt.get_bool(),
+                .loc = {op.line, op.column},
+            }});
     }
     return expr;
 }
@@ -1599,13 +1612,14 @@ Result<ast::Expr_id> Parser::comparison()
     while (match({lex::TokenType::Less, lex::TokenType::LessEqual, lex::TokenType::Greater, lex::TokenType::GreaterEqual})) {
         lex::Token op = previous();
         DECL_OR_RETURN(right, bitwise_shift());
-        expr = ctx_.tree.add_expr(ast::Expr{ast::Binary_expr{
-            .left = expr,
-            .op = op.type,
-            .right = right,
-            .type = ctx_.tt.get_bool(),
-            .loc = {op.line, op.column},
-        }});
+        expr = ctx_.tree.add_expr(
+            ast::Expr{ast::Binary_expr{
+                .left = expr,
+                .op = op.type,
+                .right = right,
+                .type = ctx_.tt.get_bool(),
+                .loc = {op.line, op.column},
+            }});
     }
     return expr;
 }
@@ -1618,13 +1632,14 @@ Result<ast::Expr_id> Parser::bitwise_shift()
     while (match({lex::TokenType::BitLShift, lex::TokenType::BitRshift})) {
         lex::Token op = previous();
         DECL_OR_RETURN(right, term());
-        expr = ctx_.tree.add_expr(ast::Expr{ast::Binary_expr{
-            .left = expr,
-            .op = op.type,
-            .right = right,
-            .type = ctx_.tt.get_unknown(),
-            .loc = {op.line, op.column},
-        }});
+        expr = ctx_.tree.add_expr(
+            ast::Expr{ast::Binary_expr{
+                .left = expr,
+                .op = op.type,
+                .right = right,
+                .type = ctx_.tt.get_unknown(),
+                .loc = {op.line, op.column},
+            }});
     }
     return expr;
 }
@@ -1637,13 +1652,14 @@ Result<ast::Expr_id> Parser::term()
     while (match({lex::TokenType::Plus, lex::TokenType::Minus})) {
         lex::Token op = previous();
         DECL_OR_RETURN(right, factor());
-        expr = ctx_.tree.add_expr(ast::Expr{ast::Binary_expr{
-            .left = expr,
-            .op = op.type,
-            .right = right,
-            .type = ctx_.tt.get_unknown(),
-            .loc = {op.line, op.column},
-        }});
+        expr = ctx_.tree.add_expr(
+            ast::Expr{ast::Binary_expr{
+                .left = expr,
+                .op = op.type,
+                .right = right,
+                .type = ctx_.tt.get_unknown(),
+                .loc = {op.line, op.column},
+            }});
     }
     return expr;
 }
@@ -1656,13 +1672,14 @@ Result<ast::Expr_id> Parser::factor()
     while (match({lex::TokenType::Star, lex::TokenType::Slash, lex::TokenType::Percent})) {
         lex::Token op = previous();
         DECL_OR_RETURN(right, cast());
-        expr = ctx_.tree.add_expr(ast::Expr{ast::Binary_expr{
-            .left = expr,
-            .op = op.type,
-            .right = right,
-            .type = ctx_.tt.get_unknown(),
-            .loc = {op.line, op.column},
-        }});
+        expr = ctx_.tree.add_expr(
+            ast::Expr{ast::Binary_expr{
+                .left = expr,
+                .op = op.type,
+                .right = right,
+                .type = ctx_.tt.get_unknown(),
+                .loc = {op.line, op.column},
+            }});
     }
     return expr;
 }
@@ -1676,12 +1693,13 @@ Result<ast::Expr_id> Parser::cast()
         bool is_saturating = previous().type == lex::TokenType::Sat;
         DECL_OR_RETURN(target_type, parse_type());
         auto loc = ast::get_loc(ctx_.tree.get(expr).node);
-        expr = ctx_.tree.add_expr(ast::Expr{ast::Cast_expr{
-            .expression = expr,
-            .target_type = target_type,
-            .loc = loc,
-            .is_saturating = is_saturating,
-        }});
+        expr = ctx_.tree.add_expr(
+            ast::Expr{ast::Cast_expr{
+                .expression = expr,
+                .target_type = target_type,
+                .loc = loc,
+                .is_saturating = is_saturating,
+            }});
     }
     return expr;
 }
@@ -1692,12 +1710,13 @@ Result<ast::Expr_id> Parser::unary()
     if (match({lex::TokenType::LogicalNot, lex::TokenType::Minus, lex::TokenType::BitNot})) {
         lex::Token op = previous();
         DECL_OR_RETURN(right, cast());
-        return ctx_.tree.add_expr(ast::Expr{ast::Unary_expr{
-            .op = op.type,
-            .right = right,
-            .type = ctx_.tt.get_unknown(),
-            .loc = {op.line, op.column},
-        }});
+        return ctx_.tree.add_expr(
+            ast::Expr{ast::Unary_expr{
+                .op = op.type,
+                .right = right,
+                .type = ctx_.tt.get_unknown(),
+                .loc = {op.line, op.column},
+            }});
     }
     return call();
 }
@@ -1719,28 +1738,30 @@ Result<ast::Expr_id> Parser::call()
             DECL_OR_RETURN(index_result, expression());
             DECL_OR_RETURN(right_bracket_result, consume(lex::TokenType::RightBracket, "Expect ']' after array index"));
 
-            expr = ctx_.tree.add_expr(ast::Expr{ast::Array_access_expr{
-                expr,
-                index_result,
-                ctx_.tt.get_unknown(),
-                ast::Source_location{right_bracket_result.line, right_bracket_result.column}}});
+            expr = ctx_.tree.add_expr(
+                ast::Expr{ast::Array_access_expr{
+                    expr,
+                    index_result,
+                    ctx_.tt.get_unknown(),
+                    ast::Source_location{right_bracket_result.line, right_bracket_result.column}}});
 
         } else if (match({lex::TokenType::ColonColon})) {
             DECL_OR_RETURN(member_result, consume(lex::TokenType::Identifier, "Expect member name after '::'"));
 
-            expr = ctx_.tree.add_expr(ast::Expr{ast::Static_path_expr{
-                .base = expr,
-                .member = member_result,
-                .type = ctx_.tt.get_unknown(),
-                .loc = {member_result.line, member_result.column},
-            }});
+            expr = ctx_.tree.add_expr(
+                ast::Expr{ast::Static_path_expr{
+                    .base = expr,
+                    .member = member_result,
+                    .type = ctx_.tt.get_unknown(),
+                    .loc = {member_result.line, member_result.column},
+                }});
 
         } else if (match({lex::TokenType::Dot})) {
             // NEW: Intercept Model Literal construction precisely!
             if (check(lex::TokenType::LeftBrace)) {
                 // A safe recursive lambda to build string representations out of arbitrarily deep static paths.
                 auto get_path_string = [&](ast::Expr_id id) -> std::string {
-                    auto helper = [&](auto& self, ast::Expr_id curr_id) -> std::string {
+                    auto helper = [&](auto &self, ast::Expr_id curr_id) -> std::string {
                         const auto &node = ctx_.tree.get(curr_id).node;
                         if (const auto *var = std::get_if<ast::Variable_expr>(&node)) {
                             return var->name;
@@ -1772,18 +1793,20 @@ Result<ast::Expr_id> Parser::call()
                 DECL_OR_RETURN(arguments, parse_call_arguments());
                 TRY_IGNORE(consume(lex::TokenType::RightParen, "Expect ')' after arguments"));
 
-                expr = ctx_.tree.add_expr(ast::Expr{ast::Method_call_expr{
-                    expr,
-                    name_result.lexeme,
-                    arguments,
-                    ctx_.tt.get_unknown(),
-                    ast::Source_location{name_result.line, name_result.column}}});
+                expr = ctx_.tree.add_expr(
+                    ast::Expr{ast::Method_call_expr{
+                        expr,
+                        name_result.lexeme,
+                        arguments,
+                        ctx_.tt.get_unknown(),
+                        ast::Source_location{name_result.line, name_result.column}}});
             } else {
-                expr = ctx_.tree.add_expr(ast::Expr{ast::Field_access_expr{
-                    expr,
-                    name_result.lexeme,
-                    ctx_.tt.get_unknown(),
-                    ast::Source_location{name_result.line, name_result.column}}});
+                expr = ctx_.tree.add_expr(
+                    ast::Expr{ast::Field_access_expr{
+                        expr,
+                        name_result.lexeme,
+                        ctx_.tt.get_unknown(),
+                        ast::Source_location{name_result.line, name_result.column}}});
             }
         } else {
             break;
@@ -2056,13 +2079,13 @@ Result<ast::Expr_id> Parser::parse_closure_expression()
     DECL_OR_RETURN(body, block_statement());
 
     return ctx_.tree.add_expr(
-    ast::Expr{ast::Closure_expr{
-        .parameters = std::move(parameters),
-        .returns = std::move(returns),
-        .body = body,
-        .type = ctx_.tt.get_unknown(),
-        .loc = {line, column},
-    }});
+        ast::Expr{ast::Closure_expr{
+            .parameters = std::move(parameters),
+            .returns = std::move(returns),
+            .body = body,
+            .type = ctx_.tt.get_unknown(),
+            .loc = {line, column},
+        }});
 }
 
 // array_literal -> "[" (expr ("," expr)*)? "]"
@@ -2084,11 +2107,12 @@ Result<ast::Expr_id> Parser::parse_array_literal()
 
     TRY_IGNORE(consume(lex::TokenType::RightBracket, "Expect ']' after array elements"));
 
-    return ctx_.tree.add_expr(ast::Expr{ast::Array_literal_expr{
-        .elements = elements,
-        .type = ctx_.tt.get_unknown(),
-        .loc = {line, column},
-    }});
+    return ctx_.tree.add_expr(
+        ast::Expr{ast::Array_literal_expr{
+            .elements = elements,
+            .type = ctx_.tt.get_unknown(),
+            .loc = {line, column},
+        }});
 }
 
 // model_literal -> IDENT "{" ( (IDENT ":")? expr ("," (IDENT ":")? expr)* ","? )? "}"
@@ -2116,12 +2140,13 @@ Result<ast::Expr_id> Parser::parse_model_literal(const std::string &model_name)
 
     TRY_IGNORE(consume(lex::TokenType::RightBrace, "Expect '}' after model fields"));
 
-    return ctx_.tree.add_expr(ast::Expr{ast::Model_literal_expr{
-        .model_name = model_name,
-        .fields = fields,
-        .type = ctx_.tt.get_unknown(),
-        .loc = {brace.line, brace.column},
-    }});
+    return ctx_.tree.add_expr(
+        ast::Expr{ast::Model_literal_expr{
+            .model_name = model_name,
+            .fields = fields,
+            .type = ctx_.tt.get_unknown(),
+            .loc = {brace.line, brace.column},
+        }});
 }
 
 // =============================================================================

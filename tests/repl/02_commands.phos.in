@@ -1,0 +1,20 @@
+let mut x := 5
+fn fib(n: i32) -> i32 { return n * 2; }
+fn greet(name: string) -> string { return "hello " + name; }
+let mut a, b := 1, 2
+const TAX := 5
+:vars
+:type x
+:type fib
+:type fib(3)
+:type greet("x")
+:type a + b
+:type (1 as i8)
+:type "hi"
+:type len("ab")
+:type TAX * 10
+:clear
+:vars
+fn g() -> i32 { return 42; }
+:vars
+g()

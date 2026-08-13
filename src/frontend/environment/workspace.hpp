@@ -85,16 +85,16 @@ public:
         Module_id id{modules.size()};
         std::string path_str = normalize_path_key(path);
 
-        modules.push_back(Module_unit{
-            .id = id,
-            .logical_namespace = std::move(logical_ns),
-            .os_path = std::move(path),
-            .ast_roots = {},
-            .imports = {},
-            .exported_modules = {},
-            .exported_symbols = {},
-            .is_native = false
-        });
+        modules.push_back(
+            Module_unit{
+                .id = id,
+                .logical_namespace = std::move(logical_ns),
+                .os_path = std::move(path),
+                .ast_roots = {},
+                .imports = {},
+                .exported_modules = {},
+                .exported_symbols = {},
+                .is_native = false});
 
         path_to_module_[path_str] = id;
         namespace_to_module_[modules.back().logical_namespace] = id;

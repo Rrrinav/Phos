@@ -86,8 +86,7 @@ static Vm_context make_vm_context(
         .globals = &globals,
         .ip = &ip,
         .frame_base = &frame_base,
-        .cmd_args = machine.cmd_args
-    };
+        .cmd_args = machine.cmd_args};
 }
 
 static Upvalue_data *capture_upvalue(Green_thread_data *thread, size_t absolute_stack_index, Vm_context &ctx)
@@ -121,7 +120,7 @@ static Upvalue_data *capture_upvalue(Green_thread_data *thread, size_t absolute_
     return created_upvalue;
 }
 
-static void close_upvalues(Green_thread_data *thread, size_t last_stack_index, [[maybe_unused]]gc::Gc_heap &gc_heap)
+static void close_upvalues(Green_thread_data *thread, size_t last_stack_index, [[maybe_unused]] gc::Gc_heap &gc_heap)
 {
     Value *limit_location = &thread->value_stack[last_stack_index];
 
@@ -555,11 +554,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             if (target_closure->native_func.has_value()) {
                 if (target_closure->is_variadic) {
                     if (arg_count < target_closure->min_arity) {
-                        panic(
-                            "Arity mismatch. Expected at least {} arguments, got {} at IP: {}",
-                            target_closure->min_arity,
-                            arg_count,
-                            ip - 1);
+                        panic("Arity mismatch. Expected at least {} arguments, got {} at IP: {}", target_closure->min_arity, arg_count, ip - 1);
                     }
                 } else if (target_closure->arity != arg_count) {
                     panic("Arity mismatch. Expected {} arguments, got {} at IP: {}", target_closure->arity, arg_count, ip - 1);

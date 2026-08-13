@@ -34,8 +34,8 @@ inline int64_t next_io_stream_id = 1;
 
 namespace detail {
 
-inline types::Type_id register_native_union(
-    Type_environment &env, const std::string &name, const std::vector<std::pair<std::string, types::Type_id>> &variants)
+inline types::Type_id
+register_native_union(Type_environment &env, const std::string &name, const std::vector<std::pair<std::string, types::Type_id>> &variants)
 {
     env.register_union(name);
     types::Type_id union_type = env.tt.union_(name, variants);

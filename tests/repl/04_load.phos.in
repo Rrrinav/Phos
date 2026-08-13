@@ -1,0 +1,8 @@
+:load helper.phos
+:vars
+print(triple(7))
+print(visits)
+visits = 3
+print(visits)
+:load nonexistent.phos
+:swap

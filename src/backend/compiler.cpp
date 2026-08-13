@@ -808,7 +808,7 @@ void Compiler::compile_stmt_node(const ast::Expr_stmt &stmt)
 void Compiler::compile_stmt_node(const ast::Var_stmt &stmt)
 {
     const bool is_static = (stmt.kind == ast::Var_kind::Static || stmt.kind == ast::Var_kind::Static_mut)
-                           || (ctx.repl_force_global && current_ctx_ != nullptr && current_ctx_->enclosing == nullptr);
+        || (ctx.repl_force_global && current_ctx_ != nullptr && current_ctx_->enclosing == nullptr);
     const bool is_function_local_static = is_static && current_ctx_ != nullptr && current_ctx_->enclosing != nullptr;
 
     // A `static` declared inside a function body must be initialized exactly
@@ -858,11 +858,15 @@ void Compiler::compile_stmt_node(const ast::Var_stmt &stmt)
 
         if (!sym_id.is_null()) {
             auto &sym = ctx.registry.get_symbol(sym_id);
-            emit(vm::Instruction::make_ri(vm::Opcode::Store_global, target_reg, *sym.global_index));
-            if (is_function_local_static) {
-                uint8_t flag_reg = allocate_register();
-                emit(vm::Instruction::make_rrr(vm::Opcode::Load_true, flag_reg, 0, 0));
-                emit(vm::Instruction::make_ri(vm::Opcode::Store_global, flag_reg, *guard_index));
+            // Constants carry no global slot; their value is baked in by the
+            // expression compiler when the name is used.
+            if (sym.global_index.has_value()) {
+                emit(vm::Instruction::make_ri(vm::Opcode::Store_global, target_reg, *sym.global_index));
+                if (is_function_local_static) {
+                    uint8_t flag_reg = allocate_register();
+                    emit(vm::Instruction::make_rrr(vm::Opcode::Load_true, flag_reg, 0, 0));
+                    emit(vm::Instruction::make_ri(vm::Opcode::Store_global, flag_reg, *guard_index));
+                }
             }
         }
     } else if (stmt.kind == ast::Var_kind::Const) {
@@ -880,7 +884,7 @@ void Compiler::compile_stmt_node(const ast::Var_stmt &stmt)
 void Compiler::compile_stmt_node(const ast::Multi_var_stmt &stmt)
 {
     const bool is_static = (stmt.kind == ast::Var_kind::Static || stmt.kind == ast::Var_kind::Static_mut)
-                           || (ctx.repl_force_global && current_ctx_ != nullptr && current_ctx_->enclosing == nullptr);
+        || (ctx.repl_force_global && current_ctx_ != nullptr && current_ctx_->enclosing == nullptr);
     const bool is_function_local_static = is_static && current_ctx_ != nullptr && current_ctx_->enclosing != nullptr;
 
     std::optional<uint32_t> guard_index;
@@ -896,7 +900,7 @@ void Compiler::compile_stmt_node(const ast::Multi_var_stmt &stmt)
     }
 
     auto store_variable = [&](const std::string &name, ast::Var_kind kind, uint8_t value_reg, size_t index) {
-        if (kind == ast::Var_kind::Static || kind == ast::Var_kind::Static_mut) {
+        if (is_static) {
             Symbol_id sym_id = (index < stmt.resolved_symbols.size()) ? stmt.resolved_symbols[index] : Symbol_id::null();
 
             if (sym_id.is_null()) {
@@ -909,11 +913,15 @@ void Compiler::compile_stmt_node(const ast::Multi_var_stmt &stmt)
 
             if (!sym_id.is_null()) {
                 auto &sym = ctx.registry.get_symbol(sym_id);
-                emit(vm::Instruction::make_ri(vm::Opcode::Store_global, value_reg, *sym.global_index));
-                if (is_function_local_static) {
-                    uint8_t flag_reg = allocate_register();
-                    emit(vm::Instruction::make_rrr(vm::Opcode::Load_true, flag_reg, 0, 0));
-                    emit(vm::Instruction::make_ri(vm::Opcode::Store_global, flag_reg, *guard_index));
+                // Constants carry no global slot; their value is baked in by the
+                // expression compiler when the name is used.
+                if (sym.global_index.has_value()) {
+                    emit(vm::Instruction::make_ri(vm::Opcode::Store_global, value_reg, *sym.global_index));
+                    if (is_function_local_static) {
+                        uint8_t flag_reg = allocate_register();
+                        emit(vm::Instruction::make_rrr(vm::Opcode::Load_true, flag_reg, 0, 0));
+                        emit(vm::Instruction::make_ri(vm::Opcode::Store_global, flag_reg, *guard_index));
+                    }
                 }
             }
         } else if (kind == ast::Var_kind::Const) {
@@ -1770,7 +1778,11 @@ uint8_t Compiler::compile_closure_value(Symbol_id sym_id, Closure_data *closure)
         } else {
             int upval_idx = resolve_upvalue(current_ctx_, uv.name);
             if (upval_idx == -1) {
-                std::println(std::cerr, "Compiler Bug: Could not re-resolve upvalue '{}' while creating closure '{}'.", uv.name, closure->name ? closure->name->chars : "");
+                std::println(
+                    std::cerr,
+                    "Compiler Bug: Could not re-resolve upvalue '{}' while creating closure '{}'.",
+                    uv.name,
+                    closure->name ? closure->name->chars : "");
                 std::exit(EXIT_FAILURE);
             }
             route.rrr.src_a = 0;

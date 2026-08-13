@@ -414,9 +414,7 @@ std::optional<Value> Value::saturating_cast_numeric(types::Primitive_kind target
         return std::nullopt;
     }
 
-    auto clamp_signed = [](int64_t v, int64_t lo, int64_t hi) {
-        return v < lo ? lo : (v > hi ? hi : v);
-    };
+    auto clamp_signed = [](int64_t v, int64_t lo, int64_t hi) { return v < lo ? lo : (v > hi ? hi : v); };
 
     if (is_float()) {
         long double val = static_cast<long double>(as_float());
@@ -482,7 +480,8 @@ std::optional<Value> Value::saturating_cast_numeric(types::Primitive_kind target
         case types::Primitive_kind::I32:
             return Value(static_cast<int32_t>(val > 2147483647ULL ? 2147483647LL : val));
         case types::Primitive_kind::I64:
-            return Value(static_cast<int64_t>(val > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) ? std::numeric_limits<int64_t>::max() : val));
+            return Value(
+                static_cast<int64_t>(val > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) ? std::numeric_limits<int64_t>::max() : val));
         case types::Primitive_kind::U8:
             return Value(static_cast<uint8_t>(val > 255 ? 255 : val));
         case types::Primitive_kind::U16:

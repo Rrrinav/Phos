@@ -63,15 +63,33 @@ struct formatter<phos::Symbol_kind, char>
     {
         string_view text = "unknown";
         switch (kind) {
-        case phos::Symbol_kind::Local_var:    text = "Local_var";    break;
-        case phos::Symbol_kind::Global_var:   text = "Global_var";   break;
-        case phos::Symbol_kind::Native_func:  text = "Native_func";  break;
-        case phos::Symbol_kind::Native_const: text = "Native_const"; break;
-        case phos::Symbol_kind::Phos_func:    text = "Phos_func";    break;
-        case phos::Symbol_kind::Phos_const:   text = "Phos_const";   break;
-        case phos::Symbol_kind::Model_def:    text = "Model_def";    break;
-        case phos::Symbol_kind::Enum_def:     text = "Enum_def";     break;
-        case phos::Symbol_kind::Union_def:    text = "Union_def";    break;
+        case phos::Symbol_kind::Local_var:
+            text = "Local_var";
+            break;
+        case phos::Symbol_kind::Global_var:
+            text = "Global_var";
+            break;
+        case phos::Symbol_kind::Native_func:
+            text = "Native_func";
+            break;
+        case phos::Symbol_kind::Native_const:
+            text = "Native_const";
+            break;
+        case phos::Symbol_kind::Phos_func:
+            text = "Phos_func";
+            break;
+        case phos::Symbol_kind::Phos_const:
+            text = "Phos_const";
+            break;
+        case phos::Symbol_kind::Model_def:
+            text = "Model_def";
+            break;
+        case phos::Symbol_kind::Enum_def:
+            text = "Enum_def";
+            break;
+        case phos::Symbol_kind::Union_def:
+            text = "Union_def";
+            break;
         }
         return format_to(ctx.out(), "{}", text);
     }

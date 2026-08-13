@@ -3,9 +3,9 @@
 #include <format>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
-#include <string_view>
 
 #define B_LDR_IMPLEMENTATION
 #define BLD_USE_CONFIG
@@ -13,15 +13,15 @@
 
 inline auto &cfg = bld::Config::get();
 
-const std::string SRC      = "./src/";
-const std::string BIN      = "./bin/";
+const std::string SRC = "./src/";
+const std::string BIN = "./bin/";
 const std::string BIN_META = BIN + "meta/";
-const std::string LIB      = BIN + "libphos.a";
-const std::string TARGET   = BIN + "phos";
+const std::string LIB = BIN + "libphos.a";
+const std::string TARGET = BIN + "phos";
 
-const std::vector<std::string> COMMON_FLAGS    = {"--std=c++23", "-pthread", "-I./src", "-Wpedantic", "-Wall", "-Wextra"};
-const std::vector<std::string> DEBUG_FLAGS     = {"-ggdb", "-O0"};
-const std::vector<std::string> RELEASE_FLAGS   = {"-O2", "-DNDEBUG"};
+const std::vector<std::string> COMMON_FLAGS = {"--std=c++23", "-pthread", "-I./src", "-Wpedantic", "-Wall", "-Wextra"};
+const std::vector<std::string> DEBUG_FLAGS = {"-ggdb", "-O0"};
+const std::vector<std::string> RELEASE_FLAGS = {"-O2", "-DNDEBUG"};
 const std::vector<std::string> SANITIZER_FLAGS = {"-fsanitize=address", "-fsanitize=undefined"};
 
 //  Tiny helpers
@@ -90,7 +90,8 @@ static std::string string_diff(const std::string &got, const std::string &expect
     return out.str();
 }
 
-static bool compile_parallel(const std::vector<std::string> &srcs, const std::string &obj_root, bool release, bool force, std::vector<std::string> &obj_paths)
+static bool
+compile_parallel(const std::vector<std::string> &srcs, const std::string &obj_root, bool release, bool force, std::vector<std::string> &obj_paths)
 {
     std::vector<bld::Proc> procs;
 
@@ -173,7 +174,9 @@ static bool build_core_library(const std::string &obj_root, bool release, bool f
 {
     auto cpp_files = bld::fs::get_all_files_with_extensions(SRC, {"cpp"}, true);
 
-    cpp_files.erase(std::remove_if(cpp_files.begin(), cpp_files.end(), [](const std::string &f) { return f.find("main.cpp") != std::string::npos; }), cpp_files.end());
+    cpp_files.erase(
+        std::remove_if(cpp_files.begin(), cpp_files.end(), [](const std::string &f) { return f.find("main.cpp") != std::string::npos; }),
+        cpp_files.end());
 
     std::vector<std::string> obj_paths;
     bool any_compiled = compile_parallel(cpp_files, obj_root, release, force, obj_paths);
@@ -301,8 +304,8 @@ std::tuple<std::vector<std::string>, std::vector<std::pair<std::string, std::str
             if (!ran_ok && !needle.empty() && output.find(needle) != std::string::npos) {
                 passed.push_back(f);
             } else {
-                std::string detail =
-                    ran_ok ? "Expected the interpreter to fail, but it ran successfully." : "Expected diagnostic not found in output:\n" + output;
+                std::string detail = ran_ok ? "Expected the interpreter to fail, but it ran successfully."
+                                            : "Expected diagnostic not found in output:\n" + output;
                 failed.push_back({f, detail});
             }
             continue;
@@ -387,7 +390,37 @@ void build_meta()
     }
 }
 
-//  Entry point
+void format()
+{
+    std::vector<bld::Proc> procs{};
+    bld::fs::walk_directory(".", [&](bld::fs::Walk_fn_opt &opt) -> bool {
+        if (opt.type != bld::fs::Path_type::File) {
+            return true;
+        }
+
+        const auto ext = opt.path.extension().string();
+
+        if (ext == ".c" || ext == ".h" || ext == ".cpp" || ext == ".hpp" || ext == ".cc" || ext == ".hh" || ext == "cppm") {
+            bld::Command cmd = {"clang-format", "-i", opt.path.string()};
+
+            if (auto p = bld::execute_async(cmd); !p) {
+                bld::logger::e("clang-format failed: {}", opt.path.string());
+                opt.action = bld::fs::Walk_act::Stop;
+                return false;
+            } else {
+                procs.push_back(p);
+            }
+        }
+        return true;
+    });
+
+    auto ret = bld::wait_procs(procs);
+
+    if (!ret.failed_indices.empty()) {
+        bld::log(bld::Log_type::ERR, std::format("Formatting failed: {}", ret.failed_indices));
+    }
+}
+
 int main(int argc, char *argv[])
 {
     BLD_REBUILD_AND_ARGS();
@@ -399,6 +432,7 @@ int main(int argc, char *argv[])
     cfg.add_flag("meta", "Build meta-programming utilities");
     cfg.add_flag("code-gen", "Build meta-programming utilities");
     cfg.add_flag("count", "Count lines, files, etc.");
+    cfg.add_flag("format", "Format the code using clangd.");
 
     cfg.add_option("test", "", "Run tests in given directory (defaults to ./tests; -test runs the whole suite)");
     cfg.add_option("objs", "", "Comma-separated source files for custom build");
@@ -406,7 +440,12 @@ int main(int argc, char *argv[])
     cfg.add_option("o", "", "Output executable name for -compile");
 
     const bool release = static_cast<bool>(cfg["rel"]);
-    const bool force   = static_cast<bool>(cfg["force"]);
+    const bool force = static_cast<bool>(cfg["force"]);
+
+    if (cfg["format"]) {
+        format();
+        return 0;
+    }
 
     if (cfg["count"]) {
         if (std::filesystem::exists("./bin/meta/count")) {

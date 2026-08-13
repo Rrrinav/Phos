@@ -1,11 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <variant>
 #include <vector>
-#include <optional>
 
 namespace phos::types {
 
@@ -76,14 +76,14 @@ struct Iterator_type
 struct Model_type
 {
     std::string name;
-    std::vector<std::pair<std::string, Type_id>>       fields;
-    std::unordered_map<std::string, uint32_t>          field_indices;
-    std::vector<std::pair<std::string, Type_id>>       static_fields;
-    std::unordered_map<std::string, uint32_t>          static_field_indices;
+    std::vector<std::pair<std::string, Type_id>> fields;
+    std::unordered_map<std::string, uint32_t> field_indices;
+    std::vector<std::pair<std::string, Type_id>> static_fields;
+    std::unordered_map<std::string, uint32_t> static_field_indices;
     std::vector<std::pair<std::string, Function_type>> methods;
-    std::unordered_map<std::string, uint32_t>          method_indices;
+    std::unordered_map<std::string, uint32_t> method_indices;
     std::vector<std::pair<std::string, Function_type>> static_methods;
-    std::unordered_map<std::string, uint32_t>          static_method_indices;
+    std::unordered_map<std::string, uint32_t> static_method_indices;
 };
 
 struct Union_type
@@ -106,16 +106,8 @@ struct Unresolved_type
 
 struct Type
 {
-    using Variant = std::variant<
-        Primitive_kind,
-        Function_type,
-        Model_type,
-        Array_type,
-        Optional_type,
-        Union_type,
-        Iterator_type,
-        Enum_type,
-        Unresolved_type>;
+    using Variant =
+        std::variant<Primitive_kind, Function_type, Model_type, Array_type, Optional_type, Union_type, Iterator_type, Enum_type, Unresolved_type>;
     Variant data;
 
     template <typename T>
@@ -136,9 +128,9 @@ public:
     Type_table();
 
     // Pre-interned Primitives
-    Type_id t_i8  , t_i16   , t_i32 , t_i64;
-    Type_id t_u8  , t_u16   , t_u32 , t_u64;
-    Type_id t_f16 , t_f32   , t_f64;
+    Type_id t_i8, t_i16, t_i32, t_i64;
+    Type_id t_u8, t_u16, t_u32, t_u64;
+    Type_id t_f16, t_f32, t_f64;
     Type_id t_bool, t_string, t_void, t_any, t_nil, t_unknown;
 
     // intern
@@ -389,9 +381,7 @@ public:
         size_t operator()(const Fn_key &k) const
         {
             std::size_t h = 0;
-            auto combine = [&](Type_id id) {
-                h ^= std::hash<uint32_t>{}(id.value) + 0x9e3779b9 + (h << 6) + (h >> 2);
-            };
+            auto combine = [&](Type_id id) { h ^= std::hash<uint32_t>{}(id.value) + 0x9e3779b9 + (h << 6) + (h >> 2); };
             for (auto p : k.params) {
                 combine(p);
             }

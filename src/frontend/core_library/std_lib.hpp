@@ -1,5 +1,4 @@
 #include "core/value/value.hpp"
-
 #include "virtual_machine/vm_context.hpp"
 
 #include <charconv>
@@ -305,7 +304,7 @@ struct string_methods
         size_t pos = haystack.find(needle);
 
         if (pos == std::string_view::npos) {
-            return phos::Value(); 
+            return phos::Value();
         }
 
         return phos::Value(static_cast<int64_t>(pos));
@@ -340,11 +339,15 @@ struct array_methods
 
             if (arr->elements_on_heap) {
                 new_elems = static_cast<phos::Value *>(std::realloc(arr->elements, sizeof(phos::Value) * new_cap));
-                if (!new_elems) throw std::bad_alloc{};
+                if (!new_elems) {
+                    throw std::bad_alloc{};
+                }
                 ctx.add_external_bytes((new_cap - arr->capacity) * sizeof(phos::Value));
             } else {
                 new_elems = static_cast<phos::Value *>(std::malloc(sizeof(phos::Value) * new_cap));
-                if (!new_elems) throw std::bad_alloc{};
+                if (!new_elems) {
+                    throw std::bad_alloc{};
+                }
 
                 if (arr->elements && arr->count > 0) {
                     std::memcpy(new_elems, arr->elements, arr->count * sizeof(phos::Value));
@@ -379,7 +382,7 @@ struct array_methods
         int64_t idx = args[1].as_int();
 
         if (idx < 0 || idx > static_cast<int64_t>(arr->count)) {
-            return phos::Value(); 
+            return phos::Value();
         }
 
         if (arr->count >= arr->capacity) {
@@ -388,11 +391,15 @@ struct array_methods
 
             if (arr->elements_on_heap) {
                 new_elems = static_cast<phos::Value *>(std::realloc(arr->elements, sizeof(phos::Value) * new_cap));
-                if (!new_elems) throw std::bad_alloc{};
+                if (!new_elems) {
+                    throw std::bad_alloc{};
+                }
                 ctx.add_external_bytes((new_cap - arr->capacity) * sizeof(phos::Value));
             } else {
                 new_elems = static_cast<phos::Value *>(std::malloc(sizeof(phos::Value) * new_cap));
-                if (!new_elems) throw std::bad_alloc{};
+                if (!new_elems) {
+                    throw std::bad_alloc{};
+                }
 
                 if (arr->elements && arr->count > 0) {
                     std::memcpy(new_elems, arr->elements, arr->count * sizeof(phos::Value));
@@ -423,7 +430,7 @@ struct array_methods
         int64_t idx = args[1].as_int();
 
         if (idx < 0 || idx >= static_cast<int64_t>(arr->count)) {
-            return phos::Value(); 
+            return phos::Value();
         }
 
         phos::Value removed = arr->elements[idx];
@@ -442,7 +449,7 @@ struct array_methods
         int64_t idx = args[1].as_int();
 
         if (idx < 0 || idx >= static_cast<int64_t>(arr->count)) {
-            return phos::Value(); 
+            return phos::Value();
         }
         phos::Value removed = arr->elements[idx];
         arr->elements[idx] = arr->elements[arr->count - 1];
@@ -466,6 +473,4 @@ struct array_methods
 
 } // namespace phos::vm
 
-
-namespace phos {
-} // namespace phos
+namespace phos {} // namespace phos

@@ -32,7 +32,8 @@ constexpr auto gen_instruction_cpp(std::filesystem::path out_file)
 
     std::println(string_to_opcode_fn, "{{");
 
-    template for (constexpr auto e : instruction_enumerators) {
+    template for (constexpr auto e : instruction_enumerators)
+    {
         std::string to_print = std::format("case Opcode::{}:", std::meta::identifier_of(e));
 
         std::println(opcode_to_string_fn, "    {:<40} return \"{}\";", to_print, std::meta::identifier_of(e));
@@ -54,7 +55,6 @@ constexpr auto gen_instruction_cpp(std::filesystem::path out_file)
     std::println("[PHOS: META]: Built '{}' file", out_file.string());
 }
 
-
 constexpr auto gen_token_cpp(std::filesystem::path out_file)
 {
     std::println("[PHOS: META]: Building '{}' file", out_file.string());
@@ -75,7 +75,8 @@ constexpr auto gen_token_cpp(std::filesystem::path out_file)
     std::println(token_to_string_fn, "{{");
     std::println(token_to_string_fn, "    switch(t) {{");
 
-    template for (constexpr auto e : instruction_enumerators) {
+    template for (constexpr auto e : instruction_enumerators)
+    {
         std::string to_print = std::format("case TokenType::{}:", std::meta::identifier_of(e));
         std::println(token_to_string_fn, "    {:<40} return \"{}\";", to_print, std::meta::identifier_of(e));
     }

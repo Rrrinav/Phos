@@ -1,0 +1,12 @@
+Phos REPL
+  Type Phos statements directly. Use print(...) to see output.
+  Commands: :help, :quit
+loaded helper
+triple: fn(i32) -> i32
+visits: i32
+21
+0
+3
+3
+<repl>: error: cannot open file 'nonexistent.phos'
+Unknown command ':swap'. Try :help.

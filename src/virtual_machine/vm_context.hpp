@@ -4,8 +4,8 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <vector>
 #include <string>
+#include <vector>
 
 namespace phos {
 struct Value;

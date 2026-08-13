@@ -1,0 +1,116 @@
+---
+BasedOnStyle: LLVM
+
+# =========================
+# Indentation
+# =========================
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ContinuationIndentWidth: 4
+AccessModifierOffset: -4
+IndentAccessModifiers: false
+NamespaceIndentation: None
+
+# =========================
+# Line Length
+# =========================
+ColumnLimit: 150
+
+# =========================
+# Brace Style
+# =========================
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: true
+  AfterStruct: true
+  AfterFunction: true
+  AfterNamespace: false
+  AfterControlStatement: Never
+  BeforeElse: false
+  BeforeCatch: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+
+# =========================
+# Alignment
+# =========================
+# AlwaysBreak ensures the first element starts on a new line
+# and the closing brace follows suit in a wrapped context.
+AlignAfterOpenBracket: AlwaysBreak
+AlignArrayOfStructures: None
+AlignOperands: false
+AlignTrailingComments: true
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignConsecutiveMacros: false
+
+# =========================
+# Arguments / Lambdas / Inits
+# =========================
+BinPackArguments: false
+BinPackParameters: false
+AllowAllArgumentsOnNextLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortBlocksOnASingleLine: Empty
+AllowShortLambdasOnASingleLine: All
+InsertBraces: true
+
+# =========================
+# Braced Init Lists (THE FIX)
+# =========================
+# MUST be true to allow wrapping logic for { .member = ... }
+Cpp11BracedListStyle: true
+SpaceBeforeCpp11BracedList: false
+
+# =========================
+# Breaking
+# =========================
+BreakBeforeBinaryOperators: NonAssignment
+BreakBeforeTernaryOperators: true
+BreakConstructorInitializers: BeforeColon
+BreakInheritanceList: BeforeColon
+AlwaysBreakTemplateDeclarations: Yes
+
+# =========================
+# Spacing
+# =========================
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeParens: ControlStatements
+SpaceBeforeRangeBasedForLoopColon: true
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+SpacesInAngles: false
+
+# =========================
+# Pointers / References
+# =========================
+DerivePointerAlignment: false
+PointerAlignment: Right
+
+# =========================
+# Includes
+# =========================
+IncludeBlocks: Regroup
+SortIncludes: true
+
+# =========================
+# Misc
+# =========================
+KeepEmptyLinesAtTheStartOfBlocks: true
+MaxEmptyLinesToKeep: 1
+ReflowComments: true
+SortUsingDeclarations: true
+
+# =========================
+# Penalties
+# =========================
+PenaltyBreakAssignment: 20
+PenaltyReturnTypeOnItsOwnLine: 60
+PenaltyBreakBeforeFirstCallParameter: 0
+PenaltyBreakComment: 300
+PenaltyBreakFirstLessLess: 120
+PenaltyBreakString: 1000
+PenaltyExcessCharacter: 1000000

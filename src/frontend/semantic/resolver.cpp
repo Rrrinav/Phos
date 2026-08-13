@@ -29,7 +29,8 @@ std::string exported_name(std::string_view canonical_name)
     return std::string(canonical_name.substr(pos + 2));
 }
 
-void publish_symbol(Compiler_context &ctx, Module_id owner, const std::string &canonical_name, Symbol_kind kind, types::Type_id type, ast::Stmt_id decl)
+void publish_symbol(
+    Compiler_context &ctx, Module_id owner, const std::string &canonical_name, Symbol_kind kind, types::Type_id type, ast::Stmt_id decl)
 {
     if (owner.is_null()) {
         return;
@@ -379,11 +380,8 @@ void Resolver::resolve_expr(ast::Expr_id expr_id)
             } else if constexpr (std::is_same_v<T, ast::Static_path_expr>) {
                 if (auto *base_var = std::get_if<ast::Variable_expr>(&ctx_.tree.get(e.base).node)) {
                     if (base_var->name == "env"
-                        && (e.member.lexeme == "line" ||
-                            e.member.lexeme == "file" ||
-                            e.member.lexeme == "func" ||
-                            e.member.lexeme == "module" ||
-                            e.member.lexeme == "argv")) {
+                        && (e.member.lexeme == "line" || e.member.lexeme == "file" || e.member.lexeme == "func" || e.member.lexeme == "module"
+                            || e.member.lexeme == "argv")) {
                         return;
                     }
                 }
@@ -491,7 +489,13 @@ void Resolver::populate_signatures(const std::vector<ast::Stmt_id> &statements)
             if (!ctx_.type_env.get_type(enum_stmt->name)) {
                 continue;
             }
-            publish_symbol(ctx_, find_owner_module(ctx_.workspace, stmt_id), enum_stmt->name, Symbol_kind::Enum_def, *ctx_.type_env.get_type(enum_stmt->name), stmt_id);
+            publish_symbol(
+                ctx_,
+                find_owner_module(ctx_.workspace, stmt_id),
+                enum_stmt->name,
+                Symbol_kind::Enum_def,
+                *ctx_.type_env.get_type(enum_stmt->name),
+                stmt_id);
 
             std::int64_t current_signed_value = 0;
             std::uint64_t current_unsigned_value = 0;

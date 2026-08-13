@@ -30,7 +30,7 @@ public:
     Config cfg;
 
 private:
-    gc::Gc_heap& gc;
+    gc::Gc_heap &gc;
     mem::Arena &arena;
 
     // The templated inner loop.
@@ -72,7 +72,10 @@ public:
         }
     }
 
-    gc::Gc_heap& gc_ref() noexcept { return gc; }
+    gc::Gc_heap &gc_ref() noexcept
+    {
+        return gc;
+    }
 
     auto bini64_op(int64_t a, int64_t b, Opcode op) -> int64_t;
     auto binu64_op(uint64_t a, uint64_t b, Opcode op) -> uint64_t;

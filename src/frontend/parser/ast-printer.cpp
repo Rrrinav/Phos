@@ -1,21 +1,27 @@
 #include "ast-printer.hpp"
 
 #include <format>
-#include <string>
 #include <ranges>
+#include <string>
 
 static auto escape_view(std::string_view input)
 {
     return input | std::views::transform([](char c) {
-        switch (c) {
-        case '\n': return std::string("\\n");
-        case '\t': return std::string("\\t");
-        case '\r': return std::string("\\r");
-        case '\\': return std::string("\\\\");
-        case '\"': return std::string("\\\"");
-        default:   return std::string(1, c);
-        }
-    });
+               switch (c) {
+               case '\n':
+                   return std::string("\\n");
+               case '\t':
+                   return std::string("\\t");
+               case '\r':
+                   return std::string("\\r");
+               case '\\':
+                   return std::string("\\\\");
+               case '\"':
+                   return std::string("\\\"");
+               default:
+                   return std::string(1, c);
+               }
+           });
 }
 
 static std::string escape(std::string_view input)
@@ -669,11 +675,21 @@ void Tree_printer::print_node(const Var_stmt &node)
     indent();
     std::string kw{};
     switch (node.kind) {
-        case ast::Var_kind::Let: kw = ""; break;
-        case ast::Var_kind::Mut: kw = "mut"; break;
-        case ast::Var_kind::Const: kw = "const"; break;
-        case ast::Var_kind::Static: kw = "static"; break;
-        case ast::Var_kind::Static_mut: kw = "satic mut"; break;
+    case ast::Var_kind::Let:
+        kw = "";
+        break;
+    case ast::Var_kind::Mut:
+        kw = "mut";
+        break;
+    case ast::Var_kind::Const:
+        kw = "const";
+        break;
+    case ast::Var_kind::Static:
+        kw = "static";
+        break;
+    case ast::Var_kind::Static_mut:
+        kw = "satic mut";
+        break;
     }
     print_str("Var: " + kw + " " + node.name + " : " + tt.to_string(node.type));
     if (!node.initializer.is_null()) {
@@ -690,18 +706,31 @@ void Tree_printer::print_node(const Multi_var_stmt &node)
     indent();
     std::string kw{};
     switch (node.kind) {
-        case ast::Var_kind::Let: kw = ""; break;
-        case ast::Var_kind::Mut: kw = "mut"; break;
-        case ast::Var_kind::Const: kw = "const"; break;
-        case ast::Var_kind::Static: kw = "static"; break;
-        case ast::Var_kind::Static_mut: kw = "static mut"; break;
+    case ast::Var_kind::Let:
+        kw = "";
+        break;
+    case ast::Var_kind::Mut:
+        kw = "mut";
+        break;
+    case ast::Var_kind::Const:
+        kw = "const";
+        break;
+    case ast::Var_kind::Static:
+        kw = "static";
+        break;
+    case ast::Var_kind::Static_mut:
+        kw = "static mut";
+        break;
     }
     print_str("Multi Var: " + kw);
     with_child(true, [&] {
         indent();
         print_str("Names");
         for (size_t i = 0; i < node.names.size(); ++i) {
-            with_child(i + 1 < node.names.size(), [&] { indent(); print_str(node.names[i]); });
+            with_child(i + 1 < node.names.size(), [&] {
+                indent();
+                print_str(node.names[i]);
+            });
         }
     });
     with_child(!node.initializers.empty(), [&] {
@@ -716,10 +745,9 @@ void Tree_printer::print_node(const Multi_var_stmt &node)
 void Tree_printer::print_node(const Print_stmt &node)
 {
     indent();
-    print_str(std::string(
-        "Print(") + (node.stream == Print_stream::STDOUT ? "stdout" : "stderr") +
-        ", sep=\"" + escape(node.sep) + "\", end=\"" + escape(node.end) + "\")"
-    );
+    print_str(
+        std::string("Print(") + (node.stream == Print_stream::STDOUT ? "stdout" : "stderr") + ", sep=\"" + escape(node.sep) + "\", end=\""
+        + escape(node.end) + "\")");
 
     with_child(false, [&] {
         for (const auto &exp : node.expressions) {
@@ -895,7 +923,7 @@ void Tree_printer::print_node(const Import_stmt &node)
         with_child(true, [&] {
             indent();
             print_str("alias");
-            with_child( false, [&] {
+            with_child(false, [&] {
                 indent();
                 print_str(std::format("{}", node.local_alias));
             });
@@ -904,24 +932,18 @@ void Tree_printer::print_node(const Import_stmt &node)
     with_child(true, [&] {
         indent();
         print_str("path");
-        with_child(
-            false,
-            [&] {
-                indent();
-                print_str(std::format("{}", node.path));
-            }
-        );
+        with_child(false, [&] {
+            indent();
+            print_str(std::format("{}", node.path));
+        });
     });
     with_child(false, [&] {
         indent();
         print_str("selectives");
-        with_child(
-            false,
-            [&] {
-                indent();
-                print_str(std::format("{}", node.selectives));
-            }
-        );
+        with_child(false, [&] {
+            indent();
+            print_str(std::format("{}", node.selectives));
+        });
     });
 }
 
@@ -1015,8 +1037,7 @@ std::string Sexpr_printer::print_node(const Array_assignment_expr &node)
 
 std::string Sexpr_printer::print_node(const Cast_expr &node)
 {
-    return "(" + std::string(node.is_saturating ? "sat" : "as")
-        + " " + print_expr(node.expression) + " " + tt.to_string(node.target_type) + ")";
+    return "(" + std::string(node.is_saturating ? "sat" : "as") + " " + print_expr(node.expression) + " " + tt.to_string(node.target_type) + ")";
 }
 
 std::string Sexpr_printer::print_node(const Field_access_expr &node)
@@ -1168,11 +1189,21 @@ std::string Sexpr_printer::print_node(const Var_stmt &node)
 {
     std::string kw{};
     switch (node.kind) {
-        case ast::Var_kind::Let: kw = ""; break;
-        case ast::Var_kind::Mut: kw = "mut"; break;
-        case ast::Var_kind::Const: kw = "const"; break;
-        case ast::Var_kind::Static: kw = "static"; break;
-        case ast::Var_kind::Static_mut: kw = "satic mut"; break;
+    case ast::Var_kind::Let:
+        kw = "";
+        break;
+    case ast::Var_kind::Mut:
+        kw = "mut";
+        break;
+    case ast::Var_kind::Const:
+        kw = "const";
+        break;
+    case ast::Var_kind::Static:
+        kw = "static";
+        break;
+    case ast::Var_kind::Static_mut:
+        kw = "satic mut";
+        break;
     }
     if (!node.initializer.is_null()) {
         return "(" + kw + " " + node.name + " " + print_expr(node.initializer) + ")";
@@ -1184,11 +1215,21 @@ std::string Sexpr_printer::print_node(const Multi_var_stmt &node)
 {
     std::string kw{};
     switch (node.kind) {
-        case ast::Var_kind::Let: kw = ""; break;
-        case ast::Var_kind::Mut: kw = "mut"; break;
-        case ast::Var_kind::Const: kw = "const"; break;
-        case ast::Var_kind::Static: kw = "static"; break;
-        case ast::Var_kind::Static_mut: kw = "static mut"; break;
+    case ast::Var_kind::Let:
+        kw = "";
+        break;
+    case ast::Var_kind::Mut:
+        kw = "mut";
+        break;
+    case ast::Var_kind::Const:
+        kw = "const";
+        break;
+    case ast::Var_kind::Static:
+        kw = "static";
+        break;
+    case ast::Var_kind::Static_mut:
+        kw = "static mut";
+        break;
     }
     std::string out = "(multi-var " + kw;
     for (const auto &name : node.names) {
