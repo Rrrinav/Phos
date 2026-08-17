@@ -584,6 +584,22 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
                 (module.logical_namespace == "main" || module.logical_namespace.empty()) ? model.name : module.logical_namespace + "::" + model.name;
 
             std::vector<std::pair<std::string, types::Type_id>> tt_fields;
+            std::unordered_set<std::string> forbidden_names = {"this"};
+            for (const auto &field : model.fields) {
+                forbidden_names.insert(field.name);
+            }
+            for (auto &field : model.fields) {
+                if (!field.type_inferred) {
+                    continue;
+                }
+                if (field.default_value.is_null()) {
+                    type_error(field.loc, std::format("Field '{}' with inferred type must have an initializer.", field.name));
+                } else if (default_expr_uses_forbidden_names(field.default_value, forbidden_names)) {
+                    // Reported properly by validate_model_defaults.
+                } else {
+                    field.type = check_expr(field.default_value, std::nullopt);
+                }
+            }
             for (const auto &field : model.fields) {
                 if (!field.is_static) {
                     tt_fields.push_back({field.name, resolve_type_recursively(field.type, field.loc)});
@@ -1281,7 +1297,7 @@ void Semantic_checker::validate_model_defaults(const ast::Model_stmt &stmt)
         }
         if (default_expr_uses_forbidden_names(field.default_value, forbidden_names)) {
             type_error(field.loc, std::format("Default value for member '{}' cannot reference 'this' or another member.", field.name));
-        } else {
+        } else if (!field.type_inferred) {
             auto default_type = check_expr(field.default_value, field.type);
             if (!is_compatible(field.type, default_type)) {
                 type_error(

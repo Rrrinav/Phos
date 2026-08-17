@@ -756,11 +756,19 @@ Result<ast::Typed_member_decl> Parser::parse_model_field()
     bool is_static = match({lex::TokenType::Static});
     DECL_OR_RETURN(name_result, consume(lex::TokenType::Identifier, "Expect field name"));
     TRY_IGNORE(consume(lex::TokenType::Colon, "Expect ':' after field name"));
-    DECL_OR_RETURN(type_result, parse_type());
 
+    types::Type_id type_result = ctx_.tt.get_unknown();
+    bool type_inferred = false;
     ast::Expr_id default_value = ast::Expr_id::null();
+
     if (match({lex::TokenType::Assign})) {
+        type_inferred = true;
         ASSIGN_OR_RETURN(default_value, expression());
+    } else {
+        ASSIGN_OR_RETURN(type_result, parse_type());
+        if (match({lex::TokenType::Assign})) {
+            ASSIGN_OR_RETURN(default_value, expression());
+        }
     }
 
     TRY_IGNORE(consume(lex::TokenType::Semicolon, "Expect ';' after field declaration"));
@@ -768,6 +776,7 @@ Result<ast::Typed_member_decl> Parser::parse_model_field()
     return ast::Typed_member_decl{
         .name = name_result.lexeme,
         .type = type_result,
+        .type_inferred = type_inferred,
         .is_static = is_static,
         .default_value = default_value,
         .loc = {name_result.line, name_result.column},
