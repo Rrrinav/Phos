@@ -9,6 +9,7 @@
 #include <format>
 #include <functional>
 #include <iostream>
+#include <optional>
 #include <ostream>
 #include <print>
 
@@ -77,9 +78,15 @@ public:
         return gc;
     }
 
-    auto bini64_op(int64_t a, int64_t b, Opcode op) -> int64_t;
-    auto binu64_op(uint64_t a, uint64_t b, Opcode op) -> uint64_t;
-    auto binf64_op(double a, double b, Opcode op) -> double;
+    // Per-type-family opcode helpers. The arithmetic and comparison families
+    // are contiguous in the Opcode enum, so each family is one template.
+    template <typename T>
+    T binary_op(T a, T b, Opcode op, Opcode family_base);
+
+    template <typename T>
+    bool compare_op(T a, T b, Opcode op, Opcode family_base);
+
+    std::optional<types::Primitive_kind> cast_target_kind(Opcode op);
 };
 
 } // namespace phos::vm

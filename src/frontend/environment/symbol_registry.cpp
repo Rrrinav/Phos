@@ -21,12 +21,17 @@ const Symbol &Symbol_registry::get_symbol(Symbol_id id) const
     return symbols[id.value];
 }
 
-std::optional<Symbol_id> Symbol_registry::lookup_global(const std::string &canonical_name) const
+std::optional<Symbol_id> Symbol_registry::lookup_global(String_id name) const
 {
-    if (auto it = global_index.find(canonical_name); it != global_index.end()) {
+    if (auto it = global_index.find(name); it != global_index.end()) {
         return it->second;
     }
     return std::nullopt;
+}
+
+std::optional<Symbol_id> Symbol_registry::lookup_global(const std::string_view name) const
+{
+    return lookup_global(strings.intern(name));
 }
 
 } // namespace phos

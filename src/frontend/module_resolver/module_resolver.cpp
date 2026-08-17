@@ -188,7 +188,7 @@ err::Engine Module_resolver::resolve_imports(Module_id current_module, const std
                     } else {
                         Symbol sym{
                             .id = Symbol_id{0},
-                            .name = canonical_name,
+                            .name = ctx.registry.intern(canonical_name),
                             .kind = kind,
                             .type = ctx.tt.get_unknown(),
                             .owner_module = target_mod_id,

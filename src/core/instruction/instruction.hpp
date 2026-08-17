@@ -52,22 +52,32 @@ enum class Opcode : uint8_t {
 
     Concat_str,
 
-    // Arithmetic
+    // Arithmetic (per-type families kept contiguous so the VM can index
+    // opcodes by family offset)
     Add_i64,
-    Add_u64,
-    Add_f64,
     Sub_i64,
-    Sub_u64,
-    Sub_f64, // dst, src_a, src_b
     Mul_i64,
-    Mul_u64,
-    Mul_f64,
     Div_i64,
-    Div_u64,
-    Div_f64, // dst, src_a, src_b
-
     Mod_i64,
+    BitAnd_i64,
+    BitOr_i64,
+    BitXor_i64,
+    Shl_i64,
+    Shr_i64,
+    Add_u64,
+    Sub_u64,
+    Mul_u64,
+    Div_u64,
     Mod_u64,
+    BitAnd_u64,
+    BitOr_u64,
+    BitXor_u64,
+    Shl_u64,
+    Shr_u64,
+    Add_f64,
+    Sub_f64,
+    Mul_f64,
+    Div_f64,
     Mod_f64, // dst, src_a, src_b
 
     // Casts
@@ -114,16 +124,6 @@ enum class Opcode : uint8_t {
     Lte_f64,
     Gt_f64,
     Gte_f64, // dest, src_a, src_b
-    BitAnd_i64,
-    BitOr_i64,
-    BitXor_i64,
-    Shl_i64,
-    Shr_i64,
-    BitAnd_u64,
-    BitOr_u64,
-    BitXor_u64,
-    Shl_u64,
-    Shr_u64,
 
     // Unary
     Neg_i64,

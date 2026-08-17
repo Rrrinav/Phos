@@ -246,7 +246,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
                 panic("Division by zero at IP: {}", ip - 1);
             }
 
-            int64_t result = this->bini64_op(a, b, inst.rrr.op);
+            int64_t result = this->binary_op(a, b, inst.rrr.op, Opcode::Add_i64);
             registers[base + inst.rrr.dst] = Value(result);
             break;
         }
@@ -268,7 +268,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
                 panic("Division by zero at IP: {}", ip - 1);
             }
 
-            uint64_t result = this->binu64_op(a, b, inst.rrr.op);
+            uint64_t result = this->binary_op(a, b, inst.rrr.op, Opcode::Add_u64);
             registers[base + inst.rrr.dst] = Value(result);
             break;
         }
@@ -285,7 +285,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
                 panic("Division by zero at IP: {}", ip - 1);
             }
 
-            double result = this->binf64_op(a, b, inst.rrr.op);
+            double result = this->binary_op(a, b, inst.rrr.op, Opcode::Add_f64);
             registers[base + inst.rrr.dst] = Value(result);
             break;
         }
@@ -301,46 +301,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         case Opcode::Cast_f16:
         case Opcode::Cast_f32:
         case Opcode::Cast_f64: {
-            types::Primitive_kind target_kind = types::Primitive_kind::I64;
-            switch (inst.rrr.op) {
-            case Opcode::Cast_i8:
-                target_kind = types::Primitive_kind::I8;
-                break;
-            case Opcode::Cast_i16:
-                target_kind = types::Primitive_kind::I16;
-                break;
-            case Opcode::Cast_i32:
-                target_kind = types::Primitive_kind::I32;
-                break;
-            case Opcode::Cast_i64:
-                target_kind = types::Primitive_kind::I64;
-                break;
-            case Opcode::Cast_u8:
-                target_kind = types::Primitive_kind::U8;
-                break;
-            case Opcode::Cast_u16:
-                target_kind = types::Primitive_kind::U16;
-                break;
-            case Opcode::Cast_u32:
-                target_kind = types::Primitive_kind::U32;
-                break;
-            case Opcode::Cast_u64:
-                target_kind = types::Primitive_kind::U64;
-                break;
-            case Opcode::Cast_f16:
-                target_kind = types::Primitive_kind::F16;
-                break;
-            case Opcode::Cast_f32:
-                target_kind = types::Primitive_kind::F32;
-                break;
-            case Opcode::Cast_f64:
-                target_kind = types::Primitive_kind::F64;
-                break;
-            default:
-                std::unreachable();
-            }
-
-            auto casted = registers[base + inst.rrr.dst].cast_numeric(target_kind);
+            auto casted = registers[base + inst.rrr.dst].cast_numeric(*cast_target_kind(inst.rrr.op));
             if (!casted) {
                 panic("Invalid numeric cast at IP: {}", ip - 1);
             }
@@ -356,37 +317,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         case Opcode::Sat_cast_u16:
         case Opcode::Sat_cast_u32:
         case Opcode::Sat_cast_u64: {
-            types::Primitive_kind target_kind = types::Primitive_kind::I64;
-            switch (inst.rrr.op) {
-            case Opcode::Sat_cast_i8:
-                target_kind = types::Primitive_kind::I8;
-                break;
-            case Opcode::Sat_cast_i16:
-                target_kind = types::Primitive_kind::I16;
-                break;
-            case Opcode::Sat_cast_i32:
-                target_kind = types::Primitive_kind::I32;
-                break;
-            case Opcode::Sat_cast_i64:
-                target_kind = types::Primitive_kind::I64;
-                break;
-            case Opcode::Sat_cast_u8:
-                target_kind = types::Primitive_kind::U8;
-                break;
-            case Opcode::Sat_cast_u16:
-                target_kind = types::Primitive_kind::U16;
-                break;
-            case Opcode::Sat_cast_u32:
-                target_kind = types::Primitive_kind::U32;
-                break;
-            case Opcode::Sat_cast_u64:
-                target_kind = types::Primitive_kind::U64;
-                break;
-            default:
-                std::unreachable();
-            }
-
-            auto sat = registers[base + inst.rrr.dst].saturating_cast_numeric(target_kind);
+            auto sat = registers[base + inst.rrr.dst].saturating_cast_numeric(*cast_target_kind(inst.rrr.op));
             if (!sat) {
                 panic("Invalid saturating cast at IP: {}", ip - 1);
             }
@@ -403,30 +334,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             int64_t a = registers[base + inst.rrr.src_a].as_int();
             int64_t b = registers[base + inst.rrr.src_b].as_int();
 
-            bool result = false;
-            switch (inst.rrr.op) {
-            case Opcode::Eq_i64:
-                result = (a == b);
-                break;
-            case Opcode::Neq_i64:
-                result = (a != b);
-                break;
-            case Opcode::Lt_i64:
-                result = (a < b);
-                break;
-            case Opcode::Lte_i64:
-                result = (a <= b);
-                break;
-            case Opcode::Gt_i64:
-                result = (a > b);
-                break;
-            case Opcode::Gte_i64:
-                result = (a >= b);
-                break;
-            default:
-                std::unreachable();
-            }
-            registers[base + inst.rrr.dst] = Value(result);
+            registers[base + inst.rrr.dst] = Value(this->compare_op(a, b, inst.rrr.op, Opcode::Eq_i64));
             break;
         }
 
@@ -439,30 +347,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             uint64_t a = registers[base + inst.rrr.src_a].as_uint();
             uint64_t b = registers[base + inst.rrr.src_b].as_uint();
 
-            bool result = false;
-            switch (inst.rrr.op) {
-            case Opcode::Eq_u64:
-                result = (a == b);
-                break;
-            case Opcode::Neq_u64:
-                result = (a != b);
-                break;
-            case Opcode::Lt_u64:
-                result = (a < b);
-                break;
-            case Opcode::Lte_u64:
-                result = (a <= b);
-                break;
-            case Opcode::Gt_u64:
-                result = (a > b);
-                break;
-            case Opcode::Gte_u64:
-                result = (a >= b);
-                break;
-            default:
-                std::unreachable();
-            }
-            registers[base + inst.rrr.dst] = Value(result);
+            registers[base + inst.rrr.dst] = Value(this->compare_op(a, b, inst.rrr.op, Opcode::Eq_u64));
             break;
         }
 
@@ -475,31 +360,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             double a = registers[base + inst.rrr.src_a].as_float();
             double b = registers[base + inst.rrr.src_b].as_float();
 
-            bool result = false;
-            switch (inst.rrr.op) {
-            case Opcode::Eq_f64:
-                result = (a == b);
-                break;
-            case Opcode::Neq_f64:
-                result = (a != b);
-                break;
-            case Opcode::Lt_f64:
-                result = (a < b);
-                break;
-            case Opcode::Lte_f64:
-                result = (a <= b);
-                break;
-            case Opcode::Gt_f64:
-                result = (a > b);
-                break;
-            case Opcode::Gte_f64:
-                result = (a >= b);
-                break;
-            default:
-                std::unreachable();
-            }
-
-            registers[base + inst.rrr.dst] = Value(result);
+            registers[base + inst.rrr.dst] = Value(this->compare_op(a, b, inst.rrr.op, Opcode::Eq_f64));
             break;
         }
 
@@ -709,18 +570,12 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             break;
         }
 
-        case Opcode::Eq_str: {
-            Value left = registers[base + inst.rrr.src_a];
-            Value right = registers[base + inst.rrr.src_b];
-            bool match = (left.as_string() == right.as_string());
-            registers[base + inst.rrr.dst] = Value(match);
-            break;
-        }
+        case Opcode::Eq_str:
         case Opcode::Neq_str: {
             Value left = registers[base + inst.rrr.src_a];
             Value right = registers[base + inst.rrr.src_b];
-            bool match = (left.as_string() != right.as_string());
-            registers[base + inst.rrr.dst] = Value(match);
+            bool match = (left.as_string() == right.as_string());
+            registers[base + inst.rrr.dst] = Value(inst.rrr.op == Opcode::Eq_str ? match : !match);
             break;
         }
         case Opcode::Len: {
@@ -947,80 +802,33 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             registers[base + inst.rrr.dst] = Value(src.depth() > 1 || !src.is_nil());
             break;
         }
-        case Opcode::Iter_next: {
-            Value iter_val = registers[base + inst.rrr.src_a];
-            Iterator_data *iter = iter_val.as_iterator();
-
-            iter->cursor++;
-
-            bool valid = false;
-            switch (iter->state_type) {
-            case Iterator_data::State_type::Empty:
-                valid = false;
-                break;
-            case Iterator_data::State_type::Singleton:
-                valid = (iter->cursor == 0);
-                break;
-            case Iterator_data::State_type::Interval:
-                valid = iter->inclusive ? (iter->cursor <= iter->end) : (iter->cursor < iter->end);
-                break;
-            case Iterator_data::State_type::Array:
-                valid = (iter->cursor < static_cast<int64_t>(iter->collection.as_array()->count));
-                break;
-            case Iterator_data::State_type::String:
-                valid = (iter->cursor < static_cast<int64_t>(iter->collection.as_string_data()->length));
-                break;
-            }
-
-            if (!valid) {
-                registers[base + inst.rrr.dst] = Value();
-            } else {
-                Value val;
-                switch (iter->state_type) {
-                case Iterator_data::State_type::Singleton:
-                    val = iter->collection;
-                    break;
-                case Iterator_data::State_type::Interval:
-                    val = Value(iter->cursor);
-                    break;
-                case Iterator_data::State_type::Array:
-                    val = iter->collection.as_array()->elements[iter->cursor];
-                    break;
-                case Iterator_data::State_type::String:
-                    val = Value::make_string(ctx, std::string_view(&iter->collection.as_string_data()->chars[iter->cursor], 1));
-                    break;
-                default:
-                    std::unreachable();
-                }
-
-                registers[base + inst.rrr.dst] = val.wrap_optional(1);
-            }
-            break;
-        }
-
+        case Opcode::Iter_next:
         case Opcode::Iter_prev: {
+            const int64_t dir = (inst.rrr.op == Opcode::Iter_next) ? 1 : -1;
             Value iter_val = registers[base + inst.rrr.src_a];
             Iterator_data *iter = iter_val.as_iterator();
 
-            iter->cursor--;
+            iter->cursor += dir;
 
             bool valid = false;
             switch (iter->state_type) {
             case Iterator_data::State_type::Empty:
-                valid = false;
                 break;
             case Iterator_data::State_type::Singleton:
                 valid = (iter->cursor == 0);
                 break;
             case Iterator_data::State_type::Interval:
-                valid = (iter->cursor >= iter->start);
+                valid = dir > 0 ? (iter->inclusive ? (iter->cursor <= iter->end) : (iter->cursor < iter->end))
+                                : (iter->cursor >= iter->start);
                 break;
             case Iterator_data::State_type::Array:
-                valid = (iter->cursor >= 0);
+            case Iterator_data::State_type::String: {
+                int64_t limit = (iter->state_type == Iterator_data::State_type::String)
+                    ? static_cast<int64_t>(iter->collection.as_string_data()->length)
+                    : static_cast<int64_t>(iter->collection.as_array()->count);
+                valid = dir > 0 ? (iter->cursor < limit) : (iter->cursor >= 0);
                 break;
-            case Iterator_data::State_type::String:
-                valid = (iter->cursor >= 0);
-                break;
+            }
             }
 
             if (!valid) {
@@ -1043,6 +851,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
                 default:
                     std::unreachable();
                 }
+
                 registers[base + inst.rrr.dst] = val.wrap_optional(1);
             }
             break;
@@ -1115,79 +924,129 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
     }
 }
 
-auto Virtual_machine::bini64_op(int64_t a, int64_t b, Opcode op) -> int64_t
-{
-    switch (op) {
-    case Opcode::Add_i64:
-        return a + b;
-    case Opcode::Sub_i64:
-        return a - b;
-    case Opcode::Mul_i64:
-        return a * b;
-    case Opcode::Div_i64:
-        return a / b;
-    case Opcode::Mod_i64:
-        return a % b;
-    case Opcode::BitAnd_i64:
-        return a & b;
-    case Opcode::BitOr_i64:
-        return a | b;
-    case Opcode::BitXor_i64:
-        return a ^ b;
-    case Opcode::Shl_i64:
-        return a << b;
-    case Opcode::Shr_i64:
-        return a >> b;
-    default:
-        std::unreachable();
-    }
-};
+// The arithmetic families (Add_*..Shr_* per type) and comparison families
+// (Eq_*..Gte_* per type) are kept contiguous in the Opcode enum, so a single
+// template covers all three types per family.
+static_assert(static_cast<int>(Opcode::Shr_i64) - static_cast<int>(Opcode::Add_i64) == 9);
+static_assert(static_cast<int>(Opcode::Shr_u64) - static_cast<int>(Opcode::Add_u64) == 9);
+static_assert(static_cast<int>(Opcode::Mod_f64) - static_cast<int>(Opcode::Add_f64) == 4);
+static_assert(static_cast<int>(Opcode::Gte_i64) - static_cast<int>(Opcode::Eq_i64) == 5);
+static_assert(static_cast<int>(Opcode::Gte_u64) - static_cast<int>(Opcode::Eq_u64) == 5);
+static_assert(static_cast<int>(Opcode::Gte_f64) - static_cast<int>(Opcode::Eq_f64) == 5);
 
-auto Virtual_machine::binu64_op(uint64_t a, uint64_t b, Opcode op) -> uint64_t
+std::optional<types::Primitive_kind> Virtual_machine::cast_target_kind(Opcode op)
 {
     switch (op) {
-    case Opcode::Add_u64:
-        return a + b;
-    case Opcode::Sub_u64:
-        return a - b;
-    case Opcode::Mul_u64:
-        return a * b;
-    case Opcode::Div_u64:
-        return a / b;
-    case Opcode::Mod_u64:
-        return a % b;
-    case Opcode::BitAnd_u64:
-        return a & b;
-    case Opcode::BitOr_u64:
-        return a | b;
-    case Opcode::BitXor_u64:
-        return a ^ b;
-    case Opcode::Shl_u64:
-        return a << b;
-    case Opcode::Shr_u64:
-        return a >> b;
+    case Opcode::Cast_i8:
+    case Opcode::Sat_cast_i8:
+        return types::Primitive_kind::I8;
+    case Opcode::Cast_i16:
+    case Opcode::Sat_cast_i16:
+        return types::Primitive_kind::I16;
+    case Opcode::Cast_i32:
+    case Opcode::Sat_cast_i32:
+        return types::Primitive_kind::I32;
+    case Opcode::Cast_i64:
+    case Opcode::Sat_cast_i64:
+        return types::Primitive_kind::I64;
+    case Opcode::Cast_u8:
+    case Opcode::Sat_cast_u8:
+        return types::Primitive_kind::U8;
+    case Opcode::Cast_u16:
+    case Opcode::Sat_cast_u16:
+        return types::Primitive_kind::U16;
+    case Opcode::Cast_u32:
+    case Opcode::Sat_cast_u32:
+        return types::Primitive_kind::U32;
+    case Opcode::Cast_u64:
+    case Opcode::Sat_cast_u64:
+        return types::Primitive_kind::U64;
+    case Opcode::Cast_f16:
+        return types::Primitive_kind::F16;
+    case Opcode::Cast_f32:
+        return types::Primitive_kind::F32;
+    case Opcode::Cast_f64:
+        return types::Primitive_kind::F64;
     default:
-        std::unreachable();
+        return std::nullopt;
     }
-};
+}
 
-auto Virtual_machine::binf64_op(double a, double b, Opcode op) -> double
+template <typename T>
+T Virtual_machine::binary_op(T a, T b, Opcode op, Opcode family_base)
 {
-    switch (op) {
-    case Opcode::Add_f64:
-        return a + b;
-    case Opcode::Sub_f64:
-        return a - b;
-    case Opcode::Mul_f64:
-        return a * b;
-    case Opcode::Div_f64:
-        return a / b;
-    case Opcode::Mod_f64:
-        return fmod(a, b);
+    const int rel = static_cast<int>(op) - static_cast<int>(family_base);
+    if constexpr (std::is_floating_point_v<T>) {
+        switch (rel) {
+        case 0:
+            return a + b;
+        case 1:
+            return a - b;
+        case 2:
+            return a * b;
+        case 3:
+            return a / b;
+        case 4:
+            return std::fmod(a, b);
+        default:
+            std::unreachable();
+        }
+    } else {
+        switch (rel) {
+        case 0:
+            return a + b;
+        case 1:
+            return a - b;
+        case 2:
+            return a * b;
+        case 3:
+            return a / b;
+        case 4:
+            return a % b;
+        case 5:
+            return a & b;
+        case 6:
+            return a | b;
+        case 7:
+            return a ^ b;
+        case 8:
+            return a << b;
+        case 9:
+            return a >> b;
+        default:
+            std::unreachable();
+        }
+    }
+}
+
+template <typename T>
+bool Virtual_machine::compare_op(T a, T b, Opcode op, Opcode family_base)
+{
+    const int rel = static_cast<int>(op) - static_cast<int>(family_base);
+    switch (rel) {
+    case 0:
+        return a == b;
+    case 1:
+        return a != b;
+    case 2:
+        return a < b;
+    case 3:
+        return a <= b;
+    case 4:
+        return a > b;
+    case 5:
+        return a >= b;
     default:
         std::unreachable();
     }
-};
+}
+
+template int64_t Virtual_machine::binary_op<int64_t>(int64_t, int64_t, Opcode, Opcode);
+template uint64_t Virtual_machine::binary_op<uint64_t>(uint64_t, uint64_t, Opcode, Opcode);
+template double Virtual_machine::binary_op<double>(double, double, Opcode, Opcode);
+template bool Virtual_machine::compare_op<int64_t>(int64_t, int64_t, Opcode, Opcode);
+template bool Virtual_machine::compare_op<uint64_t>(uint64_t, uint64_t, Opcode, Opcode);
+template bool Virtual_machine::compare_op<double>(double, double, Opcode, Opcode);
 
 template void Virtual_machine::execute_loop<true>(Green_thread_data *);
 template void Virtual_machine::execute_loop<false>(Green_thread_data *);

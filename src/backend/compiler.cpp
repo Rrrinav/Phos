@@ -1985,7 +1985,7 @@ uint8_t Compiler::compile_expr_node(const ast::Static_path_expr &expr)
             if (function_locations_.contains(sym.id)) {
                 return load_function_instance(sym.id, function_locations_.at(sym.id));
             } else {
-                std::println(std::cerr, "Compiler Bug: Function '{}' not found in function_locations_", sym.name);
+                std::println(std::cerr, "Compiler Bug: Function '{}' not found in function_locations_", ctx.registry.resolve(sym.name));
                 std::exit(EXIT_FAILURE);
             }
         }

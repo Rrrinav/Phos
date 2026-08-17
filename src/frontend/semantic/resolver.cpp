@@ -48,7 +48,7 @@ void publish_symbol(
 
     Symbol sym{
         .id = Symbol_id{0},
-        .name = canonical_name,
+        .name = ctx.registry.intern(canonical_name),
         .kind = kind,
         .type = type,
         .owner_module = owner,

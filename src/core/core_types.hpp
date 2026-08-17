@@ -40,9 +40,12 @@ struct Symbol_tag
 {};
 struct Module_tag
 {};
+struct String_tag
+{};
 
 using Symbol_id = detail::Strong_id<Symbol_tag>;
 using Module_id = detail::Strong_id<Module_tag>;
+using String_id = detail::Strong_id<String_tag>;
 
 namespace ast {
 struct Expr_tag

@@ -280,7 +280,7 @@ void Repl::print_vars()
         } else {
             type_str = ctx.tt.to_string(sym.type);
         }
-        *out_ << sym.name << ": " << type_str << "\n";
+        *out_ << ctx.registry.resolve(sym.name) << ": " << type_str << "\n";
         any = true;
     }
     if (!any) {

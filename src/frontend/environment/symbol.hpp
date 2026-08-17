@@ -1,11 +1,13 @@
 #pragma once
 
 #include "core/core_types.hpp"
+#include "core/string_interner.hpp"
 #include "core/value/type.hpp"
 #include "core/value/value.hpp"
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -16,7 +18,7 @@ enum class Symbol_kind { Local_var, Global_var, Native_func, Native_const, Phos_
 struct Symbol
 {
     Symbol_id id;
-    std::string name; // The canonical name (e.g., "std::math::sin")
+    String_id name; // The interned canonical name (e.g., "std::math::sin")
     Symbol_kind kind;
     types::Type_id type;
 
@@ -38,12 +40,23 @@ class Symbol_registry
 public:
     uint32_t next_global_index = 0; // Counter to track total VM global memory slots
     std::vector<Symbol> symbols;
-    std::unordered_map<std::string, Symbol_id> global_index;
+    std::unordered_map<String_id, Symbol_id> global_index;
+    mutable String_interner strings;
+
+    String_id intern(std::string_view name)
+    {
+        return strings.intern(name);
+    }
+    std::string_view resolve(String_id id) const
+    {
+        return strings.resolve(id);
+    }
 
     Symbol_id create_symbol(Symbol sym);
     Symbol &get_symbol(Symbol_id id);
     const Symbol &get_symbol(Symbol_id id) const;
-    std::optional<Symbol_id> lookup_global(const std::string &canonical_name) const;
+    std::optional<Symbol_id> lookup_global(String_id name) const;
+    std::optional<Symbol_id> lookup_global(std::string_view name) const;
 };
 
 } // namespace phos

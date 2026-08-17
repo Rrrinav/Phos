@@ -282,14 +282,14 @@ types::Type_id resolve_symbol_type(Compiler_context &ctx, Symbol_id sym_id, Sema
     };
 
     // 1. Try exact name match
-    if (auto t = try_resolve(sym.name)) {
+    if (auto t = try_resolve(std::string(ctx.registry.resolve(sym.name)))) {
         return sym.type = *t;
     }
 
     // 2. Try namespace reconstruction (Fixes selective imports)
     if (!sym.owner_module.is_null()) {
         auto &mod = ctx.workspace.get_module(sym.owner_module);
-        if (auto t = try_resolve(mod.logical_namespace + "::" + sym.name)) {
+        if (auto t = try_resolve(mod.logical_namespace + "::" + std::string(ctx.registry.resolve(sym.name)))) {
             return sym.type = *t;
         }
     }
@@ -310,9 +310,9 @@ types::Type_id resolve_symbol_type(Compiler_context &ctx, Symbol_id sym_id, Sema
             return false;
         };
 
-        if (!resolve_phos(sym.name) && !sym.owner_module.is_null()) {
+        if (!resolve_phos(std::string(ctx.registry.resolve(sym.name))) && !sym.owner_module.is_null()) {
             auto &mod = ctx.workspace.get_module(sym.owner_module);
-            resolve_phos(mod.logical_namespace + "::" + sym.name);
+            resolve_phos(mod.logical_namespace + "::" + std::string(ctx.registry.resolve(sym.name)));
         }
     }
 
@@ -559,7 +559,7 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
 
             Symbol sym{
                 .id = Symbol_id{0},
-                .name = canonical_name,
+                .name = ctx.registry.intern(canonical_name),
                 .kind = Symbol_kind::Phos_func,
                 .type = ctx.tt.get_unknown(),
                 .owner_module = mod_id,
@@ -609,7 +609,7 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
 
             Symbol sym{
                 .id = Symbol_id{0},
-                .name = canonical_name,
+                .name = ctx.registry.intern(canonical_name),
                 .kind = Symbol_kind::Model_def,
                 .type = ctx.type_env.global_types[canonical_name],
                 .owner_module = mod_id,
@@ -637,7 +637,7 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
                     // 1. Create a global Symbol for the method
                     Symbol method_sym{
                         .id = Symbol_id{0},
-                        .name = canonical_method_name,
+                        .name = ctx.registry.intern(canonical_method_name),
                         .kind = Symbol_kind::Phos_func,
                         .type = ctx.tt.get_unknown(),
                         .owner_module = mod_id,
@@ -695,7 +695,7 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
 
             Symbol sym{
                 .id = Symbol_id{0},
-                .name = canonical_name,
+                .name = ctx.registry.intern(canonical_name),
                 .kind = Symbol_kind::Union_def,
                 .type = ctx.type_env.global_types[canonical_name],
                 .owner_module = mod_id,
@@ -746,7 +746,7 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
 
             Symbol sym{
                 .id = Symbol_id{0},
-                .name = canonical_name,
+                .name = ctx.registry.intern(canonical_name),
                 .kind = Symbol_kind::Enum_def,
                 .type = ctx.type_env.global_types[canonical_name],
                 .owner_module = mod_id,
@@ -789,7 +789,7 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
 
             Symbol sym{
                 .id = Symbol_id{0},
-                .name = canonical_name,
+                .name = ctx.registry.intern(canonical_name),
                 .kind = kind,
                 .type = ctx.tt.get_unknown(),
                 .owner_module = mod_id,
@@ -835,7 +835,7 @@ void Semantic_checker::hoist_globals(Module_id mod_id)
 
                 Symbol sym{
                     .id = Symbol_id{0},
-                    .name = canonical_name,
+                    .name = ctx.registry.intern(canonical_name),
                     .kind = kind,
                     .type = ctx.tt.get_unknown(),
                     .owner_module = mod_id,
@@ -864,7 +864,7 @@ err::Engine Semantic_checker::check_workspace()
         if (!ctx.registry.lookup_global(name)) {
             Symbol sym{
                 .id = Symbol_id{0},
-                .name = name,
+                .name = ctx.registry.intern(name),
                 .kind = Symbol_kind::Native_func,
                 .type = ctx.tt.get_unknown(),
                 .owner_module = Module_id{0},
@@ -932,7 +932,7 @@ err::Engine Semantic_checker::check(const std::vector<ast::Stmt_id> &statements)
         if (!ctx.registry.lookup_global(name)) {
             Symbol sym{
                 .id = Symbol_id{0},
-                .name = name,
+                .name = ctx.registry.intern(name),
                 .kind = Symbol_kind::Native_func,
                 .type = ctx.tt.get_unknown(),
                 .owner_module = Module_id{0},
@@ -2041,7 +2041,7 @@ void Semantic_checker::check_function_stmt(ast::Stmt_id stmt_id)
         function_name_stack_.push_back(fn_stmt.name);
     } else if (fn_stmt.resolved_symbol) {
         ctx.registry.get_symbol(*fn_stmt.resolved_symbol).type = ctx.tt.function(param_types, return_types);
-        function_name_stack_.push_back(ctx.registry.get_symbol(*fn_stmt.resolved_symbol).name);
+        function_name_stack_.push_back(std::string(ctx.registry.resolve(ctx.registry.get_symbol(*fn_stmt.resolved_symbol).name)));
     }
 
     auto saved_return_types = current_return_types;
@@ -2284,7 +2284,7 @@ void Semantic_checker::check_var_stmt(ast::Stmt_id stmt_id)
 
                 Symbol sym{
                     .id = Symbol_id{0},
-                    .name = local_canonical,
+                    .name = ctx.registry.intern(local_canonical),
                     .kind = sym_kind,
                     .type = type,
                     .owner_module = current_module_id,
@@ -2382,7 +2382,7 @@ void Semantic_checker::check_multi_var_stmt(ast::Stmt_id stmt_id)
 
                     Symbol sym{
                         .id = Symbol_id{0},
-                        .name = local_canonical,
+                        .name = ctx.registry.intern(local_canonical),
                         .kind = sym_kind,
                         .type = type,
                         .owner_module = current_module_id,
@@ -2543,7 +2543,7 @@ void Semantic_checker::check_enum_stmt(ast::Stmt_id stmt_id)
         return;
     }
 
-    std::string canonical_name = ctx.registry.get_symbol(*en.resolved_symbol).name;
+    std::string canonical_name = std::string(ctx.registry.resolve(ctx.registry.get_symbol(*en.resolved_symbol).name));
     auto enum_data_ptr = ctx.type_env.get_enum(canonical_name);
 
     if (!enum_data_ptr) {
@@ -3573,7 +3573,7 @@ types::Type_id Semantic_checker::check_assignment_expr(ast::Expr_id expr_id, std
 
         if (sym.kind == Symbol_kind::Global_var) {
             if (!ctx.repl_force_global && sym.owner_module != current_module_id) {
-                type_error(loc, std::format("Cannot mutate foreign static variable '{}'. It is read-only outside its module.", sym.name));
+                type_error(loc, std::format("Cannot mutate foreign static variable '{}'. It is read-only outside its module.", ctx.registry.resolve(sym.name)));
                 return get_node<ast::Assignment_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
             }
         }
@@ -3637,7 +3637,7 @@ types::Type_id Semantic_checker::check_variable_expr(ast::Expr_id expr_id, std::
         expr.resolved_symbol = *global_sym_id;
 
         auto &sym = ctx.registry.get_symbol(*global_sym_id);
-        expr.name = sym.name;
+        expr.name = std::string(ctx.registry.resolve(sym.name));
         return expr.type = resolve_symbol_type(ctx, *global_sym_id, *this);
     }
 
@@ -3887,14 +3887,14 @@ types::Type_id Semantic_checker::check_call_expr(ast::Expr_id expr_id, std::opti
         if (var->resolved_symbol) {
             auto &sym = ctx.registry.get_symbol(*var->resolved_symbol);
             if (sym.kind == Symbol_kind::Native_func) {
-                ffi_callee_name = sym.name;
+                ffi_callee_name = std::string(ctx.registry.resolve(sym.name));
             }
         }
     } else if (const auto *sp = std::get_if<ast::Static_path_expr>(&callee_node)) {
         if (sp->resolved_symbol) {
             auto &sym = ctx.registry.get_symbol(*sp->resolved_symbol);
             if (sym.kind == Symbol_kind::Native_func) {
-                ffi_callee_name = sym.name;
+                ffi_callee_name = std::string(ctx.registry.resolve(sym.name));
             }
         }
     }
@@ -4344,7 +4344,7 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
             expr.resolved_module.reset();
             expr.resolved_symbol = *sym_id;
             auto &sym = ctx.registry.get_symbol(*sym_id);
-            if (auto native_t = ctx.type_env.get_native_type_str(sym.name)) {
+            if (auto native_t = ctx.type_env.get_native_type_str(std::string(ctx.registry.resolve(sym.name)))) {
                 return expr.type = parse_type_string(*native_t, {});
             }
             return expr.type = resolve_symbol_type(ctx, *sym_id, *this);
