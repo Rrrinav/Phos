@@ -18,36 +18,50 @@ constexpr auto gen_instruction_cpp(std::filesystem::path out_file)
     std::println(outfile, "#include \"instruction.hpp\"");
     std::println(outfile);
     std::println(outfile, "#include <format>");
+    std::println(outfile, "#include <string_view>");
+    std::println(outfile, "#include <utility>");
     std::println(outfile);
 
-    std::stringstream opcode_to_string_fn{};
-    std::stringstream string_to_opcode_fn{};
-
-    std::println(opcode_to_string_fn, "std::string phos::vm::opcode_to_string(Opcode code)");
-
-    std::println(opcode_to_string_fn, "{{");
-    std::println(opcode_to_string_fn, "    switch(code) {{");
-
-    std::println(string_to_opcode_fn, "phos::vm::Opcode phos::vm::string_to_opcode(std::string code)");
-
-    std::println(string_to_opcode_fn, "{{");
+    // One name table drives both directions, so the two functions can never
+    // drift apart. Linear search is plenty: both call sites are cold
+    // (disassembly/IR parsing and panic messages).
+    std::stringstream table{};
+    std::println(table, "namespace {{");
+    std::println(table, "constexpr std::pair<std::string_view, phos::vm::Opcode> kOpcodeTable[] = {{");
 
     template for (constexpr auto e : instruction_enumerators)
     {
-        std::string to_print = std::format("case Opcode::{}:", std::meta::identifier_of(e));
-
-        std::println(opcode_to_string_fn, "    {:<40} return \"{}\";", to_print, std::meta::identifier_of(e));
-        std::println(string_to_opcode_fn, "    if (code == \"{}\") {{", std::meta::identifier_of(e));
-        std::println(string_to_opcode_fn, "        return Opcode::{};", std::meta::identifier_of(e));
-        std::println(string_to_opcode_fn, "    }}");
+        std::println(table, "    {{\"{}\", phos::vm::Opcode::{}}},", std::meta::identifier_of(e), std::meta::identifier_of(e));
     }
 
+    std::println(table, "}};");
+    std::println(table, "}} // namespace");
+    std::println(table);
+
+    std::stringstream opcode_to_string_fn{};
+    std::println(opcode_to_string_fn, "std::string phos::vm::opcode_to_string(Opcode code)");
+    std::println(opcode_to_string_fn, "{{");
+    std::println(opcode_to_string_fn, "    for (const auto &[name, op] : kOpcodeTable) {{");
+    std::println(opcode_to_string_fn, "        if (op == code) {{");
+    std::println(opcode_to_string_fn, "            return std::string(name);");
+    std::println(opcode_to_string_fn, "        }}");
     std::println(opcode_to_string_fn, "    }}");
     std::println(opcode_to_string_fn, "    return std::format(\"UNKNOWN_{{}}\", static_cast<uint8_t>(code));");
     std::println(opcode_to_string_fn, "}}");
+
+    std::stringstream string_to_opcode_fn{};
+    std::println(string_to_opcode_fn, "phos::vm::Opcode phos::vm::string_to_opcode(std::string code)");
+    std::println(string_to_opcode_fn, "{{");
+    std::println(string_to_opcode_fn, "    for (const auto &[name, op] : kOpcodeTable) {{");
+    std::println(string_to_opcode_fn, "        if (name == code) {{");
+    std::println(string_to_opcode_fn, "            return op;");
+    std::println(string_to_opcode_fn, "        }}");
+    std::println(string_to_opcode_fn, "    }}");
     std::println(string_to_opcode_fn, "    return Opcode::Return;");
     std::println(string_to_opcode_fn, "}}");
 
+    std::print(outfile, "{}", table.str());
+    std::println(outfile);
     std::print(outfile, "{}", opcode_to_string_fn.str());
     std::println(outfile);
     std::print(outfile, "{}", string_to_opcode_fn.str());

@@ -117,6 +117,11 @@ struct Closure_data
     Upvalue_data **upvalues{nullptr};
 
     bool is_prototype{true};
+
+    // Upper bound on the registers this closure's code touches, recorded by
+    // the compiler (deserialized/native closures keep the conservative full
+    // window). The VM wipes and the GC scans only [base, base+footprint).
+    std::uint16_t register_footprint{256};
 };
 
 struct Green_thread_data
@@ -127,7 +132,6 @@ struct Green_thread_data
 
     struct Value *value_stack;
     size_t value_stack_capacity;
-    size_t live_value_count;
 
     bool is_completed;
 
@@ -231,11 +235,25 @@ public:
     template <typename Allocator>
     static Value make_string(Allocator &alloc, std::string_view text, uint8_t depth = 0);
 
+    // Single-allocation concatenation of two views (string `+` in the VM).
+    // Replaces temp std::string + copy + make_string (4 copies -> 1 alloc).
+    template <typename Allocator>
+    static Value make_string_concat(Allocator &alloc, std::string_view a, std::string_view b, uint8_t depth = 0);
+
     template <typename Allocator>
     static Value make_array(Allocator &alloc, uint32_t capacity, uint8_t depth = 0);
 
+    // Same as make_array but skips the nil-prefill. Only for callers that
+    // overwrite every slot before publishing count (the VM literal ops).
+    template <typename Allocator>
+    static Value make_array_uninit(Allocator &alloc, uint32_t capacity, uint8_t depth = 0);
+
     template <typename Allocator>
     static Value make_model(Allocator &alloc, types::Model_type sig, uint32_t field_count, uint8_t depth = 0);
+
+    // Same as make_model but skips the nil-prefill (see make_array_uninit).
+    template <typename Allocator>
+    static Value make_model_uninit(Allocator &alloc, types::Model_type sig, uint32_t field_count, uint8_t depth = 0);
 
     template <typename Allocator>
     static Value make_union(Allocator &alloc, String_data *u_name, String_data *v_name, Value payload, uint8_t depth = 0);
@@ -457,8 +475,9 @@ public:
     std::optional<std::uint64_t> try_as_u64() const;
 
     types::Primitive_kind numeric_type() const;
-    std::optional<Value> cast_numeric(types::Primitive_kind target_type) const;
-    std::optional<Value> saturating_cast_numeric(types::Primitive_kind target_type) const;
+    // Out-param form: avoids moving an optional<Value> through hot cast sites.
+    bool cast_numeric(types::Primitive_kind target_type, Value &out) const;
+    bool saturating_cast_numeric(types::Primitive_kind target_type, Value &out) const;
     std::optional<Value> coerce_literal(types::Primitive_kind target_type) const;
 
     std::string to_string() const;

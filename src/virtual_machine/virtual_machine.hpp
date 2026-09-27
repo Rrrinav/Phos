@@ -12,6 +12,7 @@
 #include <optional>
 #include <ostream>
 #include <print>
+#include <vector>
 
 namespace phos::vm {
 
@@ -73,18 +74,33 @@ public:
         }
     }
 
+    // Runs a single closure on a fresh interpreter thread (fresh call stack
+    // plus register window). Shared by the file runner and the REPL, which
+    // previously duplicated this bootstrap.
+    static void run_closure(Virtual_machine &vm, Closure_data *closure)
+    {
+        constexpr size_t call_stack_capacity = 256;
+
+        std::vector<Call_frame> frames(call_stack_capacity);
+        frames[0] = Call_frame(closure, 0);
+
+        std::vector<Value> thread_memory(call_stack_capacity * Virtual_machine::FRAME_REGISTER_WINDOW);
+
+        Green_thread_data thread{};
+        thread.call_stack = frames.data();
+        thread.call_stack_count = 1;
+        thread.call_stack_capacity = frames.size();
+        thread.value_stack = thread_memory.data();
+        thread.value_stack_capacity = thread_memory.size();
+        thread.is_completed = false;
+
+        vm.execute(&thread);
+    }
+
     gc::Gc_heap &gc_ref() noexcept
     {
         return gc;
     }
-
-    // Per-type-family opcode helpers. The arithmetic and comparison families
-    // are contiguous in the Opcode enum, so each family is one template.
-    template <typename T>
-    T binary_op(T a, T b, Opcode op, Opcode family_base);
-
-    template <typename T>
-    bool compare_op(T a, T b, Opcode op, Opcode family_base);
 
     std::optional<types::Primitive_kind> cast_target_kind(Opcode op);
 };

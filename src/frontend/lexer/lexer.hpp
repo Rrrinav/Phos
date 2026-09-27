@@ -319,48 +319,45 @@ private:
     {
         size_t start = current - 1;
 
+        struct Numeric_suffix
+        {
+            std::string_view suffix;
+            types::Primitive_kind kind;
+            TokenType token;
+        };
+        // One table drives suffix matching in consume_numeric_suffix and the
+        // suffix->TokenType mapping in finish_numeric_token, so the two can
+        // never disagree about which suffixes exist.
+        static constexpr Numeric_suffix kNumericSuffixes[] = {
+            {"i8", types::Primitive_kind::I8, TokenType::TInt8},
+            {"i16", types::Primitive_kind::I16, TokenType::TInt16},
+            {"i32", types::Primitive_kind::I32, TokenType::TInt32},
+            {"i64", types::Primitive_kind::I64, TokenType::TInt64},
+            {"u8", types::Primitive_kind::U8, TokenType::TUInt8},
+            {"u16", types::Primitive_kind::U16, TokenType::TUInt16},
+            {"u32", types::Primitive_kind::U32, TokenType::TUInt32},
+            {"u64", types::Primitive_kind::U64, TokenType::TUInt64},
+            {"f16", types::Primitive_kind::F16, TokenType::TFloat16},
+            {"f32", types::Primitive_kind::F32, TokenType::TFloat32},
+            {"f64", types::Primitive_kind::F64, TokenType::TFloat64},
+        };
+
         auto consume_numeric_suffix = [&]() -> std::optional<types::Primitive_kind> {
             std::string_view rest = source.substr(current);
-            auto match = [&](std::string_view suffix, types::Primitive_kind kind) -> std::optional<types::Primitive_kind> {
-                if (rest.starts_with(suffix)) {
-                    current += suffix.size();
-                    return kind;
+            for (const auto &entry : kNumericSuffixes) {
+                if (rest.starts_with(entry.suffix)) {
+                    current += entry.suffix.size();
+                    return entry.kind;
                 }
-                return std::nullopt;
-            };
+            }
+            return std::nullopt;
+        };
 
-            if (auto kind = match("i16", types::Primitive_kind::I16)) {
-                return kind;
-            }
-            if (auto kind = match("i32", types::Primitive_kind::I32)) {
-                return kind;
-            }
-            if (auto kind = match("i64", types::Primitive_kind::I64)) {
-                return kind;
-            }
-            if (auto kind = match("i8", types::Primitive_kind::I8)) {
-                return kind;
-            }
-            if (auto kind = match("u16", types::Primitive_kind::U16)) {
-                return kind;
-            }
-            if (auto kind = match("u32", types::Primitive_kind::U32)) {
-                return kind;
-            }
-            if (auto kind = match("u64", types::Primitive_kind::U64)) {
-                return kind;
-            }
-            if (auto kind = match("u8", types::Primitive_kind::U8)) {
-                return kind;
-            }
-            if (auto kind = match("f16", types::Primitive_kind::F16)) {
-                return kind;
-            }
-            if (auto kind = match("f32", types::Primitive_kind::F32)) {
-                return kind;
-            }
-            if (auto kind = match("f64", types::Primitive_kind::F64)) {
-                return kind;
+        auto suffix_token_type = [](types::Primitive_kind kind) -> std::optional<TokenType> {
+            for (const auto &entry : kNumericSuffixes) {
+                if (entry.kind == kind) {
+                    return entry.token;
+                }
             }
             return std::nullopt;
         };
@@ -378,46 +375,12 @@ private:
                 return Token(TokenType::Invalid, lexeme, Value(), line, start_col);
             }
 
-            TokenType final_type = default_token_type;
-            switch (*suffix_kind) {
-            case types::Primitive_kind::I8:
-                final_type = TokenType::TInt8;
-                break;
-            case types::Primitive_kind::I16:
-                final_type = TokenType::TInt16;
-                break;
-            case types::Primitive_kind::I32:
-                final_type = TokenType::TInt32;
-                break;
-            case types::Primitive_kind::I64:
-                final_type = TokenType::TInt64;
-                break;
-            case types::Primitive_kind::U8:
-                final_type = TokenType::TUInt8;
-                break;
-            case types::Primitive_kind::U16:
-                final_type = TokenType::TUInt16;
-                break;
-            case types::Primitive_kind::U32:
-                final_type = TokenType::TUInt32;
-                break;
-            case types::Primitive_kind::U64:
-                final_type = TokenType::TUInt64;
-                break;
-            case types::Primitive_kind::F16:
-                final_type = TokenType::TFloat16;
-                break;
-            case types::Primitive_kind::F32:
-                final_type = TokenType::TFloat32;
-                break;
-            case types::Primitive_kind::F64:
-                final_type = TokenType::TFloat64;
-                break;
-            default:
+            auto final_type = suffix_token_type(*suffix_kind);
+            if (!final_type) {
                 return Token(TokenType::Invalid, lexeme, Value(), line, start_col);
             }
 
-            return Token(final_type, lexeme, coerced.value(), line, start_col);
+            return Token(*final_type, lexeme, coerced.value(), line, start_col);
         };
 
         auto strip_underscores = [](std::string_view text) -> std::string {
@@ -466,46 +429,43 @@ private:
             }
         };
 
-        // hex literal: 0x...
-        if (source[start] == '0' && (peek() == 'x' || peek() == 'X')) {
-            advance(); // consume 'x'
-            if (!consume_digits([](char c) { return std::isxdigit(static_cast<unsigned char>(c)); })) {
-                return Token(TokenType::Invalid, std::string("Invalid hex literal"), Value(), line, start_col);
+        // One body for 0x/0b/0o literals: consume the radix letter, the
+        // digits, then hand off to finish_numeric_token for suffix/coercion.
+        // Returns nullopt when the source is not this radix (caller tries
+        // the next one); otherwise returns the finished token, which may be
+        // Invalid when the digits or range are bad.
+        auto scan_radix = [&](char letter, auto is_digit, int base, std::string_view low_name, std::string_view cap_name)
+            -> std::optional<Token> {
+            char upper = static_cast<char>(std::toupper(static_cast<unsigned char>(letter)));
+            if (source[start] != '0' || (peek() != letter && peek() != upper)) {
+                return std::nullopt;
+            }
+            advance(); // consume the radix letter
+            if (!consume_digits(is_digit)) {
+                return Token(TokenType::Invalid, std::format("Invalid {} literal", low_name), Value(), line, start_col);
             }
             std::string cleaned = strip_underscores(source.substr(start, current - start));
-            auto raw = parse_full_width(std::string_view(cleaned).substr(2), 16);
+            auto raw = parse_full_width(std::string_view(cleaned).substr(2), base);
             if (!raw) {
-                return Token(TokenType::Invalid, std::string("Hex literal out of range"), Value(), line, start_col);
+                return Token(TokenType::Invalid, std::format("{} literal out of range", cap_name), Value(), line, start_col);
             }
             return finish_numeric_token(Value(*raw), TokenType::Integer32);
+        };
+
+        // hex literal: 0x...
+        if (auto tok
+            = scan_radix('x', [](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; }, 16, "hex", "Hex")) {
+            return *tok;
         }
 
         // binary literal: 0b...
-        if (source[start] == '0' && (peek() == 'b' || peek() == 'B')) {
-            advance(); // consume 'b'
-            if (!consume_digits([](char c) { return c == '0' || c == '1'; })) {
-                return Token(TokenType::Invalid, std::string("Invalid binary literal"), Value(), line, start_col);
-            }
-            std::string cleaned = strip_underscores(source.substr(start, current - start));
-            auto raw = parse_full_width(std::string_view(cleaned).substr(2), 2);
-            if (!raw) {
-                return Token(TokenType::Invalid, std::string("Binary literal out of range"), Value(), line, start_col);
-            }
-            return finish_numeric_token(Value(*raw), TokenType::Integer32);
+        if (auto tok = scan_radix('b', [](char c) { return c == '0' || c == '1'; }, 2, "binary", "Binary")) {
+            return *tok;
         }
 
         // octal literal: 0o...
-        if (source[start] == '0' && (peek() == 'o' || peek() == 'O')) {
-            advance(); // consume 'o'
-            if (!consume_digits([](char c) { return c >= '0' && c <= '7'; })) {
-                return Token(TokenType::Invalid, std::string("Invalid octal literal"), Value(), line, start_col);
-            }
-            std::string cleaned = strip_underscores(source.substr(start, current - start));
-            auto raw = parse_full_width(std::string_view(cleaned).substr(2), 8);
-            if (!raw) {
-                return Token(TokenType::Invalid, std::string("Octal literal out of range"), Value(), line, start_col);
-            }
-            return finish_numeric_token(Value(*raw), TokenType::Integer32);
+        if (auto tok = scan_radix('o', [](char c) { return c >= '0' && c <= '7'; }, 8, "octal", "Octal")) {
+            return *tok;
         }
 
         consume_digits([](char c) { return std::isdigit(static_cast<unsigned char>(c)); }, true);

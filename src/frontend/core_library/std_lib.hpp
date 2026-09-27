@@ -1,4 +1,5 @@
 #include "core/value/value.hpp"
+#include "virtual_machine/garbage_collector/gc_cell.hpp"
 #include "virtual_machine/vm_context.hpp"
 
 #include <charconv>
@@ -16,13 +17,13 @@ struct env_native
 {
     static Value argv_impl(Ctx &ctx, std::span<Value>)
     {
-        uint32_t count = static_cast<uint32_t>(ctx.cmd_args.size());
-        Value arr_val = Value::make_array(ctx, count);
+        uint32_t count = static_cast<uint32_t>(ctx.cmd_args->size());
+        Value arr_val = Value::make_array_uninit(ctx, count);
         auto *arr = arr_val.as_array();
         arr->count = count;
 
         for (uint32_t i = 0; i < count; ++i) {
-            arr->elements[i] = Value::make_string(ctx, ctx.cmd_args[i]);
+            arr->elements[i] = Value::make_string(ctx, (*ctx.cmd_args)[i]);
         }
         return arr_val;
     }
@@ -256,7 +257,7 @@ struct string_methods
         }
 
         uint32_t capacity = static_cast<uint32_t>(temp_parts.size());
-        phos::Value arr_val = phos::Value::make_array(ctx, capacity);
+        phos::Value arr_val = phos::Value::make_array_uninit(ctx, capacity);
         auto *arr = arr_val.as_array();
 
         auto guard = ctx.protect(&arr_val);
@@ -313,6 +314,28 @@ struct string_methods
 
 struct array_methods
 {
+    // Ensures room for one more element, growing exponentially. The element
+    // buffer always ends up as a GC raw-buffer cell (traced via the array
+    // cell, freed by the sweeper); the previous buffer, if any, is simply
+    // abandoned to the next collection. No malloc, no external accounting.
+    static void ensure_capacity(Ctx &ctx, phos::Array_data *arr)
+    {
+        if (arr->count < arr->capacity) {
+            return;
+        }
+        uint32_t new_cap = arr->capacity == 0 ? 8 : arr->capacity * 2;
+        phos::Value *new_elems = ctx.alloc<phos::Value>(static_cast<size_t>(new_cap) * sizeof(phos::Value), gc::kRawBufferKind);
+
+        if (arr->elements && arr->count > 0) {
+            std::memcpy(new_elems, arr->elements, arr->count * sizeof(phos::Value));
+        }
+        std::uninitialized_fill_n(new_elems + arr->capacity, new_cap - arr->capacity, phos::Value());
+
+        arr->elements = new_elems;
+        arr->capacity = new_cap;
+        arr->elements_on_heap = true;
+    }
+
     static phos::Value len(Ctx &, std::span<phos::Value> args)
     {
         return phos::Value(static_cast<int64_t>(args[0].as_array()->count));
@@ -333,34 +356,7 @@ struct array_methods
     {
         auto *arr = args[0].as_array();
 
-        if (arr->count >= arr->capacity) {
-            uint32_t new_cap = arr->capacity == 0 ? 8 : arr->capacity * 2;
-            phos::Value *new_elems = nullptr;
-
-            if (arr->elements_on_heap) {
-                new_elems = static_cast<phos::Value *>(std::realloc(arr->elements, sizeof(phos::Value) * new_cap));
-                if (!new_elems) {
-                    throw std::bad_alloc{};
-                }
-                ctx.add_external_bytes((new_cap - arr->capacity) * sizeof(phos::Value));
-            } else {
-                new_elems = static_cast<phos::Value *>(std::malloc(sizeof(phos::Value) * new_cap));
-                if (!new_elems) {
-                    throw std::bad_alloc{};
-                }
-
-                if (arr->elements && arr->count > 0) {
-                    std::memcpy(new_elems, arr->elements, arr->count * sizeof(phos::Value));
-                }
-
-                ctx.add_external_bytes(new_cap * sizeof(phos::Value));
-                arr->elements_on_heap = true;
-            }
-
-            std::uninitialized_fill_n(new_elems + arr->capacity, new_cap - arr->capacity, phos::Value());
-            arr->elements = new_elems;
-            arr->capacity = new_cap;
-        }
+        ensure_capacity(ctx, arr);
 
         arr->elements[arr->count++] = args[1];
         return phos::Value();
@@ -385,34 +381,7 @@ struct array_methods
             return phos::Value();
         }
 
-        if (arr->count >= arr->capacity) {
-            uint32_t new_cap = arr->capacity == 0 ? 8 : arr->capacity * 2;
-            phos::Value *new_elems = nullptr;
-
-            if (arr->elements_on_heap) {
-                new_elems = static_cast<phos::Value *>(std::realloc(arr->elements, sizeof(phos::Value) * new_cap));
-                if (!new_elems) {
-                    throw std::bad_alloc{};
-                }
-                ctx.add_external_bytes((new_cap - arr->capacity) * sizeof(phos::Value));
-            } else {
-                new_elems = static_cast<phos::Value *>(std::malloc(sizeof(phos::Value) * new_cap));
-                if (!new_elems) {
-                    throw std::bad_alloc{};
-                }
-
-                if (arr->elements && arr->count > 0) {
-                    std::memcpy(new_elems, arr->elements, arr->count * sizeof(phos::Value));
-                }
-
-                ctx.add_external_bytes(new_cap * sizeof(phos::Value));
-                arr->elements_on_heap = true;
-            }
-
-            std::uninitialized_fill_n(new_elems + arr->capacity, new_cap - arr->capacity, phos::Value());
-            arr->elements = new_elems;
-            arr->capacity = new_cap;
-        }
+        ensure_capacity(ctx, arr);
 
         for (uint32_t i = arr->count; i > static_cast<uint32_t>(idx); --i) {
             arr->elements[i] = arr->elements[i - 1];

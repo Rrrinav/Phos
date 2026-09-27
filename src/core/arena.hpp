@@ -3,12 +3,17 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <type_traits>
 #include <vector>
 
 namespace phos::mem {
 class Arena
 {
+public:
+    static constexpr bool is_gc = false;
+
+private:
     static constexpr std::size_t DEF_BLOCK_SIZE = 6 * 1024;
 
     struct _block
@@ -120,6 +125,12 @@ public:
         char *ptr = back->data + start_offset;
         back->size = start_offset + bytes;
         return ptr;
+    }
+
+    // Shared allocation interface with the GC heap; the kind tag is ignored.
+    void *allocate_bytes(std::size_t bytes, std::size_t alignment, uint8_t)
+    {
+        return allocate_bytes(bytes, alignment);
     }
 
     template <typename T, typename... Args>

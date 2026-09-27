@@ -2,9 +2,11 @@
 
 #include "backend/assembler.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <type_traits>
 #include <utility>
 
 namespace phos::vm {
@@ -35,35 +37,81 @@ size_t Vm_context::current_base() const noexcept
     return *frame_base;
 }
 
-size_t Vm_context::active_stack_limit() const noexcept
-{
-    const size_t live_limit = *frame_base + FRAME_REGISTER_WINDOW;
-    return (live_limit < thread->value_stack_capacity) ? live_limit : thread->value_stack_capacity;
-}
-
-bool Vm_context::should_collect() const noexcept
-{
-    return heap->needs_gc();
-}
-
-void Vm_context::collect_garbage() const
-{
-    frame->ip = *ip;
-    thread->live_value_count = active_stack_limit();
-    heap->collect(*thread, *globals);
-}
-
 // Internal VM Helpers
-static size_t get_active_stack_limit(const Green_thread_data &thread, size_t frame_base)
+namespace detail {
+// Arithmetic/comparison families are contiguous per type (Add..Shr, Eq..Gte),
+// so one template covers each family. always_inline: the interpreter loop
+// runs unoptimized in debug builds, where a call per operation would dominate
+// the cost of the operation itself.
+template <typename T>
+__attribute__((always_inline)) inline T binary_op(T a, T b, Opcode op, Opcode family_base)
 {
-    const size_t live_limit = frame_base + Vm_context::FRAME_REGISTER_WINDOW;
-    return (live_limit < thread.value_stack_capacity) ? live_limit : thread.value_stack_capacity;
+    const int rel = static_cast<int>(op) - static_cast<int>(family_base);
+    if constexpr (std::is_floating_point_v<T>) {
+        switch (rel) {
+        case 0:
+            return a + b;
+        case 1:
+            return a - b;
+        case 2:
+            return a * b;
+        case 3:
+            return a / b;
+        case 4:
+            return std::fmod(a, b);
+        default:
+            std::unreachable();
+        }
+    } else {
+        switch (rel) {
+        case 0:
+            return a + b;
+        case 1:
+            return a - b;
+        case 2:
+            return a * b;
+        case 3:
+            return a / b;
+        case 4:
+            return a % b;
+        case 5:
+            return a & b;
+        case 6:
+            return a | b;
+        case 7:
+            return a ^ b;
+        case 8:
+            return a << b;
+        case 9:
+            return a >> b;
+        default:
+            std::unreachable();
+        }
+    }
 }
 
-static void refresh_live_stack_count(Green_thread_data &thread, size_t frame_base)
+template <typename T>
+__attribute__((always_inline)) inline bool compare_op(T a, T b, Opcode op, Opcode family_base)
 {
-    thread.live_value_count = get_active_stack_limit(thread, frame_base);
+    const int rel = static_cast<int>(op) - static_cast<int>(family_base);
+    switch (rel) {
+    case 0:
+        return a == b;
+    case 1:
+        return a != b;
+    case 2:
+        return a < b;
+    case 3:
+        return a <= b;
+    case 4:
+        return a > b;
+    case 5:
+        return a >= b;
+    default:
+        std::unreachable();
+    }
 }
+} // namespace detail
 
 static Vm_context make_vm_context(
     Virtual_machine &machine,
@@ -86,7 +134,7 @@ static Vm_context make_vm_context(
         .globals = &globals,
         .ip = &ip,
         .frame_base = &frame_base,
-        .cmd_args = machine.cmd_args};
+        .cmd_args = &machine.cmd_args};
 }
 
 static Upvalue_data *capture_upvalue(Green_thread_data *thread, size_t absolute_stack_index, Vm_context &ctx)
@@ -120,7 +168,7 @@ static Upvalue_data *capture_upvalue(Green_thread_data *thread, size_t absolute_
     return created_upvalue;
 }
 
-static void close_upvalues(Green_thread_data *thread, size_t last_stack_index, [[maybe_unused]] gc::Gc_heap &gc_heap)
+static void close_upvalues(Green_thread_data *thread, size_t last_stack_index)
 {
     Value *limit_location = &thread->value_stack[last_stack_index];
 
@@ -148,14 +196,12 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
     Value *registers = thread->value_stack;
     size_t ip = frame->ip;
     size_t base = frame->frame_base;
-    refresh_live_stack_count(*thread, base);
 
     Vm_context ctx = make_vm_context(*this, gc, arena, *thread, frame, registers, globals, ip, base);
 
     while (true) {
-        if (gc.needs_gc()) {
+        if (gc.needs_gc()) [[unlikely]] {
             frame->ip = ip;
-            refresh_live_stack_count(*thread, base);
             gc.collect(*thread, globals);
         }
 
@@ -223,9 +269,8 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             const Value &va = registers[base + inst.rrr.src_a];
             const Value &vb = registers[base + inst.rrr.src_b];
             // Standard library string objects use Trailing Storage.
-            // We create a new contiguous string block.
-            std::string res = std::string(va.as_string()) + std::string(vb.as_string());
-            registers[base + inst.rrr.dst] = Value::make_string(ctx, res);
+            // Single allocation for the combined string (no temporaries).
+            registers[base + inst.rrr.dst] = Value::make_string_concat(ctx, va.as_string(), vb.as_string());
             break;
         }
 
@@ -242,11 +287,11 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             int64_t a = registers[base + inst.rrr.src_a].as_int();
             int64_t b = registers[base + inst.rrr.src_b].as_int();
 
-            if (inst.rrr.op == Opcode::Div_i64 && b == 0) {
+            if (inst.rrr.op == Opcode::Div_i64 && b == 0) [[unlikely]] {
                 panic("Division by zero at IP: {}", ip - 1);
             }
 
-            int64_t result = this->binary_op(a, b, inst.rrr.op, Opcode::Add_i64);
+            int64_t result = detail::binary_op(a, b, inst.rrr.op, Opcode::Add_i64);
             registers[base + inst.rrr.dst] = Value(result);
             break;
         }
@@ -264,11 +309,11 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             uint64_t a = registers[base + inst.rrr.src_a].as_uint();
             uint64_t b = registers[base + inst.rrr.src_b].as_uint();
 
-            if (inst.rrr.op == Opcode::Div_u64 && b == 0) {
+            if (inst.rrr.op == Opcode::Div_u64 && b == 0) [[unlikely]] {
                 panic("Division by zero at IP: {}", ip - 1);
             }
 
-            uint64_t result = this->binary_op(a, b, inst.rrr.op, Opcode::Add_u64);
+            uint64_t result = detail::binary_op(a, b, inst.rrr.op, Opcode::Add_u64);
             registers[base + inst.rrr.dst] = Value(result);
             break;
         }
@@ -281,11 +326,11 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             double a = registers[base + inst.rrr.src_a].as_float();
             double b = registers[base + inst.rrr.src_b].as_float();
 
-            if (inst.rrr.op == Opcode::Div_f64 && b == 0.0) {
+            if (inst.rrr.op == Opcode::Div_f64 && b == 0.0) [[unlikely]] {
                 panic("Division by zero at IP: {}", ip - 1);
             }
 
-            double result = this->binary_op(a, b, inst.rrr.op, Opcode::Add_f64);
+            double result = detail::binary_op(a, b, inst.rrr.op, Opcode::Add_f64);
             registers[base + inst.rrr.dst] = Value(result);
             break;
         }
@@ -301,11 +346,11 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         case Opcode::Cast_f16:
         case Opcode::Cast_f32:
         case Opcode::Cast_f64: {
-            auto casted = registers[base + inst.rrr.dst].cast_numeric(*cast_target_kind(inst.rrr.op));
-            if (!casted) {
+            Value casted;
+            if (!registers[base + inst.rrr.dst].cast_numeric(*cast_target_kind(inst.rrr.op), casted)) {
                 panic("Invalid numeric cast at IP: {}", ip - 1);
             }
-            registers[base + inst.rrr.dst] = *casted;
+            registers[base + inst.rrr.dst] = casted;
             break;
         }
 
@@ -317,11 +362,11 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         case Opcode::Sat_cast_u16:
         case Opcode::Sat_cast_u32:
         case Opcode::Sat_cast_u64: {
-            auto sat = registers[base + inst.rrr.dst].saturating_cast_numeric(*cast_target_kind(inst.rrr.op));
-            if (!sat) {
+            Value sat;
+            if (!registers[base + inst.rrr.dst].saturating_cast_numeric(*cast_target_kind(inst.rrr.op), sat)) {
                 panic("Invalid saturating cast at IP: {}", ip - 1);
             }
-            registers[base + inst.rrr.dst] = *sat;
+            registers[base + inst.rrr.dst] = sat;
             break;
         }
 
@@ -334,7 +379,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             int64_t a = registers[base + inst.rrr.src_a].as_int();
             int64_t b = registers[base + inst.rrr.src_b].as_int();
 
-            registers[base + inst.rrr.dst] = Value(this->compare_op(a, b, inst.rrr.op, Opcode::Eq_i64));
+            registers[base + inst.rrr.dst] = Value(detail::compare_op(a, b, inst.rrr.op, Opcode::Eq_i64));
             break;
         }
 
@@ -347,7 +392,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             uint64_t a = registers[base + inst.rrr.src_a].as_uint();
             uint64_t b = registers[base + inst.rrr.src_b].as_uint();
 
-            registers[base + inst.rrr.dst] = Value(this->compare_op(a, b, inst.rrr.op, Opcode::Eq_u64));
+            registers[base + inst.rrr.dst] = Value(detail::compare_op(a, b, inst.rrr.op, Opcode::Eq_u64));
             break;
         }
 
@@ -360,7 +405,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             double a = registers[base + inst.rrr.src_a].as_float();
             double b = registers[base + inst.rrr.src_b].as_float();
 
-            registers[base + inst.rrr.dst] = Value(this->compare_op(a, b, inst.rrr.op, Opcode::Eq_f64));
+            registers[base + inst.rrr.dst] = Value(detail::compare_op(a, b, inst.rrr.op, Opcode::Eq_f64));
             break;
         }
 
@@ -456,7 +501,6 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             constants = frame->closure->constants;
             base = frame->frame_base;
             ip = 0;
-            refresh_live_stack_count(*thread, base);
             ctx = make_vm_context(*this, gc, arena, *thread, frame, registers, globals, ip, base);
             break;
         }
@@ -465,7 +509,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             /* return R[dst] */
             Value result = registers[base + inst.rrr.dst];
 
-            close_upvalues(thread, base, gc);
+            close_upvalues(thread, base);
             thread->call_stack_count--;
 
             if (thread->call_stack_count == 0) {
@@ -474,6 +518,10 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             }
 
             size_t old_base = base;
+            // Footprint of the returning frame (frame still points at it).
+            // Only this window can hold GC references owned by the callee.
+            size_t old_footprint = (frame->closure != nullptr) ? frame->closure->register_footprint
+                                                               : Virtual_machine::FRAME_REGISTER_WINDOW;
 
             frame = &thread->call_stack[thread->call_stack_count - 1];
             code = frame->closure->code;
@@ -483,23 +531,24 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
 
             // CLEANUP FIRST!
             // Wipe the returning frame's window to prevent GC ghost references.
-            size_t clear_limit = get_active_stack_limit(*thread, old_base);
-            for (size_t i = old_base; i < clear_limit; ++i) {
-                registers[i] = Value();
+            // Value() is all zeros, so fill_n compiles to wide stores.
+            size_t clear_limit = old_base + old_footprint;
+            if (clear_limit > thread->value_stack_capacity) {
+                clear_limit = thread->value_stack_capacity;
             }
+            std::fill_n(&registers[old_base], clear_limit - old_base, Value());
 
             // 2. ASSIGN RESULT SECOND!
             // Since base is now the caller's base, and we know the Call instruction was at ip-1.
             Instruction caller_inst = code[ip - 1];
             registers[base + caller_inst.rrr.dst] = result;
 
-            refresh_live_stack_count(*thread, base);
             ctx = make_vm_context(*this, gc, arena, *thread, frame, registers, globals, ip, base);
             break;
         }
 
         case Opcode::Print: {
-            Value result = registers[base + inst.rrr.dst];
+            const Value &result = registers[base + inst.rrr.dst];
             uint8_t stream_flag = inst.rrr.src_a;
 
             if (stream_flag == 1) {
@@ -538,20 +587,21 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             Value prototype_val = frame->closure->constants[inst.ri.imm];
             Closure_data *prototype = prototype_val.as_closure();
 
-            Closure_data *instance = ctx.alloc<Closure_data>(sizeof(Closure_data), static_cast<uint8_t>(Value_tag::Closure));
+            // The upvalue pointer array lives in trailing storage inside the
+            // same GC cell: one allocation, no malloc, nothing to free.
+            size_t array_bytes = prototype->upvalue_count * sizeof(Upvalue_data *);
+            Closure_data *instance = static_cast<Closure_data *>(
+                ctx.allocate_bytes(sizeof(Closure_data) + array_bytes, alignof(Closure_data), static_cast<uint8_t>(Value_tag::Closure)));
             *instance = *prototype;
             instance->is_prototype = false;
+            instance->upvalues = (instance->upvalue_count > 0) ? reinterpret_cast<Upvalue_data **>(instance + 1) : nullptr;
             Value instance_val = Value::make_closure(instance, 0);
-            auto guard = ctx.protect(&instance_val);
-
+            // Keeps the instance rooted across the allocating upvalue setup
+            // below. Closures without upvalues allocate nothing further, so
+            // skip the root push/pop on that path.
+            std::optional<Root_guard> guard;
             if (instance->upvalue_count > 0) {
-                size_t alloc_bytes = instance->upvalue_count * sizeof(Upvalue_data *);
-                instance->upvalues = static_cast<Upvalue_data **>(std::malloc(alloc_bytes));
-                if (instance->upvalues == nullptr) {
-                    throw std::bad_alloc{};
-                }
-                std::memset(instance->upvalues, 0, alloc_bytes);
-                gc.add_external_bytes(alloc_bytes);
+                guard.emplace(ctx.protect(&instance_val));
             }
 
             for (std::size_t i = 0; i < instance->upvalue_count; ++i) {
@@ -572,14 +622,14 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
 
         case Opcode::Eq_str:
         case Opcode::Neq_str: {
-            Value left = registers[base + inst.rrr.src_a];
-            Value right = registers[base + inst.rrr.src_b];
+            const Value &left = registers[base + inst.rrr.src_a];
+            const Value &right = registers[base + inst.rrr.src_b];
             bool match = (left.as_string() == right.as_string());
             registers[base + inst.rrr.dst] = Value(inst.rrr.op == Opcode::Eq_str ? match : !match);
             break;
         }
         case Opcode::Len: {
-            Value val = registers[base + inst.rrr.src_a];
+            const Value &val = registers[base + inst.rrr.src_a];
             if (val.is_string()) {
                 registers[base + inst.rrr.dst] = Value(static_cast<uint64_t>(val.as_string_data()->length));
             } else if (val.is_array()) {
@@ -590,7 +640,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             break;
         }
         case Opcode::Cast_str_to_arr: {
-            Value str_val = registers[base + inst.rrr.src_a];
+            const Value &str_val = registers[base + inst.rrr.src_a];
             if (!str_val.is_string()) {
                 panic("Expected a string for cast to byte array at IP: {}", ip - 1);
             }
@@ -615,7 +665,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
 
         case Opcode::Cast_arr_to_str: {
-            Value arr_val = registers[base + inst.rrr.src_a];
+            const Value &arr_val = registers[base + inst.rrr.src_a];
             if (!arr_val.is_array()) {
                 panic("Expected an array for cast to string at IP: {}", ip - 1);
             }
@@ -636,7 +686,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
             uint8_t base_reg = inst.rrr.src_a;
             uint8_t count = inst.rrr.src_b;
 
-            Value arr_val = Value::make_array(ctx, count, 0);
+            Value arr_val = Value::make_array_uninit(ctx, count, 0);
             Array_data *arr = arr_val.as_array();
 
             for (uint8_t i = 0; i < count; ++i) {
@@ -649,8 +699,8 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
 
         case Opcode::Load_index: {
-            Value collection_val = registers[base + inst.rrr.src_a];
-            Value idx_val = registers[base + inst.rrr.src_b];
+            const Value &collection_val = registers[base + inst.rrr.src_a];
+            const Value &idx_val = registers[base + inst.rrr.src_b];
             int64_t index = idx_val.as_int();
 
             if (collection_val.is_array()) {
@@ -695,7 +745,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
 
         case Opcode::Make_model: {
             uint8_t count = inst.rrr.src_b;
-            Value model_val = Value::make_model(ctx, {}, count);
+            Value model_val = Value::make_model_uninit(ctx, {}, count);
 
             for (uint8_t i = 0; i < count; i++) {
                 model_val.as_model()->fields[i] = registers[base + inst.rrr.src_a + i];
@@ -924,129 +974,27 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
     }
 }
 
-// The arithmetic families (Add_*..Shr_* per type) and comparison families
-// (Eq_*..Gte_* per type) are kept contiguous in the Opcode enum, so a single
-// template covers all three types per family.
-static_assert(static_cast<int>(Opcode::Shr_i64) - static_cast<int>(Opcode::Add_i64) == 9);
-static_assert(static_cast<int>(Opcode::Shr_u64) - static_cast<int>(Opcode::Add_u64) == 9);
-static_assert(static_cast<int>(Opcode::Mod_f64) - static_cast<int>(Opcode::Add_f64) == 4);
-static_assert(static_cast<int>(Opcode::Gte_i64) - static_cast<int>(Opcode::Eq_i64) == 5);
-static_assert(static_cast<int>(Opcode::Gte_u64) - static_cast<int>(Opcode::Eq_u64) == 5);
-static_assert(static_cast<int>(Opcode::Gte_f64) - static_cast<int>(Opcode::Eq_f64) == 5);
+// The cast opcode families are contiguous in the Opcode enum in the same
+// order as Primitive_kind I8..F64, so cast_target_kind is plain offset math.
+static_assert(static_cast<int>(Opcode::Cast_f64) - static_cast<int>(Opcode::Cast_i8) == 10);
+static_assert(static_cast<int>(Opcode::Sat_cast_u64) - static_cast<int>(Opcode::Sat_cast_i8) == 7);
 
 std::optional<types::Primitive_kind> Virtual_machine::cast_target_kind(Opcode op)
 {
-    switch (op) {
-    case Opcode::Cast_i8:
-    case Opcode::Sat_cast_i8:
-        return types::Primitive_kind::I8;
-    case Opcode::Cast_i16:
-    case Opcode::Sat_cast_i16:
-        return types::Primitive_kind::I16;
-    case Opcode::Cast_i32:
-    case Opcode::Sat_cast_i32:
-        return types::Primitive_kind::I32;
-    case Opcode::Cast_i64:
-    case Opcode::Sat_cast_i64:
-        return types::Primitive_kind::I64;
-    case Opcode::Cast_u8:
-    case Opcode::Sat_cast_u8:
-        return types::Primitive_kind::U8;
-    case Opcode::Cast_u16:
-    case Opcode::Sat_cast_u16:
-        return types::Primitive_kind::U16;
-    case Opcode::Cast_u32:
-    case Opcode::Sat_cast_u32:
-        return types::Primitive_kind::U32;
-    case Opcode::Cast_u64:
-    case Opcode::Sat_cast_u64:
-        return types::Primitive_kind::U64;
-    case Opcode::Cast_f16:
-        return types::Primitive_kind::F16;
-    case Opcode::Cast_f32:
-        return types::Primitive_kind::F32;
-    case Opcode::Cast_f64:
-        return types::Primitive_kind::F64;
-    default:
-        return std::nullopt;
+    // Cast_i8..Cast_f64 and Sat_cast_i8..Sat_cast_u64 are contiguous in the
+    // enum, in the same order as Primitive_kind I8..F64, so the target kind
+    // is a plain offset (previously a 19-case switch per cast).
+    int o = static_cast<int>(op);
+    int plain_base = static_cast<int>(Opcode::Cast_i8);
+    if (o >= plain_base && o <= plain_base + 10) {
+        return static_cast<types::Primitive_kind>(o - plain_base);
     }
-}
-
-template <typename T>
-T Virtual_machine::binary_op(T a, T b, Opcode op, Opcode family_base)
-{
-    const int rel = static_cast<int>(op) - static_cast<int>(family_base);
-    if constexpr (std::is_floating_point_v<T>) {
-        switch (rel) {
-        case 0:
-            return a + b;
-        case 1:
-            return a - b;
-        case 2:
-            return a * b;
-        case 3:
-            return a / b;
-        case 4:
-            return std::fmod(a, b);
-        default:
-            std::unreachable();
-        }
-    } else {
-        switch (rel) {
-        case 0:
-            return a + b;
-        case 1:
-            return a - b;
-        case 2:
-            return a * b;
-        case 3:
-            return a / b;
-        case 4:
-            return a % b;
-        case 5:
-            return a & b;
-        case 6:
-            return a | b;
-        case 7:
-            return a ^ b;
-        case 8:
-            return a << b;
-        case 9:
-            return a >> b;
-        default:
-            std::unreachable();
-        }
+    int sat_base = static_cast<int>(Opcode::Sat_cast_i8);
+    if (o >= sat_base && o <= sat_base + 7) {
+        return static_cast<types::Primitive_kind>(o - sat_base);
     }
+    return std::nullopt;
 }
-
-template <typename T>
-bool Virtual_machine::compare_op(T a, T b, Opcode op, Opcode family_base)
-{
-    const int rel = static_cast<int>(op) - static_cast<int>(family_base);
-    switch (rel) {
-    case 0:
-        return a == b;
-    case 1:
-        return a != b;
-    case 2:
-        return a < b;
-    case 3:
-        return a <= b;
-    case 4:
-        return a > b;
-    case 5:
-        return a >= b;
-    default:
-        std::unreachable();
-    }
-}
-
-template int64_t Virtual_machine::binary_op<int64_t>(int64_t, int64_t, Opcode, Opcode);
-template uint64_t Virtual_machine::binary_op<uint64_t>(uint64_t, uint64_t, Opcode, Opcode);
-template double Virtual_machine::binary_op<double>(double, double, Opcode, Opcode);
-template bool Virtual_machine::compare_op<int64_t>(int64_t, int64_t, Opcode, Opcode);
-template bool Virtual_machine::compare_op<uint64_t>(uint64_t, uint64_t, Opcode, Opcode);
-template bool Virtual_machine::compare_op<double>(double, double, Opcode, Opcode);
 
 template void Virtual_machine::execute_loop<true>(Green_thread_data *);
 template void Virtual_machine::execute_loop<false>(Green_thread_data *);

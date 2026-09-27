@@ -24,148 +24,123 @@ Element *trailing_storage(T *base)
 
 } // namespace
 
+// Both allocators (mem::Arena at compile time, vm::Vm_context at runtime)
+// expose the same interface: allocate_bytes(bytes, alignment, kind) and a
+// constexpr is_gc marker, so every factory has a single code path. GC-backed
+// objects always store their inline elements as trailing storage; the arena
+// does the same, so the two paths are byte-for-byte equivalent.
+
 template <typename Allocator>
 Value Value::make_string(Allocator &alloc, std::string_view text, uint8_t depth)
 {
-    size_t total_size = sizeof(String_data) + text.length() + 1;
-    String_data *str = nullptr;
-    bool is_gc = std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>;
-
-    if constexpr (std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>) {
-        str = alloc.template alloc<String_data>(total_size, static_cast<uint8_t>(Value_tag::String));
-        new (str) String_data();
-    } else {
-        void *raw_mem = alloc.allocate_bytes(total_size, alignof(String_data));
-        str = new (raw_mem) String_data();
-    }
+    const size_t total_size = sizeof(String_data) + text.length() + 1;
+    void *mem = alloc.allocate_bytes(total_size, alignof(String_data), static_cast<uint8_t>(Value_tag::String));
+    String_data *str = new (mem) String_data();
 
     str->length = static_cast<uint32_t>(text.length());
     std::memcpy(str->chars, text.data(), text.length());
     str->chars[text.length()] = '\0';
 
-    return Value(str, depth, is_gc);
+    return Value(str, depth, Allocator::is_gc);
+}
+
+template <typename Allocator>
+Value Value::make_string_concat(Allocator &alloc, std::string_view a, std::string_view b, uint8_t depth)
+{
+    const size_t total_size = sizeof(String_data) + a.length() + b.length() + 1;
+    void *mem = alloc.allocate_bytes(total_size, alignof(String_data), static_cast<uint8_t>(Value_tag::String));
+    String_data *str = new (mem) String_data();
+
+    str->length = static_cast<uint32_t>(a.length() + b.length());
+    std::memcpy(str->chars, a.data(), a.length());
+    std::memcpy(str->chars + a.length(), b.data(), b.length());
+    str->chars[a.length() + b.length()] = '\0';
+
+    return Value(str, depth, Allocator::is_gc);
 }
 
 template <typename Allocator>
 Value Value::make_array(Allocator &alloc, uint32_t capacity, uint8_t depth)
 {
-    Array_data *arr = nullptr;
-    bool is_gc = std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>;
+    Value v = Value::make_array_uninit(alloc, capacity, depth);
+    Array_data *arr = v.as_array();
+    if (capacity > 0) {
+        std::uninitialized_fill_n(arr->elements, capacity, Value());
+    }
+    return v;
+}
+
+template <typename Allocator>
+Value Value::make_array_uninit(Allocator &alloc, uint32_t capacity, uint8_t depth)
+{
     const size_t total_size = sizeof(Array_data) + (static_cast<size_t>(capacity) * sizeof(Value));
+    void *mem = alloc.allocate_bytes(total_size, alignof(Array_data), static_cast<uint8_t>(Value_tag::Array));
+    Array_data *arr = new (mem) Array_data();
+    arr->capacity = capacity;
+    arr->count = 0;
+    arr->elements_on_heap = false; // Trailing
 
-    if constexpr (std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>) {
-        arr = alloc.template alloc<Array_data>(total_size, static_cast<uint8_t>(Value_tag::Array));
-        new (arr) Array_data();
-        arr->capacity = capacity;
-        arr->count = 0;
-        arr->elements_on_heap = false; // Trailing natively!
-
-        if (capacity > 0) {
-            arr->elements = trailing_storage<Array_data, Value>(arr);
-            std::uninitialized_fill_n(arr->elements, capacity, Value());
-        } else {
-            arr->elements = nullptr;
-        }
+    if (capacity > 0) {
+        arr->elements = trailing_storage<Array_data, Value>(arr);
     } else {
-        // Fallback for Arena (can't easily do trailing without manual memory blocks)
-        arr = alloc.template allocate<Array_data>();
-        new (arr) Array_data();
-        arr->capacity = capacity;
-        arr->count = 0;
-        arr->elements_on_heap = true;
-
-        if (capacity > 0) {
-            arr->elements = alloc.template allocate<Value>(capacity);
-            std::uninitialized_fill_n(arr->elements, capacity, Value());
-        } else {
-            arr->elements = nullptr;
-        }
+        arr->elements = nullptr;
     }
 
-    return Value(arr, depth, is_gc);
+    return Value(arr, depth, Allocator::is_gc);
 }
 
 template <typename Allocator>
 Value Value::make_model(Allocator &alloc, types::Model_type sig, uint32_t field_count, uint8_t depth)
 {
-    Model_data *model = nullptr;
-    bool is_gc = std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>;
+    Value v = Value::make_model_uninit(alloc, std::move(sig), field_count, depth);
+    Model_data *model = v.as_model();
+    if (field_count > 0) {
+        std::uninitialized_fill_n(model->fields, field_count, Value());
+    }
+    return v;
+}
+
+template <typename Allocator>
+Value Value::make_model_uninit(Allocator &alloc, types::Model_type sig, uint32_t field_count, uint8_t depth)
+{
     const size_t total_size = sizeof(Model_data) + (static_cast<size_t>(field_count) * sizeof(Value));
+    void *mem = alloc.allocate_bytes(total_size, alignof(Model_data), static_cast<uint8_t>(Value_tag::Model));
+    Model_data *model = new (mem) Model_data();
+    model->signature = std::move(sig);
+    model->field_count = field_count;
+    model->fields_on_heap = false; // Trailing
 
-    if constexpr (std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>) {
-        model = alloc.template alloc<Model_data>(total_size, static_cast<uint8_t>(Value_tag::Model));
-        new (model) Model_data();
-        model->signature = std::move(sig);
-        model->field_count = field_count;
-        model->fields_on_heap = false; // Trailing!
-
-        if (field_count > 0) {
-            model->fields = trailing_storage<Model_data, Value>(model);
-            std::uninitialized_fill_n(model->fields, field_count, Value());
-        } else {
-            model->fields = nullptr;
-        }
+    if (field_count > 0) {
+        model->fields = trailing_storage<Model_data, Value>(model);
     } else {
-        model = alloc.template allocate<Model_data>();
-        new (model) Model_data();
-        model->signature = std::move(sig);
-        model->field_count = field_count;
-        model->fields_on_heap = true;
-
-        if (field_count > 0) {
-            model->fields = alloc.template allocate<Value>(field_count);
-            std::uninitialized_fill_n(model->fields, field_count, Value());
-        } else {
-            model->fields = nullptr;
-        }
+        model->fields = nullptr;
     }
 
-    return Value(model, depth, is_gc);
+    return Value(model, depth, Allocator::is_gc);
 }
 
 template <typename Allocator>
 Value Value::make_union(Allocator &alloc, String_data *u_name, String_data *v_name, Value payload, uint8_t depth)
 {
-    Union_data *un = nullptr;
-    bool is_gc = std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>;
+    const size_t total_size = sizeof(Union_data) + sizeof(Value);
+    void *mem = alloc.allocate_bytes(total_size, alignof(Union_data), static_cast<uint8_t>(Value_tag::Union));
+    Union_data *un = new (mem) Union_data();
+    un->union_name = u_name;
+    un->variant_name = v_name;
 
-    if constexpr (std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>) {
-        const size_t total_size = sizeof(Union_data) + sizeof(Value);
-        un = alloc.template alloc<Union_data>(total_size, static_cast<uint8_t>(Value_tag::Union));
-        new (un) Union_data();
-        un->union_name = u_name;
-        un->variant_name = v_name;
+    un->payload = trailing_storage<Union_data, Value>(un);
+    *(un->payload) = payload;
 
-        un->payload = trailing_storage<Union_data, Value>(un);
-        *(un->payload) = payload;
-    } else {
-        un = alloc.template allocate<Union_data>();
-        new (un) Union_data();
-        un->union_name = u_name;
-        un->variant_name = v_name;
-
-        un->payload = alloc.template allocate<Value>();
-        *(un->payload) = payload;
-    }
-
-    return Value(un, depth, is_gc);
+    return Value(un, depth, Allocator::is_gc);
 }
 
 template <typename Allocator>
 Value Value::make_closure_native(Allocator &alloc, String_data *name, size_t arity, types::Function_type sig, Native_fn func, uint8_t depth)
 {
-    Closure_data *closure = nullptr;
-    bool is_gc = std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>;
-
-    if constexpr (std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>) {
-        closure = alloc.template alloc<Closure_data>(sizeof(Closure_data), static_cast<uint8_t>(Value_tag::Closure));
-        new (closure) Closure_data();
-        closure->is_prototype = false;
-    } else {
-        closure = alloc.template allocate<Closure_data>();
-        new (closure) Closure_data();
-        closure->is_prototype = true;
-    }
+    void *mem = alloc.allocate_bytes(sizeof(Closure_data), alignof(Closure_data), static_cast<uint8_t>(Value_tag::Closure));
+    Closure_data *closure = new (mem) Closure_data();
+    // Arena-backed closures are compiler prototypes; GC-backed ones are live instances.
+    closure->is_prototype = !Allocator::is_gc;
 
     closure->name = name;
     closure->arity = arity;
@@ -176,24 +151,16 @@ Value Value::make_closure_native(Allocator &alloc, String_data *name, size_t ari
     closure->upvalue_count = 0;
     closure->upvalues = nullptr;
 
-    return Value(closure, depth, is_gc);
+    return Value(closure, depth, Allocator::is_gc);
 }
 
 template <typename Allocator>
 Value Value::make_iterator(Allocator &alloc, uint8_t depth)
 {
-    Iterator_data *iter = nullptr;
-    bool is_gc = std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>;
+    void *mem = alloc.allocate_bytes(sizeof(Iterator_data), alignof(Iterator_data), static_cast<uint8_t>(Value_tag::Iterator));
+    Iterator_data *iter = new (mem) Iterator_data();
 
-    if constexpr (std::is_same_v<std::decay_t<Allocator>, vm::Vm_context>) {
-        iter = alloc.template alloc<Iterator_data>(sizeof(Iterator_data), static_cast<uint8_t>(Value_tag::Iterator));
-        new (iter) Iterator_data();
-    } else {
-        iter = alloc.template allocate<Iterator_data>();
-        new (iter) Iterator_data();
-    }
-
-    return Value(iter, depth, is_gc);
+    return Value(iter, depth, Allocator::is_gc);
 }
 
 // -----------------------------------------------------------------------------
@@ -202,16 +169,22 @@ Value Value::make_iterator(Allocator &alloc, uint8_t depth)
 
 // Arena Instantiations (Compile-time)
 template Value Value::make_string(mem::Arena &, std::string_view, uint8_t);
+template Value Value::make_string_concat(mem::Arena &, std::string_view, std::string_view, uint8_t);
 template Value Value::make_array(mem::Arena &, uint32_t, uint8_t);
+template Value Value::make_array_uninit(mem::Arena &, uint32_t, uint8_t);
 template Value Value::make_model(mem::Arena &, types::Model_type, uint32_t, uint8_t);
+template Value Value::make_model_uninit(mem::Arena &, types::Model_type, uint32_t, uint8_t);
 template Value Value::make_union(mem::Arena &, String_data *, String_data *, Value, uint8_t);
 template Value Value::make_closure_native(mem::Arena &, String_data *, size_t, types::Function_type, Native_fn, uint8_t);
 template Value Value::make_iterator(mem::Arena &, uint8_t);
 
 // VM Context Instantiations (Runtime) - THESE FIX THE LINKER ERRORS!
 template Value Value::make_string(vm::Vm_context &, std::string_view, uint8_t);
+template Value Value::make_string_concat(vm::Vm_context &, std::string_view, std::string_view, uint8_t);
 template Value Value::make_array(vm::Vm_context &, uint32_t, uint8_t);
+template Value Value::make_array_uninit(vm::Vm_context &, uint32_t, uint8_t);
 template Value Value::make_model(vm::Vm_context &, types::Model_type, uint32_t, uint8_t);
+template Value Value::make_model_uninit(vm::Vm_context &, types::Model_type, uint32_t, uint8_t);
 template Value Value::make_union(vm::Vm_context &, String_data *, String_data *, Value, uint8_t);
 template Value Value::make_closure_native(vm::Vm_context &, String_data *, size_t, types::Function_type, Native_fn, uint8_t);
 template Value Value::make_iterator(vm::Vm_context &, uint8_t);
@@ -350,21 +323,29 @@ types::Primitive_kind Value::numeric_type() const
     }
 }
 
-std::optional<Value> Value::cast_numeric(types::Primitive_kind target_type) const
+bool Value::cast_numeric(types::Primitive_kind target_type, Value &out) const
 {
     if ((!is_number() && !is_bool()) || !types::is_numeric_primitive(target_type)) {
-        return std::nullopt;
+        return false;
+    }
+
+    // Same-width casts on plain values (emitted by numeric normalization)
+    // are identity. Depth is excluded: the long path resets depth to 0.
+    if (depth() == 0 && is_number() && numeric_type() == target_type) {
+        out = *this;
+        return true;
     }
 
     if (types::is_float_primitive(target_type)) {
         double val = is_bool() ? (as_bool() ? 1.0 : 0.0) : as_float();
         if (target_type == types::Primitive_kind::F32) {
-            return Value(static_cast<float>(val));
+            out = Value(static_cast<float>(val));
+        } else if (target_type == types::Primitive_kind::F16) {
+            out = Value(static_cast<numeric::float16_t>(val));
+        } else {
+            out = Value(val);
         }
-        if (target_type == types::Primitive_kind::F16) {
-            return Value(static_cast<numeric::float16_t>(val));
-        }
-        return Value(val);
+        return true;
     }
 
     if (types::is_unsigned_integer_primitive(target_type)) {
@@ -377,15 +358,15 @@ std::optional<Value> Value::cast_numeric(types::Primitive_kind target_type) cons
             val = as_uint();
         }
         if (target_type == types::Primitive_kind::U8) {
-            return Value(static_cast<uint8_t>(val));
+            out = Value(static_cast<uint8_t>(val));
+        } else if (target_type == types::Primitive_kind::U16) {
+            out = Value(static_cast<uint16_t>(val));
+        } else if (target_type == types::Primitive_kind::U32) {
+            out = Value(static_cast<uint32_t>(val));
+        } else {
+            out = Value(val);
         }
-        if (target_type == types::Primitive_kind::U16) {
-            return Value(static_cast<uint16_t>(val));
-        }
-        if (target_type == types::Primitive_kind::U32) {
-            return Value(static_cast<uint32_t>(val));
-        }
-        return Value(val);
+        return true;
     }
 
     int64_t val;
@@ -397,52 +378,88 @@ std::optional<Value> Value::cast_numeric(types::Primitive_kind target_type) cons
         val = as_int();
     }
     if (target_type == types::Primitive_kind::I8) {
-        return Value(static_cast<int8_t>(val));
+        out = Value(static_cast<int8_t>(val));
+    } else if (target_type == types::Primitive_kind::I16) {
+        out = Value(static_cast<int16_t>(val));
+    } else if (target_type == types::Primitive_kind::I32) {
+        out = Value(static_cast<int32_t>(val));
+    } else {
+        out = Value(val);
     }
-    if (target_type == types::Primitive_kind::I16) {
-        return Value(static_cast<int16_t>(val));
-    }
-    if (target_type == types::Primitive_kind::I32) {
-        return Value(static_cast<int32_t>(val));
-    }
-    return Value(val);
+    return true;
 }
 
-std::optional<Value> Value::saturating_cast_numeric(types::Primitive_kind target_type) const
+namespace {
+// Clamp a double into [lo, hi] without leaving the floating-point domain
+// (converting an out-of-range double to int is UB). NaN maps to lo, matching
+// the old long-double path where NaN converted to INT64_MIN and clamped low.
+inline double clamp_double(double d, double lo, double hi)
+{
+    if (!(d >= lo)) {
+        return lo;
+    }
+    if (d > hi) {
+        return hi;
+    }
+    return d;
+}
+
+inline int64_t clamp_signed(int64_t v, int64_t lo, int64_t hi)
+{
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+} // namespace
+
+bool Value::saturating_cast_numeric(types::Primitive_kind target_type, Value &out) const
 {
     if ((!is_number() && !is_bool()) || !types::is_integer_primitive(target_type)) {
-        return std::nullopt;
+        return false;
     }
 
-    auto clamp_signed = [](int64_t v, int64_t lo, int64_t hi) { return v < lo ? lo : (v > hi ? hi : v); };
-
     if (is_float()) {
-        long double val = static_cast<long double>(as_float());
+        double d = as_float();
         switch (target_type) {
         case types::Primitive_kind::I8:
-            return Value(static_cast<int8_t>(clamp_signed(static_cast<int64_t>(val), -128, 127)));
+            out = Value(static_cast<int8_t>(clamp_double(d, -128.0, 127.0)));
+            return true;
         case types::Primitive_kind::I16:
-            return Value(static_cast<int16_t>(clamp_signed(static_cast<int64_t>(val), -32768, 32767)));
+            out = Value(static_cast<int16_t>(clamp_double(d, -32768.0, 32767.0)));
+            return true;
         case types::Primitive_kind::I32:
-            return Value(static_cast<int32_t>(clamp_signed(static_cast<int64_t>(val), -2147483648LL, 2147483647LL)));
-        case types::Primitive_kind::I64:
-            return Value(clamp_signed(static_cast<int64_t>(val), std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::max()));
-        case types::Primitive_kind::U8: {
-            uint64_t u = val < 0 ? 0 : static_cast<uint64_t>(val);
-            return Value(static_cast<uint8_t>(u > 255 ? 255 : u));
+            out = Value(static_cast<int32_t>(clamp_double(d, -2147483648.0, 2147483647.0)));
+            return true;
+        case types::Primitive_kind::I64: {
+            // 2^63 is not representable: compare against it, never convert it.
+            if (!(d >= -9223372036854775808.0)) {
+                out = Value(std::numeric_limits<int64_t>::min());
+            } else if (d >= 9223372036854775807.0) {
+                out = Value(std::numeric_limits<int64_t>::max());
+            } else {
+                out = Value(static_cast<int64_t>(d));
+            }
+            return true;
         }
-        case types::Primitive_kind::U16: {
-            uint64_t u = val < 0 ? 0 : static_cast<uint64_t>(val);
-            return Value(static_cast<uint16_t>(u > 65535 ? 65535 : u));
+        case types::Primitive_kind::U8:
+            out = Value(static_cast<uint8_t>(clamp_double(d, 0.0, 255.0)));
+            return true;
+        case types::Primitive_kind::U16:
+            out = Value(static_cast<uint16_t>(clamp_double(d, 0.0, 65535.0)));
+            return true;
+        case types::Primitive_kind::U32:
+            out = Value(static_cast<uint32_t>(clamp_double(d, 0.0, 4294967295.0)));
+            return true;
+        case types::Primitive_kind::U64: {
+            if (!(d >= 0.0)) {
+                out = Value(static_cast<uint64_t>(0));
+            } else if (d >= 18446744073709551615.0) {
+                out = Value(std::numeric_limits<uint64_t>::max());
+            } else {
+                out = Value(static_cast<uint64_t>(d));
+            }
+            return true;
         }
-        case types::Primitive_kind::U32: {
-            uint64_t u = val < 0 ? 0 : static_cast<uint64_t>(val);
-            return Value(static_cast<uint32_t>(u > 4294967295ULL ? 4294967295ULL : u));
-        }
-        case types::Primitive_kind::U64:
-            return Value(val < 0 ? 0 : static_cast<uint64_t>(val));
         default:
-            return std::nullopt;
+            return false;
         }
     }
 
@@ -450,23 +467,31 @@ std::optional<Value> Value::saturating_cast_numeric(types::Primitive_kind target
         int64_t val = as_bool() ? 1 : 0;
         switch (target_type) {
         case types::Primitive_kind::I8:
-            return Value(static_cast<int8_t>(val));
+            out = Value(static_cast<int8_t>(val));
+            return true;
         case types::Primitive_kind::I16:
-            return Value(static_cast<int16_t>(val));
+            out = Value(static_cast<int16_t>(val));
+            return true;
         case types::Primitive_kind::I32:
-            return Value(static_cast<int32_t>(val));
+            out = Value(static_cast<int32_t>(val));
+            return true;
         case types::Primitive_kind::I64:
-            return Value(val);
+            out = Value(val);
+            return true;
         case types::Primitive_kind::U8:
-            return Value(static_cast<uint8_t>(val));
+            out = Value(static_cast<uint8_t>(val));
+            return true;
         case types::Primitive_kind::U16:
-            return Value(static_cast<uint16_t>(val));
+            out = Value(static_cast<uint16_t>(val));
+            return true;
         case types::Primitive_kind::U32:
-            return Value(static_cast<uint32_t>(val));
+            out = Value(static_cast<uint32_t>(val));
+            return true;
         case types::Primitive_kind::U64:
-            return Value(static_cast<uint64_t>(val));
+            out = Value(static_cast<uint64_t>(val));
+            return true;
         default:
-            return std::nullopt;
+            return false;
         }
     }
 
@@ -474,47 +499,63 @@ std::optional<Value> Value::saturating_cast_numeric(types::Primitive_kind target
         uint64_t val = as_uint();
         switch (target_type) {
         case types::Primitive_kind::I8:
-            return Value(static_cast<int8_t>(val > 127 ? 127 : val));
+            out = Value(static_cast<int8_t>(val > 127 ? 127 : val));
+            return true;
         case types::Primitive_kind::I16:
-            return Value(static_cast<int16_t>(val > 32767 ? 32767 : val));
+            out = Value(static_cast<int16_t>(val > 32767 ? 32767 : val));
+            return true;
         case types::Primitive_kind::I32:
-            return Value(static_cast<int32_t>(val > 2147483647ULL ? 2147483647LL : val));
+            out = Value(static_cast<int32_t>(val > 2147483647ULL ? 2147483647LL : val));
+            return true;
         case types::Primitive_kind::I64:
-            return Value(
+            out = Value(
                 static_cast<int64_t>(val > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) ? std::numeric_limits<int64_t>::max() : val));
+            return true;
         case types::Primitive_kind::U8:
-            return Value(static_cast<uint8_t>(val > 255 ? 255 : val));
+            out = Value(static_cast<uint8_t>(val > 255 ? 255 : val));
+            return true;
         case types::Primitive_kind::U16:
-            return Value(static_cast<uint16_t>(val > 65535 ? 65535 : val));
+            out = Value(static_cast<uint16_t>(val > 65535 ? 65535 : val));
+            return true;
         case types::Primitive_kind::U32:
-            return Value(static_cast<uint32_t>(val > 4294967295ULL ? 4294967295ULL : val));
+            out = Value(static_cast<uint32_t>(val > 4294967295ULL ? 4294967295ULL : val));
+            return true;
         case types::Primitive_kind::U64:
-            return Value(val);
+            out = Value(val);
+            return true;
         default:
-            return std::nullopt;
+            return false;
         }
     }
 
     int64_t val = as_int();
     switch (target_type) {
     case types::Primitive_kind::I8:
-        return Value(static_cast<int8_t>(clamp_signed(val, -128, 127)));
+        out = Value(static_cast<int8_t>(clamp_signed(val, -128, 127)));
+        return true;
     case types::Primitive_kind::I16:
-        return Value(static_cast<int16_t>(clamp_signed(val, -32768, 32767)));
+        out = Value(static_cast<int16_t>(clamp_signed(val, -32768, 32767)));
+        return true;
     case types::Primitive_kind::I32:
-        return Value(static_cast<int32_t>(clamp_signed(val, -2147483648LL, 2147483647LL)));
+        out = Value(static_cast<int32_t>(clamp_signed(val, -2147483648LL, 2147483647LL)));
+        return true;
     case types::Primitive_kind::I64:
-        return Value(val);
+        out = Value(val);
+        return true;
     case types::Primitive_kind::U8:
-        return Value(static_cast<uint8_t>(clamp_signed(val, 0, 255)));
+        out = Value(static_cast<uint8_t>(clamp_signed(val, 0, 255)));
+        return true;
     case types::Primitive_kind::U16:
-        return Value(static_cast<uint16_t>(clamp_signed(val, 0, 65535)));
+        out = Value(static_cast<uint16_t>(clamp_signed(val, 0, 65535)));
+        return true;
     case types::Primitive_kind::U32:
-        return Value(static_cast<uint32_t>(clamp_signed(val, 0, 4294967295LL)));
+        out = Value(static_cast<uint32_t>(clamp_signed(val, 0, 4294967295LL)));
+        return true;
     case types::Primitive_kind::U64:
-        return Value(static_cast<uint64_t>(val < 0 ? 0 : val));
+        out = Value(static_cast<uint64_t>(val < 0 ? 0 : val));
+        return true;
     default:
-        return std::nullopt;
+        return false;
     }
 }
 
@@ -525,7 +566,11 @@ std::optional<Value> Value::coerce_literal(types::Primitive_kind target_type) co
     }
 
     if (types::is_float_primitive(target_type)) {
-        return cast_numeric(target_type);
+        Value out;
+        if (cast_numeric(target_type, out)) {
+            return out;
+        }
+        return std::nullopt;
     }
 
     if (is_integer()) {
@@ -756,8 +801,13 @@ std::optional<Value> coerce_numeric_literal(const Value &literal, types::Primiti
         switch (target_type) {
         case types::Primitive_kind::F16:
         case types::Primitive_kind::F32:
-        case types::Primitive_kind::F64:
-            return literal.cast_numeric(target_type);
+        case types::Primitive_kind::F64: {
+            Value out;
+            if (literal.cast_numeric(target_type, out)) {
+                return out;
+            }
+            return std::nullopt;
+        }
         default:
             return std::nullopt;
         }

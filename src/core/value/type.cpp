@@ -264,15 +264,6 @@ Type_id Type_table::optional_base(Type_id id) const
     }
     return id;
 }
-uint32_t Type_table::optional_depth(Type_id id) const
-{
-    uint32_t d = 0;
-    while (is_optional(id)) {
-        id = get_optional_base(id);
-        ++d;
-    }
-    return d;
-}
 
 bool is_integer_primitive(Primitive_kind k)
 {

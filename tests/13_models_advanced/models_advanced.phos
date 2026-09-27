@@ -1,0 +1,33 @@
+model Point { x: i64; y: i64; static dims: i64 = 2; }
+bind Point {
+    fn mag2() -> i64 { return this.x * this.x + this.y * this.y; }
+    static fn origin() -> Point { return Point.{0, 0}; }
+}
+let s := Point.{x: 3, y: 4};
+print(s.mag2());
+print(Point::origin());
+print(Point::dims);
+let inline: model { name: string; age: i64; } = .{ "Ada", 37, };
+print(inline);
+print(inline.name);
+let maybe: model { nick: string; visits: i64; }? = .{ "b", 12, };
+print(maybe);
+model A { city: string; }
+model U { name: string; addr: A; }
+let u := U.{ name: "bob", addr: A.{ city: "nyc" } };
+print(u.addr.city);
+u.addr.city = "sf";
+print(u.addr.city);
+fn divmod(a: i64, b: i64) -> q: i64, r: i64 { return a / b, a % b; }
+let qq, rr := divmod(10, 3);
+print(qq, rr, sep=" ");
+let c := divmod(10, 3);
+print(c, c._0, c._1, sep=" ");
+model P2 { x: i32; y: i32; }
+let px, py := P2.{10, 20};
+print(px, py, sep=" ");
+model Acc { bal: i64; }
+bind Acc { fn dep(v: i64) { this.bal = this.bal + v; } fn bal_of() -> i64 { return this.bal; } }
+let mut acc := Acc.{ bal: 100 };
+acc.dep(50);
+print(acc.bal_of());

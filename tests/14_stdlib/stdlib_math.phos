@@ -1,0 +1,14 @@
+import math;
+print(math::sin(math::pi / 2.0));
+print(math::cos(math::pi));
+print(math::sqrt(16.0));
+print(math::pow(2.0, 10.0));
+print(math::abs(0.0 - 5.5));
+print(math::min(3.0, 7.0), math::max(3.0, 7.0), sep=" ");
+print(math::ceil(2.3), math::floor(2.7), sep=" ");
+print(math::gcd(12, 18));
+print(math::factorial(5));
+print(math::is_prime(13), math::is_prime(15), sep=" ");
+print(math::is_nearly_equal(0.1 + 0.2, 0.3, 0.00001));
+print(math::is_inf(math::inf), math::is_nan(math::nan), sep=" ");
+print(math::pi, math::e, sep=" ");

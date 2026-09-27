@@ -1,0 +1,16 @@
+sat i8 max 127 127 127
+sat u8 255 255 0
+sat i16 32767 32767
+sat u16 65535 65535
+wrap -24
+wrap16 -25536
+neg wrap 255
+float trunc 3
+neg trunc -2
+int to float 7
+sat neg var -128
+sat paren -128 -128
+widen 32000
+uwiden 255
+hex 255 10 493 1000000 150
+sfx 1 8080 21.5

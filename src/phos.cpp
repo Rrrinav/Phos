@@ -98,23 +98,7 @@ bool Phos_engine::compile_source(const std::string &source, const std::string &l
 
 void Phos_engine::execute()
 {
-    constexpr size_t call_stack_capacity = 256;
-
-    std::vector<vm::Call_frame> frames(call_stack_capacity);
-    frames[0] = vm::Call_frame(&main_function, 0);
-
-    std::vector<Value> thread_memory(call_stack_capacity * vm::Virtual_machine::FRAME_REGISTER_WINDOW);
-
-    Green_thread_data main_thread{};
-    main_thread.call_stack = frames.data();
-    main_thread.call_stack_count = 1;
-    main_thread.call_stack_capacity = frames.size();
-    main_thread.value_stack = thread_memory.data();
-    main_thread.value_stack_capacity = thread_memory.size();
-    main_thread.live_value_count = vm::Virtual_machine::FRAME_REGISTER_WINDOW;
-    main_thread.is_completed = false;
-
-    vm.execute(&main_thread);
+    vm::Virtual_machine::run_closure(vm, &main_function);
 }
 
 std::string Phos_engine::dump_ir() const

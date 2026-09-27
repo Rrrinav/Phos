@@ -63,7 +63,7 @@ inline const Value &require_model_field(const Value &value, std::string_view fie
 
 inline Value make_model(vm::Vm_context &ctx, const types::Model_type &signature, std::span<const Value> fields, uint8_t depth = 0)
 {
-    Value model = Value::make_model(ctx, signature, static_cast<uint32_t>(fields.size()), depth);
+    Value model = Value::make_model_uninit(ctx, signature, static_cast<uint32_t>(fields.size()), depth);
     for (size_t i = 0; i < fields.size(); ++i) {
         model.as_model()->fields[i] = fields[i];
     }

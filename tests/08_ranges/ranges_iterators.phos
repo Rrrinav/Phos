@@ -1,0 +1,76 @@
+let exclusive := 1..5;
+for i in exclusive {
+    print(i, end = " ");
+}
+print("");
+
+let inclusive := 1..=5;
+for i in inclusive {
+    print(i, end = " ");
+}
+print("");
+
+for i in 0..3 {
+    print(i, end = " ");
+}
+print("");
+
+model CountdownIter {
+    current: i64;
+}
+bind CountdownIter {
+    fn next() -> i64? {
+        if this.current < 0 {
+            return nil;
+        }
+        let v := this.current;
+        this.current = this.current - 1;
+        return v;
+    }
+}
+model Countdown {
+    start: i64;
+}
+bind Countdown {
+    fn iter() -> CountdownIter {
+        return CountdownIter.{ current: this.start };
+    }
+}
+for s in Countdown.{ start: 2 } {
+    print("T", s, sep = "");
+}
+
+let nums := [10, 20, 30];
+let it := iter(nums);
+while true {
+    let v := it.next();
+    if v.is_nil() {
+        break;
+    }
+    print("y", v.get(), sep = "");
+}
+
+let some: i32? = 5;
+for v in some {
+    print("opt", v, sep = "");
+}
+let none: i32? = nil;
+for v in none {
+    print("BAD");
+}
+print("after opt");
+
+let one := 20;
+for i in one {
+    print("one ", i);
+}
+
+fn grade(n: i32) -> string {
+    match n {
+        90..=100 => { return "A"; },
+        80..=89 => { return "B"; },
+        _ => { return "F"; },
+    }
+}
+print(grade(95), grade(82), grade(40), sep = " ");
+print(len(nums), len("hello"), sep = " ");

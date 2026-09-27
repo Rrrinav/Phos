@@ -1,0 +1,79 @@
+union Reply {
+    Ok: string;
+    Error: string;
+}
+
+let ok_reply := Reply.{ Ok: "done" };
+let err_reply := Reply.{ Error: "try again" };
+
+match ok_reply {
+    .Ok(m) => { print("ok " + m); },
+    .Error(e) => { print("bad " + e); },
+}
+match err_reply {
+    .Ok(m) => { print("ok " + m); },
+    .Error(e) => { print("err " + e); },
+}
+
+let contextual: Reply = .{ Ok: "from context" };
+match contextual {
+    .Ok(m) => { print("ctx " + m); },
+    _ => { print("ctx err"); },
+}
+
+union Greeting {
+    Casual: string = "hey";
+    Formal: string;
+}
+let g := Greeting.{ Casual: "hi" };
+match g {
+    .Casual(s) => { print("casual " + s); },
+    .Formal(s) => { print("formal " + s); },
+}
+
+enum Mode {
+    Off,
+    On,
+}
+match Mode::Off {
+    Mode::On => { print("on"); },
+    Mode::Off => { print("off"); },
+    _ => { print("unknown"); },
+}
+
+let current: Mode? = .On;
+print(current);
+let modes: Mode?[] = [.Off, nil, .On];
+print(modes);
+print(len(modes));
+
+enum HttpCode: u16 {
+    Ok = 200,
+    Missing = 404,
+}
+let code := HttpCode::Ok;
+match code {
+    HttpCode::Ok => { print("200"); },
+    HttpCode::Missing => { print("404"); },
+}
+
+enum Verb: string {
+    Get = "GET",
+    Post = "POST",
+}
+print(Verb::Post);
+
+union Result {
+    Val: i32;
+    Msg: string;
+}
+let r1 := Result.{ Val: 7 };
+match r1 {
+    .Val(v) => { print("val ", v); },
+    .Msg(m) => { print("msg " + m); },
+}
+let r2: Result = .{ Msg: "boom" };
+match r2 {
+    .Val(v) => { print("val ", v); },
+    .Msg(m) => { print("msg " + m); },
+}

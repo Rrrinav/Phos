@@ -1,0 +1,24 @@
+print(len("hello"), len([1, 2, 3]), sep=" ");
+print(to_string(99), to_string(1.5), sep=" ");
+let p := parse_i64("42");
+print(p.get());
+let q := parse_f64("3.25");
+print(q.get());
+print(is_same(1, 1), is_same([1], [1]), sep=" ");
+print("up", "abc".to_upper(), sep=" ");
+print("rep", "xy".repeat(2), sep=" ");
+let mut a := [1, 2, 3];
+a.push(4);
+print(a);
+a.reverse();
+print(a);
+print(a.is_empty());
+a.clear();
+print(a.is_empty(), len(a), sep=" ");
+import time;
+let dt := time::Date_time.{ day: 31, month: 12, year: 2020, hour: 0, minute: 0, second: 0 };
+print(dt);
+print(env::argv, len(env::argv), sep=" ");
+print(env::module, sep=" ");
+fn myf() { print(env::func); }
+myf();

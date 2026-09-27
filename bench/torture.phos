@@ -1,0 +1,14 @@
+let mut a: i64[] = [];
+for i in 0..20000 {
+    a.push(i as i64);
+    if i % 100 == 0 {
+        let s := "pad" + to_string(i);
+        let m := [s, s, s];
+    }
+}
+let mut total: i64 = 0;
+for v in a {
+    total = total + v;
+}
+print(total);
+print(len(a));

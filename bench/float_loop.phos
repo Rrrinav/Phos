@@ -1,0 +1,6 @@
+let mut acc := 0.0;
+for i in 0..2000000 {
+    let x := i as f64;
+    acc = acc + x * 1.5 - x / 2.0;
+}
+print(acc);
