@@ -167,7 +167,6 @@ public:
 
     bool is_optional(Type_id id) const;
     Type_id optional_base(Type_id id) const;
-    uint32_t optional_depth(Type_id id) const;
 
     inline Type_id get_i8() const
     {

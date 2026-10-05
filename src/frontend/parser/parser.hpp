@@ -111,6 +111,12 @@ private:
     Result<ast::Expr_id> call();
     Result<ast::Expr_id> primary();
 
+    // Shared body for the left-associative binary-operator levels above:
+    // parses `next (op next)*` and folds Binary_expr nodes left. Preserves
+    // each level's placeholder result type (bool vs unknown).
+    Result<ast::Expr_id> parse_left_assoc(
+        Result<ast::Expr_id> (Parser::*next)(), std::initializer_list<lex::TokenType> ops, bool bool_result);
+
     Result<ast::Expr_id> parse_closure_expression();
     Result<ast::Expr_id> parse_array_literal();
     Result<ast::Expr_id> parse_model_literal(const std::string &model_name);

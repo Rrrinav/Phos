@@ -12,6 +12,44 @@ namespace phos::gc {
 void *Gc_heap::alloc(size_t payload_bytes, uint8_t kind)
 {
     size_t total = sizeof(Gc_cell) + payload_bytes;
+
+    size_t pool = pool_index(total);
+    if (pool < sizeof(kPoolClasses) / sizeof(kPoolClasses[0])) {
+        // Pooled sizes are class-rounded (not actual use): every block in a
+        // pool is then guaranteed to fit every request its class serves.
+        // bytes_allocated_ over-counts by at most the class granularity.
+        size_t block = kPoolClasses[pool];
+        if (pools_[pool] != nullptr) {
+            Gc_cell *cell = pools_[pool];
+            pools_[pool] = cell->next;
+            cell->next = head_;
+            cell->size = static_cast<uint32_t>(block);
+            cell->color = Color::White;
+            cell->kind = kind;
+            head_ = cell;
+            bytes_allocated_ += block;
+            ++object_count_;
+            return cell->payload();
+        }
+
+        void *raw = std::malloc(block);
+        if (!raw) {
+            throw std::bad_alloc{};
+        }
+
+        Gc_cell *cell = new (raw) Gc_cell{};
+        cell->next = head_;
+        cell->size = static_cast<uint32_t>(block);
+        cell->color = Color::White;
+        cell->kind = kind;
+
+        head_ = cell;
+        bytes_allocated_ += block;
+        ++object_count_;
+
+        return cell->payload();
+    }
+
     void *raw = std::malloc(total);
     if (!raw) {
         throw std::bad_alloc{};
@@ -30,41 +68,9 @@ void *Gc_heap::alloc(size_t payload_bytes, uint8_t kind)
     return cell->payload();
 }
 
-static void free_payload(Gc_heap &heap, Gc_cell *cell)
-{
-    auto tag = static_cast<phos::Value_tag>(cell->kind);
-    if (tag == phos::Value_tag::Array) {
-        auto *arr = static_cast<phos::Array_data *>(cell->payload());
-        if (arr->elements_on_heap) {
-            heap.remove_external_bytes(arr->capacity * sizeof(phos::Value));
-            std::free(arr->elements);
-        }
-    } else if (tag == phos::Value_tag::Model) {
-        auto *m = static_cast<phos::Model_data *>(cell->payload());
-        if (m->fields_on_heap) {
-            heap.remove_external_bytes(m->field_count * sizeof(phos::Value));
-            std::free(m->fields);
-        }
-    } else if (tag == phos::Value_tag::Union) {
-        // auto *u = static_cast<phos::Union_data *>(cell->payload());
-        heap.remove_external_bytes(sizeof(phos::Value));
-        // std::free(u->payload);
-    } else if (tag == phos::Value_tag::Closure) {
-        auto *c = static_cast<phos::Closure_data *>(cell->payload());
-        if (!c->is_prototype && c->upvalues != nullptr) {
-            heap.remove_external_bytes(c->upvalue_count * sizeof(phos::Upvalue_data *));
-        }
-        std::free(c->upvalues);
-    } else if (tag == phos::Value_tag::Upvalue) {
-        (void)cell;
-    }
-}
-
 void Gc_heap::collect(phos::Green_thread_data &thread, std::vector<phos::Value> &globals)
 {
-    for (size_t i = 0; i < thread.live_value_count; ++i) {
-        mark_value(thread.value_stack[i]);
-    }
+    mark_thread_values(thread);
 
     for (size_t i = 0; i < thread.call_stack_count; ++i) {
         if (thread.call_stack[i].closure != nullptr && !thread.call_stack[i].closure->is_prototype) {
@@ -104,11 +110,6 @@ void Gc_heap::collect(phos::Green_thread_data &thread, std::vector<phos::Value> 
 void Gc_heap::mark_value(phos::Value &v)
 {
     if (!v.is_gc()) {
-        return;
-    }
-
-    if (!v.is_string() && !v.is_array() && !v.is_model() && !v.is_union() && !v.is_closure() && !v.is_iterator() && !v.is_green_thread()
-        && !v.is_upvalue()) {
         return;
     }
 
@@ -157,6 +158,24 @@ void Gc_heap::mark_cell(Gc_cell *cell)
     gray_.push_back(cell);
 }
 
+void Gc_heap::mark_thread_values(phos::Green_thread_data &thread)
+{
+    for (size_t f = 0; f < thread.call_stack_count; ++f) {
+        const auto &frame = thread.call_stack[f];
+        if (frame.frame_base >= thread.value_stack_capacity) {
+            continue;
+        }
+        size_t footprint = (frame.closure != nullptr) ? frame.closure->register_footprint : 0;
+        size_t end = frame.frame_base + footprint;
+        if (end > thread.value_stack_capacity) {
+            end = thread.value_stack_capacity;
+        }
+        for (size_t i = frame.frame_base; i < end; ++i) {
+            mark_value(thread.value_stack[i]);
+        }
+    }
+}
+
 void Gc_heap::trace_gray()
 {
     while (!gray_.empty()) {
@@ -202,6 +221,11 @@ void Gc_heap::trace_string(Gc_cell * /*cell*/)
 void Gc_heap::trace_array(Gc_cell *cell)
 {
     auto *arr = static_cast<phos::Array_data *>(cell->payload());
+    // A separately allocated element buffer is its own GC cell: keep it alive
+    // alongside the array (trailing storage needs no such handling).
+    if (arr->elements_on_heap && arr->elements != nullptr) {
+        mark_cell(Gc_cell::from_payload(arr->elements));
+    }
     for (uint32_t i = 0; i < arr->count; ++i) {
         mark_value(arr->elements[i]);
     }
@@ -210,6 +234,9 @@ void Gc_heap::trace_array(Gc_cell *cell)
 void Gc_heap::trace_model(Gc_cell *cell)
 {
     auto *m = static_cast<phos::Model_data *>(cell->payload());
+    if (m->fields_on_heap && m->fields != nullptr) {
+        mark_cell(Gc_cell::from_payload(m->fields));
+    }
     for (uint32_t i = 0; i < m->field_count; ++i) {
         mark_value(m->fields[i]);
     }
@@ -249,9 +276,7 @@ void Gc_heap::trace_thread(Gc_cell *cell)
 {
     auto *gt = static_cast<phos::Green_thread_data *>(cell->payload());
 
-    for (size_t i = 0; i < gt->live_value_count; ++i) {
-        mark_value(gt->value_stack[i]);
-    }
+    mark_thread_values(*gt);
 
     for (size_t i = 0; i < gt->call_stack_count; ++i) {
         if (gt->call_stack[i].closure && !gt->call_stack[i].closure->is_prototype) {
@@ -283,12 +308,16 @@ void Gc_heap::sweep()
     while (*cursor) {
         Gc_cell *cell = *cursor;
         if (cell->color == Color::White) {
-            free_payload(*this, cell);
-
             *cursor = cell->next;
             bytes_allocated_ -= cell->size;
             --object_count_;
-            std::free(cell);
+            size_t pool = pool_index(cell->size);
+            if (pool < sizeof(kPoolClasses) / sizeof(kPoolClasses[0])) {
+                cell->next = pools_[pool];
+                pools_[pool] = cell;
+            } else {
+                std::free(cell);
+            }
         } else {
             cell->color = Color::White;
             cursor = &cell->next;
@@ -301,14 +330,20 @@ void Gc_heap::destroy_all()
     Gc_cell *cell = head_;
     while (cell) {
         Gc_cell *next = cell->next;
-        free_payload(*this, cell);
-
         std::free(cell);
         cell = next;
+    }
+    for (auto *&pooled : pools_) {
+        while (pooled) {
+            Gc_cell *next = pooled->next;
+            std::free(pooled);
+            pooled = next;
+        }
     }
     head_ = nullptr;
     bytes_allocated_ = 0;
     object_count_ = 0;
+    threshold_ = INITIAL_THRESHOLD;
 }
 
 } // namespace phos::gc

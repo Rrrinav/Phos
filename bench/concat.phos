@@ -1,0 +1,5 @@
+let mut s := "";
+for i in 0..30000 {
+    s = s + "abcdefgh";
+}
+print(len(s));

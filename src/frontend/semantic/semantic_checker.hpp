@@ -9,6 +9,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <vector>
 
@@ -133,6 +134,11 @@ public:
     bool is_compatible(types::Type_id expected, types::Type_id actual) const;
     types::Type_id promote_numeric_type(types::Type_id left, types::Type_id right) const;
     std::string numeric_cast_error_message(types::Type_id target, types::Type_id source) const;
+    // Shared mismatch reporter: numerics get the cast hint, everything else
+    // a plain expected/got diagnostic. Used by var/multi-var bindings and
+    // return checking, which previously inlined the same branch.
+    void report_type_mismatch(
+        const ast::Source_location &loc, types::Type_id expected, types::Type_id actual, std::string_view message);
 
     void declare(const std::string &name, types::Type_id type, bool is_mut, const ast::Source_location &loc);
     std::optional<Scope_symbol> lookup(const std::string &name, const ast::Source_location &loc);

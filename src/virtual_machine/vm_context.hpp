@@ -60,6 +60,7 @@ struct Root_guard
 struct Vm_context
 {
     static constexpr size_t FRAME_REGISTER_WINDOW = 256;
+    static constexpr bool is_gc = true;
 
     Virtual_machine *machine = nullptr;
     gc::Gc_heap *heap = nullptr;
@@ -70,22 +71,24 @@ struct Vm_context
     std::vector<phos::Value> *globals = nullptr;
     size_t *ip = nullptr;
     size_t *frame_base = nullptr;
-    std::vector<std::string> cmd_args;
+    // Borrowed from Virtual_machine::cmd_args (never null at runtime).
+    // A pointer avoids copying the whole argv vector on every Call/Return.
+    const std::vector<std::string> *cmd_args = nullptr;
 
     [[nodiscard]] Root_guard protect(phos::Value *value) const
     {
         return Root_guard{*heap, value};
     }
 
+    void *allocate_bytes(size_t payload_bytes, size_t /*alignment*/, uint8_t kind) const
+    {
+        return heap->allocate_bytes(payload_bytes, 0, kind);
+    }
+
     template <typename T>
     [[nodiscard]] T *alloc(size_t payload_bytes, uint8_t kind) const
     {
         return static_cast<T *>(heap->alloc(payload_bytes, kind));
-    }
-
-    void add_external_bytes(size_t bytes) const
-    {
-        heap->add_external_bytes(bytes);
     }
 
     [[nodiscard]] Virtual_machine &vm() const noexcept
@@ -108,9 +111,6 @@ struct Vm_context
     [[nodiscard]] phos::Value &register_at(size_t slot) const noexcept;
     [[nodiscard]] size_t instruction_pointer() const noexcept;
     [[nodiscard]] size_t current_base() const noexcept;
-    [[nodiscard]] size_t active_stack_limit() const noexcept;
-    [[nodiscard]] bool should_collect() const noexcept;
-    void collect_garbage() const;
 };
 
 } // namespace phos::vm

@@ -1,0 +1,45 @@
+fn demo() {
+    defer print("fn defer");
+    for i in 1..3 {
+        defer_local print("local ", i, sep="");
+        if i == 2 { break; }
+    }
+}
+demo();
+fn multi() {
+    defer { print("first"); }
+    defer { print("second"); }
+    defer { print("third"); }
+    print("body");
+}
+multi();
+fn with_val() -> i32 {
+    defer print("after val");
+    return 7;
+}
+print(with_val());
+fn cap() {
+    let mut v := 1;
+    defer { print("sees ", v); }
+    v = 99;
+}
+cap();
+fn g() -> string {
+    let mut out := "";
+    for i in 0..10 {
+        if i == 4 { goto @done; }
+        out = out + to_string(i);
+    }
+    @done:
+    return out;
+}
+print(g());
+let mut lc := 0;
+@outer: for i in 0..3 {
+    for j in 0..3 {
+        if j > 1 { break; }
+        if i == 2 { break @outer; }
+        lc = lc + 1;
+    }
+}
+print(lc);

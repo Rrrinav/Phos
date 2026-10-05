@@ -1,0 +1,17 @@
+model Point {
+    x: i64;
+    y: i64;
+}
+
+bind Point {
+    fn mag2() -> i64 {
+        return this.x * this.x + this.y * this.y;
+    }
+}
+
+let mut total: i64 = 0;
+for i in 0..200000 {
+    let p := Point.{ x: i, y: i + 1 };
+    total = total + p.mag2();
+}
+print(total);

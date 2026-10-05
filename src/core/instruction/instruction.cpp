@@ -1,560 +1,140 @@
 #include "instruction.hpp"
 
 #include <format>
+#include <string_view>
+#include <utility>
+
+namespace {
+constexpr std::pair<std::string_view, phos::vm::Opcode> kOpcodeTable[] = {
+    {"Load_const", phos::vm::Opcode::Load_const},
+    {"Load_nil", phos::vm::Opcode::Load_nil},
+    {"Load_true", phos::vm::Opcode::Load_true},
+    {"Load_false", phos::vm::Opcode::Load_false},
+    {"Move", phos::vm::Opcode::Move},
+    {"Load_global", phos::vm::Opcode::Load_global},
+    {"Store_global", phos::vm::Opcode::Store_global},
+    {"Concat_str", phos::vm::Opcode::Concat_str},
+    {"Add_i64", phos::vm::Opcode::Add_i64},
+    {"Sub_i64", phos::vm::Opcode::Sub_i64},
+    {"Mul_i64", phos::vm::Opcode::Mul_i64},
+    {"Div_i64", phos::vm::Opcode::Div_i64},
+    {"Mod_i64", phos::vm::Opcode::Mod_i64},
+    {"BitAnd_i64", phos::vm::Opcode::BitAnd_i64},
+    {"BitOr_i64", phos::vm::Opcode::BitOr_i64},
+    {"BitXor_i64", phos::vm::Opcode::BitXor_i64},
+    {"Shl_i64", phos::vm::Opcode::Shl_i64},
+    {"Shr_i64", phos::vm::Opcode::Shr_i64},
+    {"Add_u64", phos::vm::Opcode::Add_u64},
+    {"Sub_u64", phos::vm::Opcode::Sub_u64},
+    {"Mul_u64", phos::vm::Opcode::Mul_u64},
+    {"Div_u64", phos::vm::Opcode::Div_u64},
+    {"Mod_u64", phos::vm::Opcode::Mod_u64},
+    {"BitAnd_u64", phos::vm::Opcode::BitAnd_u64},
+    {"BitOr_u64", phos::vm::Opcode::BitOr_u64},
+    {"BitXor_u64", phos::vm::Opcode::BitXor_u64},
+    {"Shl_u64", phos::vm::Opcode::Shl_u64},
+    {"Shr_u64", phos::vm::Opcode::Shr_u64},
+    {"Add_f64", phos::vm::Opcode::Add_f64},
+    {"Sub_f64", phos::vm::Opcode::Sub_f64},
+    {"Mul_f64", phos::vm::Opcode::Mul_f64},
+    {"Div_f64", phos::vm::Opcode::Div_f64},
+    {"Mod_f64", phos::vm::Opcode::Mod_f64},
+    {"Cast_i8", phos::vm::Opcode::Cast_i8},
+    {"Cast_i16", phos::vm::Opcode::Cast_i16},
+    {"Cast_i32", phos::vm::Opcode::Cast_i32},
+    {"Cast_i64", phos::vm::Opcode::Cast_i64},
+    {"Cast_u8", phos::vm::Opcode::Cast_u8},
+    {"Cast_u16", phos::vm::Opcode::Cast_u16},
+    {"Cast_u32", phos::vm::Opcode::Cast_u32},
+    {"Cast_u64", phos::vm::Opcode::Cast_u64},
+    {"Cast_f16", phos::vm::Opcode::Cast_f16},
+    {"Cast_f32", phos::vm::Opcode::Cast_f32},
+    {"Cast_f64", phos::vm::Opcode::Cast_f64},
+    {"Cast_str_to_arr", phos::vm::Opcode::Cast_str_to_arr},
+    {"Cast_arr_to_str", phos::vm::Opcode::Cast_arr_to_str},
+    {"Sat_cast_i8", phos::vm::Opcode::Sat_cast_i8},
+    {"Sat_cast_i16", phos::vm::Opcode::Sat_cast_i16},
+    {"Sat_cast_i32", phos::vm::Opcode::Sat_cast_i32},
+    {"Sat_cast_i64", phos::vm::Opcode::Sat_cast_i64},
+    {"Sat_cast_u8", phos::vm::Opcode::Sat_cast_u8},
+    {"Sat_cast_u16", phos::vm::Opcode::Sat_cast_u16},
+    {"Sat_cast_u32", phos::vm::Opcode::Sat_cast_u32},
+    {"Sat_cast_u64", phos::vm::Opcode::Sat_cast_u64},
+    {"Eq_i64", phos::vm::Opcode::Eq_i64},
+    {"Neq_i64", phos::vm::Opcode::Neq_i64},
+    {"Lt_i64", phos::vm::Opcode::Lt_i64},
+    {"Lte_i64", phos::vm::Opcode::Lte_i64},
+    {"Gt_i64", phos::vm::Opcode::Gt_i64},
+    {"Gte_i64", phos::vm::Opcode::Gte_i64},
+    {"Eq_u64", phos::vm::Opcode::Eq_u64},
+    {"Neq_u64", phos::vm::Opcode::Neq_u64},
+    {"Lt_u64", phos::vm::Opcode::Lt_u64},
+    {"Lte_u64", phos::vm::Opcode::Lte_u64},
+    {"Gt_u64", phos::vm::Opcode::Gt_u64},
+    {"Gte_u64", phos::vm::Opcode::Gte_u64},
+    {"Eq_f64", phos::vm::Opcode::Eq_f64},
+    {"Neq_f64", phos::vm::Opcode::Neq_f64},
+    {"Lt_f64", phos::vm::Opcode::Lt_f64},
+    {"Lte_f64", phos::vm::Opcode::Lte_f64},
+    {"Gt_f64", phos::vm::Opcode::Gt_f64},
+    {"Gte_f64", phos::vm::Opcode::Gte_f64},
+    {"Neg_i64", phos::vm::Opcode::Neg_i64},
+    {"Neg_f64", phos::vm::Opcode::Neg_f64},
+    {"Not", phos::vm::Opcode::Not},
+    {"BitNot_i64", phos::vm::Opcode::BitNot_i64},
+    {"BitNot_u64", phos::vm::Opcode::BitNot_u64},
+    {"Print", phos::vm::Opcode::Print},
+    {"Set_upvalue", phos::vm::Opcode::Set_upvalue},
+    {"Get_upvalue", phos::vm::Opcode::Get_upvalue},
+    {"Make_closure", phos::vm::Opcode::Make_closure},
+    {"Jump", phos::vm::Opcode::Jump},
+    {"Jump_if_false", phos::vm::Opcode::Jump_if_false},
+    {"Unwrap_or", phos::vm::Opcode::Unwrap_or},
+    {"Call", phos::vm::Opcode::Call},
+    {"Return", phos::vm::Opcode::Return},
+    {"Eq_str", phos::vm::Opcode::Eq_str},
+    {"Neq_str", phos::vm::Opcode::Neq_str},
+    {"Len", phos::vm::Opcode::Len},
+    {"Make_array", phos::vm::Opcode::Make_array},
+    {"Load_index", phos::vm::Opcode::Load_index},
+    {"Store_index", phos::vm::Opcode::Store_index},
+    {"Make_range_ex", phos::vm::Opcode::Make_range_ex},
+    {"Make_range_in", phos::vm::Opcode::Make_range_in},
+    {"Make_iter", phos::vm::Opcode::Make_iter},
+    {"Iter_next", phos::vm::Opcode::Iter_next},
+    {"Iter_prev", phos::vm::Opcode::Iter_prev},
+    {"Make_model", phos::vm::Opcode::Make_model},
+    {"Load_field", phos::vm::Opcode::Load_field},
+    {"Store_field", phos::vm::Opcode::Store_field},
+    {"Make_union", phos::vm::Opcode::Make_union},
+    {"Test_union", phos::vm::Opcode::Test_union},
+    {"Load_union_payload", phos::vm::Opcode::Load_union_payload},
+    {"Wrap_option", phos::vm::Opcode::Wrap_option},
+    {"Unwrap_option", phos::vm::Opcode::Unwrap_option},
+    {"Test_nil", phos::vm::Opcode::Test_nil},
+    {"Test_val", phos::vm::Opcode::Test_val},
+    {"Panic", phos::vm::Opcode::Panic},
+    {"None", phos::vm::Opcode::None},
+};
+} // namespace
+
 
 std::string phos::vm::opcode_to_string(Opcode code)
 {
-    switch (code) {
-    case Opcode::Load_const:
-        return "Load_const";
-    case Opcode::Load_nil:
-        return "Load_nil";
-    case Opcode::Load_true:
-        return "Load_true";
-    case Opcode::Load_false:
-        return "Load_false";
-    case Opcode::Move:
-        return "Move";
-    case Opcode::Load_global:
-        return "Load_global";
-    case Opcode::Store_global:
-        return "Store_global";
-    case Opcode::Concat_str:
-        return "Concat_str";
-    case Opcode::Add_i64:
-        return "Add_i64";
-    case Opcode::Add_u64:
-        return "Add_u64";
-    case Opcode::Add_f64:
-        return "Add_f64";
-    case Opcode::Sub_i64:
-        return "Sub_i64";
-    case Opcode::Sub_u64:
-        return "Sub_u64";
-    case Opcode::Sub_f64:
-        return "Sub_f64";
-    case Opcode::Mul_i64:
-        return "Mul_i64";
-    case Opcode::Mul_u64:
-        return "Mul_u64";
-    case Opcode::Mul_f64:
-        return "Mul_f64";
-    case Opcode::Div_i64:
-        return "Div_i64";
-    case Opcode::Div_u64:
-        return "Div_u64";
-    case Opcode::Div_f64:
-        return "Div_f64";
-    case Opcode::Mod_i64:
-        return "Mod_i64";
-    case Opcode::Mod_u64:
-        return "Mod_u64";
-    case Opcode::Mod_f64:
-        return "Mod_f64";
-    case Opcode::Cast_i8:
-        return "Cast_i8";
-    case Opcode::Cast_i16:
-        return "Cast_i16";
-    case Opcode::Cast_i32:
-        return "Cast_i32";
-    case Opcode::Cast_i64:
-        return "Cast_i64";
-    case Opcode::Cast_u8:
-        return "Cast_u8";
-    case Opcode::Cast_u16:
-        return "Cast_u16";
-    case Opcode::Cast_u32:
-        return "Cast_u32";
-    case Opcode::Cast_u64:
-        return "Cast_u64";
-    case Opcode::Cast_f16:
-        return "Cast_f16";
-    case Opcode::Cast_f32:
-        return "Cast_f32";
-    case Opcode::Cast_f64:
-        return "Cast_f64";
-    case Opcode::Cast_str_to_arr:
-        return "Cast_str_to_arr";
-    case Opcode::Cast_arr_to_str:
-        return "Cast_arr_to_str";
-    case Opcode::Sat_cast_i8:
-        return "Sat_cast_i8";
-    case Opcode::Sat_cast_i16:
-        return "Sat_cast_i16";
-    case Opcode::Sat_cast_i32:
-        return "Sat_cast_i32";
-    case Opcode::Sat_cast_i64:
-        return "Sat_cast_i64";
-    case Opcode::Sat_cast_u8:
-        return "Sat_cast_u8";
-    case Opcode::Sat_cast_u16:
-        return "Sat_cast_u16";
-    case Opcode::Sat_cast_u32:
-        return "Sat_cast_u32";
-    case Opcode::Sat_cast_u64:
-        return "Sat_cast_u64";
-    case Opcode::Eq_i64:
-        return "Eq_i64";
-    case Opcode::Neq_i64:
-        return "Neq_i64";
-    case Opcode::Lt_i64:
-        return "Lt_i64";
-    case Opcode::Lte_i64:
-        return "Lte_i64";
-    case Opcode::Gt_i64:
-        return "Gt_i64";
-    case Opcode::Gte_i64:
-        return "Gte_i64";
-    case Opcode::Eq_u64:
-        return "Eq_u64";
-    case Opcode::Neq_u64:
-        return "Neq_u64";
-    case Opcode::Lt_u64:
-        return "Lt_u64";
-    case Opcode::Lte_u64:
-        return "Lte_u64";
-    case Opcode::Gt_u64:
-        return "Gt_u64";
-    case Opcode::Gte_u64:
-        return "Gte_u64";
-    case Opcode::Eq_f64:
-        return "Eq_f64";
-    case Opcode::Neq_f64:
-        return "Neq_f64";
-    case Opcode::Lt_f64:
-        return "Lt_f64";
-    case Opcode::Lte_f64:
-        return "Lte_f64";
-    case Opcode::Gt_f64:
-        return "Gt_f64";
-    case Opcode::Gte_f64:
-        return "Gte_f64";
-    case Opcode::BitAnd_i64:
-        return "BitAnd_i64";
-    case Opcode::BitOr_i64:
-        return "BitOr_i64";
-    case Opcode::BitXor_i64:
-        return "BitXor_i64";
-    case Opcode::Shl_i64:
-        return "Shl_i64";
-    case Opcode::Shr_i64:
-        return "Shr_i64";
-    case Opcode::BitAnd_u64:
-        return "BitAnd_u64";
-    case Opcode::BitOr_u64:
-        return "BitOr_u64";
-    case Opcode::BitXor_u64:
-        return "BitXor_u64";
-    case Opcode::Shl_u64:
-        return "Shl_u64";
-    case Opcode::Shr_u64:
-        return "Shr_u64";
-    case Opcode::Neg_i64:
-        return "Neg_i64";
-    case Opcode::Neg_f64:
-        return "Neg_f64";
-    case Opcode::Not:
-        return "Not";
-    case Opcode::BitNot_i64:
-        return "BitNot_i64";
-    case Opcode::BitNot_u64:
-        return "BitNot_u64";
-    case Opcode::Print:
-        return "Print";
-    case Opcode::Set_upvalue:
-        return "Set_upvalue";
-    case Opcode::Get_upvalue:
-        return "Get_upvalue";
-    case Opcode::Make_closure:
-        return "Make_closure";
-    case Opcode::Jump:
-        return "Jump";
-    case Opcode::Jump_if_false:
-        return "Jump_if_false";
-    case Opcode::Unwrap_or:
-        return "Unwrap_or";
-    case Opcode::Call:
-        return "Call";
-    case Opcode::Return:
-        return "Return";
-    case Opcode::Eq_str:
-        return "Eq_str";
-    case Opcode::Neq_str:
-        return "Neq_str";
-    case Opcode::Len:
-        return "Len";
-    case Opcode::Make_array:
-        return "Make_array";
-    case Opcode::Load_index:
-        return "Load_index";
-    case Opcode::Store_index:
-        return "Store_index";
-    case Opcode::Make_range_ex:
-        return "Make_range_ex";
-    case Opcode::Make_range_in:
-        return "Make_range_in";
-    case Opcode::Make_iter:
-        return "Make_iter";
-    case Opcode::Iter_next:
-        return "Iter_next";
-    case Opcode::Iter_prev:
-        return "Iter_prev";
-    case Opcode::Make_model:
-        return "Make_model";
-    case Opcode::Load_field:
-        return "Load_field";
-    case Opcode::Store_field:
-        return "Store_field";
-    case Opcode::Make_union:
-        return "Make_union";
-    case Opcode::Test_union:
-        return "Test_union";
-    case Opcode::Load_union_payload:
-        return "Load_union_payload";
-    case Opcode::Wrap_option:
-        return "Wrap_option";
-    case Opcode::Unwrap_option:
-        return "Unwrap_option";
-    case Opcode::Test_nil:
-        return "Test_nil";
-    case Opcode::Test_val:
-        return "Test_val";
-    case Opcode::Panic:
-        return "Panic";
-    case Opcode::None:
-        return "None";
+    for (const auto &[name, op] : kOpcodeTable) {
+        if (op == code) {
+            return std::string(name);
+        }
     }
     return std::format("UNKNOWN_{}", static_cast<uint8_t>(code));
 }
 
 phos::vm::Opcode phos::vm::string_to_opcode(std::string code)
 {
-    if (code == "Load_const") {
-        return Opcode::Load_const;
-    }
-    if (code == "Load_nil") {
-        return Opcode::Load_nil;
-    }
-    if (code == "Load_true") {
-        return Opcode::Load_true;
-    }
-    if (code == "Load_false") {
-        return Opcode::Load_false;
-    }
-    if (code == "Move") {
-        return Opcode::Move;
-    }
-    if (code == "Load_global") {
-        return Opcode::Load_global;
-    }
-    if (code == "Store_global") {
-        return Opcode::Store_global;
-    }
-    if (code == "Concat_str") {
-        return Opcode::Concat_str;
-    }
-    if (code == "Add_i64") {
-        return Opcode::Add_i64;
-    }
-    if (code == "Add_u64") {
-        return Opcode::Add_u64;
-    }
-    if (code == "Add_f64") {
-        return Opcode::Add_f64;
-    }
-    if (code == "Sub_i64") {
-        return Opcode::Sub_i64;
-    }
-    if (code == "Sub_u64") {
-        return Opcode::Sub_u64;
-    }
-    if (code == "Sub_f64") {
-        return Opcode::Sub_f64;
-    }
-    if (code == "Mul_i64") {
-        return Opcode::Mul_i64;
-    }
-    if (code == "Mul_u64") {
-        return Opcode::Mul_u64;
-    }
-    if (code == "Mul_f64") {
-        return Opcode::Mul_f64;
-    }
-    if (code == "Div_i64") {
-        return Opcode::Div_i64;
-    }
-    if (code == "Div_u64") {
-        return Opcode::Div_u64;
-    }
-    if (code == "Div_f64") {
-        return Opcode::Div_f64;
-    }
-    if (code == "Mod_i64") {
-        return Opcode::Mod_i64;
-    }
-    if (code == "Mod_u64") {
-        return Opcode::Mod_u64;
-    }
-    if (code == "Mod_f64") {
-        return Opcode::Mod_f64;
-    }
-    if (code == "Cast_i8") {
-        return Opcode::Cast_i8;
-    }
-    if (code == "Cast_i16") {
-        return Opcode::Cast_i16;
-    }
-    if (code == "Cast_i32") {
-        return Opcode::Cast_i32;
-    }
-    if (code == "Cast_i64") {
-        return Opcode::Cast_i64;
-    }
-    if (code == "Cast_u8") {
-        return Opcode::Cast_u8;
-    }
-    if (code == "Cast_u16") {
-        return Opcode::Cast_u16;
-    }
-    if (code == "Cast_u32") {
-        return Opcode::Cast_u32;
-    }
-    if (code == "Cast_u64") {
-        return Opcode::Cast_u64;
-    }
-    if (code == "Cast_f16") {
-        return Opcode::Cast_f16;
-    }
-    if (code == "Cast_f32") {
-        return Opcode::Cast_f32;
-    }
-    if (code == "Cast_f64") {
-        return Opcode::Cast_f64;
-    }
-    if (code == "Cast_str_to_arr") {
-        return Opcode::Cast_str_to_arr;
-    }
-    if (code == "Cast_arr_to_str") {
-        return Opcode::Cast_arr_to_str;
-    }
-    if (code == "Sat_cast_i8") {
-        return Opcode::Sat_cast_i8;
-    }
-    if (code == "Sat_cast_i16") {
-        return Opcode::Sat_cast_i16;
-    }
-    if (code == "Sat_cast_i32") {
-        return Opcode::Sat_cast_i32;
-    }
-    if (code == "Sat_cast_i64") {
-        return Opcode::Sat_cast_i64;
-    }
-    if (code == "Sat_cast_u8") {
-        return Opcode::Sat_cast_u8;
-    }
-    if (code == "Sat_cast_u16") {
-        return Opcode::Sat_cast_u16;
-    }
-    if (code == "Sat_cast_u32") {
-        return Opcode::Sat_cast_u32;
-    }
-    if (code == "Sat_cast_u64") {
-        return Opcode::Sat_cast_u64;
-    }
-    if (code == "Eq_i64") {
-        return Opcode::Eq_i64;
-    }
-    if (code == "Neq_i64") {
-        return Opcode::Neq_i64;
-    }
-    if (code == "Lt_i64") {
-        return Opcode::Lt_i64;
-    }
-    if (code == "Lte_i64") {
-        return Opcode::Lte_i64;
-    }
-    if (code == "Gt_i64") {
-        return Opcode::Gt_i64;
-    }
-    if (code == "Gte_i64") {
-        return Opcode::Gte_i64;
-    }
-    if (code == "Eq_u64") {
-        return Opcode::Eq_u64;
-    }
-    if (code == "Neq_u64") {
-        return Opcode::Neq_u64;
-    }
-    if (code == "Lt_u64") {
-        return Opcode::Lt_u64;
-    }
-    if (code == "Lte_u64") {
-        return Opcode::Lte_u64;
-    }
-    if (code == "Gt_u64") {
-        return Opcode::Gt_u64;
-    }
-    if (code == "Gte_u64") {
-        return Opcode::Gte_u64;
-    }
-    if (code == "Eq_f64") {
-        return Opcode::Eq_f64;
-    }
-    if (code == "Neq_f64") {
-        return Opcode::Neq_f64;
-    }
-    if (code == "Lt_f64") {
-        return Opcode::Lt_f64;
-    }
-    if (code == "Lte_f64") {
-        return Opcode::Lte_f64;
-    }
-    if (code == "Gt_f64") {
-        return Opcode::Gt_f64;
-    }
-    if (code == "Gte_f64") {
-        return Opcode::Gte_f64;
-    }
-    if (code == "BitAnd_i64") {
-        return Opcode::BitAnd_i64;
-    }
-    if (code == "BitOr_i64") {
-        return Opcode::BitOr_i64;
-    }
-    if (code == "BitXor_i64") {
-        return Opcode::BitXor_i64;
-    }
-    if (code == "Shl_i64") {
-        return Opcode::Shl_i64;
-    }
-    if (code == "Shr_i64") {
-        return Opcode::Shr_i64;
-    }
-    if (code == "BitAnd_u64") {
-        return Opcode::BitAnd_u64;
-    }
-    if (code == "BitOr_u64") {
-        return Opcode::BitOr_u64;
-    }
-    if (code == "BitXor_u64") {
-        return Opcode::BitXor_u64;
-    }
-    if (code == "Shl_u64") {
-        return Opcode::Shl_u64;
-    }
-    if (code == "Shr_u64") {
-        return Opcode::Shr_u64;
-    }
-    if (code == "Neg_i64") {
-        return Opcode::Neg_i64;
-    }
-    if (code == "Neg_f64") {
-        return Opcode::Neg_f64;
-    }
-    if (code == "Not") {
-        return Opcode::Not;
-    }
-    if (code == "BitNot_i64") {
-        return Opcode::BitNot_i64;
-    }
-    if (code == "BitNot_u64") {
-        return Opcode::BitNot_u64;
-    }
-    if (code == "Print") {
-        return Opcode::Print;
-    }
-    if (code == "Set_upvalue") {
-        return Opcode::Set_upvalue;
-    }
-    if (code == "Get_upvalue") {
-        return Opcode::Get_upvalue;
-    }
-    if (code == "Make_closure") {
-        return Opcode::Make_closure;
-    }
-    if (code == "Jump") {
-        return Opcode::Jump;
-    }
-    if (code == "Jump_if_false") {
-        return Opcode::Jump_if_false;
-    }
-    if (code == "Unwrap_or") {
-        return Opcode::Unwrap_or;
-    }
-    if (code == "Call") {
-        return Opcode::Call;
-    }
-    if (code == "Return") {
-        return Opcode::Return;
-    }
-    if (code == "Eq_str") {
-        return Opcode::Eq_str;
-    }
-    if (code == "Neq_str") {
-        return Opcode::Neq_str;
-    }
-    if (code == "Len") {
-        return Opcode::Len;
-    }
-    if (code == "Make_array") {
-        return Opcode::Make_array;
-    }
-    if (code == "Load_index") {
-        return Opcode::Load_index;
-    }
-    if (code == "Store_index") {
-        return Opcode::Store_index;
-    }
-    if (code == "Make_range_ex") {
-        return Opcode::Make_range_ex;
-    }
-    if (code == "Make_range_in") {
-        return Opcode::Make_range_in;
-    }
-    if (code == "Make_iter") {
-        return Opcode::Make_iter;
-    }
-    if (code == "Iter_next") {
-        return Opcode::Iter_next;
-    }
-    if (code == "Iter_prev") {
-        return Opcode::Iter_prev;
-    }
-    if (code == "Make_model") {
-        return Opcode::Make_model;
-    }
-    if (code == "Load_field") {
-        return Opcode::Load_field;
-    }
-    if (code == "Store_field") {
-        return Opcode::Store_field;
-    }
-    if (code == "Make_union") {
-        return Opcode::Make_union;
-    }
-    if (code == "Test_union") {
-        return Opcode::Test_union;
-    }
-    if (code == "Load_union_payload") {
-        return Opcode::Load_union_payload;
-    }
-    if (code == "Wrap_option") {
-        return Opcode::Wrap_option;
-    }
-    if (code == "Unwrap_option") {
-        return Opcode::Unwrap_option;
-    }
-    if (code == "Test_nil") {
-        return Opcode::Test_nil;
-    }
-    if (code == "Test_val") {
-        return Opcode::Test_val;
-    }
-    if (code == "Panic") {
-        return Opcode::Panic;
-    }
-    if (code == "None") {
-        return Opcode::None;
+    for (const auto &[name, op] : kOpcodeTable) {
+        if (name == code) {
+            return op;
+        }
     }
     return Opcode::Return;
 }

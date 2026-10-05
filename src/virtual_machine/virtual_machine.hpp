@@ -12,6 +12,7 @@
 #include <optional>
 #include <ostream>
 #include <print>
+#include <vector>
 
 namespace phos::vm {
 
@@ -38,6 +39,18 @@ private:
     // The compiler will generate two versions of this function!
     template <bool Is_Tracing>
     void execute_loop(Green_thread_data *thread);
+
+    // The three heaviest opcode handlers, extracted so execute_loop stays a
+    // readable dispatch skeleton. Each takes the loop's cached frame state by
+    // reference and leaves it ready for the next iteration; ip/base also flow
+    // through ctx's pointers. always_inline keeps the call free even in debug
+    // builds (single call site each); no behavior change vs the inline cases.
+    __attribute__((always_inline)) inline void op_call(
+        Instruction inst, Vm_context &ctx, Call_frame *&frame, const Instruction *&code, const Value *&constants, size_t &ip, size_t &base);
+    // Returns true when the thread completed (caller must return from the loop).
+    __attribute__((always_inline)) inline bool op_return(
+        Instruction inst, Vm_context &ctx, Call_frame *&frame, const Instruction *&code, const Value *&constants, size_t &ip, size_t &base);
+    __attribute__((always_inline)) inline void op_make_closure(Instruction inst, Vm_context &ctx, const Instruction *code);
 
 public:
     std::vector<std::string> cmd_args{};
@@ -73,18 +86,33 @@ public:
         }
     }
 
+    // Runs a single closure on a fresh interpreter thread (fresh call stack
+    // plus register window). Shared by the file runner and the REPL, which
+    // previously duplicated this bootstrap.
+    static void run_closure(Virtual_machine &vm, Closure_data *closure)
+    {
+        constexpr size_t call_stack_capacity = 256;
+
+        std::vector<Call_frame> frames(call_stack_capacity);
+        frames[0] = Call_frame(closure, 0);
+
+        std::vector<Value> thread_memory(call_stack_capacity * Virtual_machine::FRAME_REGISTER_WINDOW);
+
+        Green_thread_data thread{};
+        thread.call_stack = frames.data();
+        thread.call_stack_count = 1;
+        thread.call_stack_capacity = frames.size();
+        thread.value_stack = thread_memory.data();
+        thread.value_stack_capacity = thread_memory.size();
+        thread.is_completed = false;
+
+        vm.execute(&thread);
+    }
+
     gc::Gc_heap &gc_ref() noexcept
     {
         return gc;
     }
-
-    // Per-type-family opcode helpers. The arithmetic and comparison families
-    // are contiguous in the Opcode enum, so each family is one template.
-    template <typename T>
-    T binary_op(T a, T b, Opcode op, Opcode family_base);
-
-    template <typename T>
-    bool compare_op(T a, T b, Opcode op, Opcode family_base);
 
     std::optional<types::Primitive_kind> cast_target_kind(Opcode op);
 };

@@ -1,0 +1,5 @@
+[INFO] : BENCH ./bench/closure.phos: 420 ms (median of 3)
+[INFO] : BENCH ./bench/concat.phos: 366 ms (median of 3)
+[INFO] : BENCH ./bench/fib.phos: 650 ms (median of 3)
+[INFO] : BENCH ./bench/float_loop.phos: 824 ms (median of 3)
+[INFO] : BENCH ./bench/models.phos: 507 ms (median of 3)

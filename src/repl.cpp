@@ -178,6 +178,18 @@ Repl::Attempt Repl::parse_full(const std::string &text)
     return attempt;
 }
 
+ast::Stmt_id Repl::wrap_print(ast::Expr_id expr, ast::Source_location loc)
+{
+    return ctx.tree.add_stmt(
+        ast::Stmt{ast::Print_stmt{
+            .stream = ast::Print_stream::STDOUT,
+            .expressions = {expr},
+            .sep = " ",
+            .end = "\n",
+            .loc = loc,
+        }});
+}
+
 void Repl::submit_entry(Attempt &attempt)
 {
     auto statements = std::move(attempt.statements);
@@ -185,15 +197,7 @@ void Repl::submit_entry(Attempt &attempt)
     // Echo: a bare expression entry prints its value.
     if (statements.size() == 1 && std::holds_alternative<ast::Expr_stmt>(ctx.tree.get(statements[0]).node)) {
         auto &expr_stmt = std::get<ast::Expr_stmt>(ctx.tree.get(statements[0]).node);
-        ast::Stmt_id print_id = ctx.tree.add_stmt(
-            ast::Stmt{ast::Print_stmt{
-                .stream = ast::Print_stream::STDOUT,
-                .expressions = {expr_stmt.expression},
-                .sep = " ",
-                .end = "\n",
-                .loc = expr_stmt.loc,
-            }});
-        statements[0] = print_id;
+        statements[0] = wrap_print(expr_stmt.expression, expr_stmt.loc);
     }
 
     submit_statements(std::move(statements));
@@ -223,23 +227,7 @@ void Repl::submit_statements(std::vector<ast::Stmt_id> statements)
 
 void Repl::execute_closure(const Closure_data &closure)
 {
-    constexpr size_t call_stack_capacity = 256;
-
-    std::vector<vm::Call_frame> frames(call_stack_capacity);
-    frames[0] = vm::Call_frame(const_cast<Closure_data *>(&closure), 0);
-
-    std::vector<Value> thread_memory(call_stack_capacity * vm::Virtual_machine::FRAME_REGISTER_WINDOW);
-
-    Green_thread_data main_thread{};
-    main_thread.call_stack = frames.data();
-    main_thread.call_stack_count = 1;
-    main_thread.call_stack_capacity = frames.size();
-    main_thread.value_stack = thread_memory.data();
-    main_thread.value_stack_capacity = thread_memory.size();
-    main_thread.live_value_count = vm::Virtual_machine::FRAME_REGISTER_WINDOW;
-    main_thread.is_completed = false;
-
-    vm.execute(&main_thread);
+    vm::Virtual_machine::run_closure(vm, const_cast<Closure_data *>(&closure));
 }
 
 void Repl::clear_session()
@@ -307,14 +295,7 @@ void Repl::print_type(const std::string &text)
     // A throwaway module lets the semantic pass resolve and stamp the
     // expression's type without compiling or executing anything.
     Module_id mod_id = ctx.workspace.create_module("", "<repl-type>");
-    ast::Stmt_id wrapper = ctx.tree.add_stmt(
-        ast::Stmt{ast::Print_stmt{
-            .stream = ast::Print_stream::STDOUT,
-            .expressions = {expr_id},
-            .sep = " ",
-            .end = "\n",
-            .loc = expr_stmt.loc,
-        }});
+    ast::Stmt_id wrapper = wrap_print(expr_id, expr_stmt.loc);
     ctx.workspace.get_module(mod_id).add_ast_root(wrapper);
 
     auto semantic_errors = checker.check_workspace();

@@ -1,0 +1,10 @@
+fn make_adder(n: i32) -> fn(i32) -> i32 {
+    return fn(x: i32) -> i32 { return x + n; };
+}
+
+let mut total: i64 = 0;
+for i in 0..200000 {
+    let add := make_adder(i);
+    total = total + add(1);
+}
+print(total);
