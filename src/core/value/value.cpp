@@ -257,6 +257,10 @@ double Value::as_float() const
         return as.f64;
     default:
         if (is_integer()) {
+            // Unsigned values above INT64_MAX would throw in as_int().
+            if (is_u_integer()) {
+                return static_cast<double>(as_uint());
+            }
             return static_cast<double>(as_int());
         }
         if (tag_ == Value_tag::Bool) {
@@ -574,6 +578,37 @@ std::optional<Value> Value::coerce_literal(types::Primitive_kind target_type) co
     }
 
     if (is_integer()) {
+        // Unsigned sources must not go through as_int(): values above
+        // INT64_MAX would throw instead of range-checking cleanly.
+        if (is_u_integer()) {
+            uint64_t u = as_uint();
+            if (target_type == types::Primitive_kind::I8 && u <= 127) {
+                return Value(static_cast<int8_t>(u));
+            }
+            if (target_type == types::Primitive_kind::I16 && u <= 32767) {
+                return Value(static_cast<int16_t>(u));
+            }
+            if (target_type == types::Primitive_kind::I32 && u <= 2147483647) {
+                return Value(static_cast<int32_t>(u));
+            }
+            if (target_type == types::Primitive_kind::I64 && u <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+                return Value(static_cast<int64_t>(u));
+            }
+            if (target_type == types::Primitive_kind::U8 && u <= 255) {
+                return Value(static_cast<uint8_t>(u));
+            }
+            if (target_type == types::Primitive_kind::U16 && u <= 65535) {
+                return Value(static_cast<uint16_t>(u));
+            }
+            if (target_type == types::Primitive_kind::U32 && u <= 4294967295ULL) {
+                return Value(static_cast<uint32_t>(u));
+            }
+            if (target_type == types::Primitive_kind::U64) {
+                return Value(u);
+            }
+            return std::nullopt;
+        }
+
         int64_t v = as_int();
         if (target_type == types::Primitive_kind::I8 && v >= -128 && v <= 127) {
             return Value(static_cast<int8_t>(v));
@@ -617,8 +652,14 @@ std::string Value::to_string() const
     }
 
     if (is_integer()) {
+        // Unsigned values above INT64_MAX would throw in as_int().
         char buffer[64];
-        auto res = std::to_chars(buffer, buffer + sizeof(buffer), as_int());
+        std::to_chars_result res;
+        if (is_u_integer()) {
+            res = std::to_chars(buffer, buffer + sizeof(buffer), as_uint());
+        } else {
+            res = std::to_chars(buffer, buffer + sizeof(buffer), as_int());
+        }
 
         if (res.ec == std::errc()) {
             return std::string(buffer, res.ptr);
@@ -664,7 +705,8 @@ std::string Value::to_debug_string(bool is_nested) const
     } else if (tag_ == Value_tag::Bool) {
         res = as.boolean ? "true" : "false";
     } else if (is_integer()) {
-        res = std::to_string(as_int());
+        // Unsigned values above INT64_MAX would throw in as_int().
+        res = is_u_integer() ? std::to_string(as_uint()) : std::to_string(as_int());
     } else if (is_float()) {
         res = std::format("{}", as_float());
     } else if (tag_ == Value_tag::String) {
@@ -814,6 +856,60 @@ std::optional<Value> coerce_numeric_literal(const Value &literal, types::Primiti
     }
 
     if (literal.is_integer()) {
+        // Unsigned sources must not go through as_int(): values above
+        // INT64_MAX would throw instead of range-checking cleanly.
+        if (literal.is_u_integer()) {
+            uint64_t raw = literal.as_uint();
+            switch (target_type) {
+            case types::Primitive_kind::I8:
+                if (raw <= static_cast<uint64_t>(std::numeric_limits<int8_t>::max())) {
+                    return Value(static_cast<int8_t>(raw));
+                }
+                break;
+            case types::Primitive_kind::I16:
+                if (raw <= static_cast<uint64_t>(std::numeric_limits<int16_t>::max())) {
+                    return Value(static_cast<int16_t>(raw));
+                }
+                break;
+            case types::Primitive_kind::I32:
+                if (raw <= static_cast<uint64_t>(std::numeric_limits<int32_t>::max())) {
+                    return Value(static_cast<int32_t>(raw));
+                }
+                break;
+            case types::Primitive_kind::I64:
+                if (raw <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+                    return Value(static_cast<int64_t>(raw));
+                }
+                break;
+            case types::Primitive_kind::U8:
+                if (raw <= std::numeric_limits<uint8_t>::max()) {
+                    return Value(static_cast<uint8_t>(raw));
+                }
+                break;
+            case types::Primitive_kind::U16:
+                if (raw <= std::numeric_limits<uint16_t>::max()) {
+                    return Value(static_cast<uint16_t>(raw));
+                }
+                break;
+            case types::Primitive_kind::U32:
+                if (raw <= std::numeric_limits<uint32_t>::max()) {
+                    return Value(static_cast<uint32_t>(raw));
+                }
+                break;
+            case types::Primitive_kind::U64:
+                return Value(raw);
+
+            case types::Primitive_kind::F16:
+            case types::Primitive_kind::F32:
+            case types::Primitive_kind::F64:
+                return std::nullopt;
+
+            default:
+                return std::nullopt;
+            }
+            return std::nullopt;
+        }
+
         int64_t raw_val = literal.as_int();
 
         switch (target_type) {

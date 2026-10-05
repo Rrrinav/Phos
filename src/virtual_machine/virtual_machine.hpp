@@ -40,6 +40,18 @@ private:
     template <bool Is_Tracing>
     void execute_loop(Green_thread_data *thread);
 
+    // The three heaviest opcode handlers, extracted so execute_loop stays a
+    // readable dispatch skeleton. Each takes the loop's cached frame state by
+    // reference and leaves it ready for the next iteration; ip/base also flow
+    // through ctx's pointers. always_inline keeps the call free even in debug
+    // builds (single call site each); no behavior change vs the inline cases.
+    __attribute__((always_inline)) inline void op_call(
+        Instruction inst, Vm_context &ctx, Call_frame *&frame, const Instruction *&code, const Value *&constants, size_t &ip, size_t &base);
+    // Returns true when the thread completed (caller must return from the loop).
+    __attribute__((always_inline)) inline bool op_return(
+        Instruction inst, Vm_context &ctx, Call_frame *&frame, const Instruction *&code, const Value *&constants, size_t &ip, size_t &base);
+    __attribute__((always_inline)) inline void op_make_closure(Instruction inst, Vm_context &ctx, const Instruction *code);
+
 public:
     std::vector<std::string> cmd_args{};
     std::vector<Value> globals;

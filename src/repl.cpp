@@ -178,6 +178,18 @@ Repl::Attempt Repl::parse_full(const std::string &text)
     return attempt;
 }
 
+ast::Stmt_id Repl::wrap_print(ast::Expr_id expr, ast::Source_location loc)
+{
+    return ctx.tree.add_stmt(
+        ast::Stmt{ast::Print_stmt{
+            .stream = ast::Print_stream::STDOUT,
+            .expressions = {expr},
+            .sep = " ",
+            .end = "\n",
+            .loc = loc,
+        }});
+}
+
 void Repl::submit_entry(Attempt &attempt)
 {
     auto statements = std::move(attempt.statements);
@@ -185,15 +197,7 @@ void Repl::submit_entry(Attempt &attempt)
     // Echo: a bare expression entry prints its value.
     if (statements.size() == 1 && std::holds_alternative<ast::Expr_stmt>(ctx.tree.get(statements[0]).node)) {
         auto &expr_stmt = std::get<ast::Expr_stmt>(ctx.tree.get(statements[0]).node);
-        ast::Stmt_id print_id = ctx.tree.add_stmt(
-            ast::Stmt{ast::Print_stmt{
-                .stream = ast::Print_stream::STDOUT,
-                .expressions = {expr_stmt.expression},
-                .sep = " ",
-                .end = "\n",
-                .loc = expr_stmt.loc,
-            }});
-        statements[0] = print_id;
+        statements[0] = wrap_print(expr_stmt.expression, expr_stmt.loc);
     }
 
     submit_statements(std::move(statements));
@@ -291,14 +295,7 @@ void Repl::print_type(const std::string &text)
     // A throwaway module lets the semantic pass resolve and stamp the
     // expression's type without compiling or executing anything.
     Module_id mod_id = ctx.workspace.create_module("", "<repl-type>");
-    ast::Stmt_id wrapper = ctx.tree.add_stmt(
-        ast::Stmt{ast::Print_stmt{
-            .stream = ast::Print_stream::STDOUT,
-            .expressions = {expr_id},
-            .sep = " ",
-            .end = "\n",
-            .loc = expr_stmt.loc,
-        }});
+    ast::Stmt_id wrapper = wrap_print(expr_id, expr_stmt.loc);
     ctx.workspace.get_module(mod_id).add_ast_root(wrapper);
 
     auto semantic_errors = checker.check_workspace();

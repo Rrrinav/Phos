@@ -38,6 +38,25 @@ static std::string lib_path()
     return BIN + "libphos-" + profile_key() + ".a";
 }
 
+// TARGET is shared across profiles while objects/libs are per-profile, so a
+// profile switch would otherwise leave a stale binary in place. Refreshing
+// this stamp on switch makes the link step see a changed input and relink.
+static std::string profile_stamp()
+{
+    const std::string stamp = BIN + ".profile";
+    std::string cur;
+    if (auto r = bld::fs::read_file(stamp); r) {
+        cur = *r;
+    }
+    if (cur != profile_key()) {
+        if (!bld::fs::exists(BIN)) {
+            std::ignore = bld::fs::make_dirs(BIN);
+        }
+        std::ignore = bld::fs::write_file(stamp, profile_key());
+    }
+    return stamp;
+}
+
 const std::vector<std::string> COMMON_FLAGS = {"--std=c++23", "-pthread", "-I./src", "-Wpedantic", "-Wall", "-Wextra"};
 const std::vector<std::string> DEBUG_FLAGS = {"-ggdb", "-O0"};
 const std::vector<std::string> RELEASE_FLAGS = {"-O2", "-DNDEBUG"};
@@ -309,6 +328,7 @@ void build_interpreter(bool release = false, bool force = false)
         std::string lname = lt.name;
         plan.needs(lname, main_obj);
         plan.needs(lname, lib_path());
+        plan.needs(lname, profile_stamp());
         plan.produces(lname, TARGET);
 
         if (!run_plan(plan, force)) {
@@ -388,6 +408,7 @@ void build_custom_interpreter(bool release = false, bool force = false)
         plan.needs(lname, o);
     }
     plan.needs(lname, lib_path());
+    plan.needs(lname, profile_stamp());
     plan.produces(lname, TARGET);
 
     if (!run_plan(plan, force)) {

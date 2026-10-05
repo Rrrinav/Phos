@@ -183,6 +183,155 @@ static void close_upvalues(Green_thread_data *thread, size_t last_stack_index)
     }
 }
 
+__attribute__((always_inline)) void Virtual_machine::op_call(
+    Instruction inst, Vm_context &ctx, Call_frame *&frame, const Instruction *&code, const Value *&constants, size_t &ip, size_t &base)
+{
+    Value *registers = ctx.registers;
+    Green_thread_data *thread = ctx.thread;
+
+    Value callee = registers[base + inst.rrr.src_a];
+    uint8_t arg_count = inst.rrr.src_b;
+
+    if (!callee.is_closure()) {
+        panic("Attempted to call a non-function value at IP: {}", ip - 1);
+    }
+
+    Closure_data *target_closure = callee.as_closure();
+
+    if (target_closure->native_func.has_value()) {
+        if (target_closure->is_variadic) {
+            if (arg_count < target_closure->min_arity) {
+                panic("Arity mismatch. Expected at least {} arguments, got {} at IP: {}", target_closure->min_arity, arg_count, ip - 1);
+            }
+        } else if (target_closure->arity != arg_count) {
+            panic("Arity mismatch. Expected {} arguments, got {} at IP: {}", target_closure->arity, arg_count, ip - 1);
+        }
+
+        frame->ip = ip;
+        std::span<Value> args(&registers[base + inst.rrr.src_a + 1], arg_count);
+        Value result = (*target_closure->native_func)(ctx, args);
+        registers[base + inst.rrr.dst] = result;
+        return;
+    }
+
+    if (target_closure->arity != arg_count) {
+        panic("Arity mismatch. Expected {} arguments, got {} at IP: {}", target_closure->arity, arg_count, ip - 1);
+    }
+
+    if (target_closure->upvalue_count > 0 && target_closure->upvalues == nullptr) {
+        panic(
+            "Attempted to call closure '{}' which captured {} upvalue(s) but has no captured environment.",
+            target_closure->name ? target_closure->name->chars : "?",
+            target_closure->upvalue_count);
+    }
+
+    if (thread->call_stack_count >= thread->call_stack_capacity) {
+        panic("Stack overflow! Maximum call depth exceeded.");
+    }
+
+    frame->ip = ip;
+    size_t new_base = base + inst.rrr.src_a + 1;
+    if (new_base + Vm_context::FRAME_REGISTER_WINDOW > thread->value_stack_capacity) {
+        panic("Register stack overflow! Need {} slots, have {}.", new_base + Vm_context::FRAME_REGISTER_WINDOW, thread->value_stack_capacity);
+    }
+
+    thread->call_stack[thread->call_stack_count++] = Call_frame(target_closure, new_base);
+
+    frame = &thread->call_stack[thread->call_stack_count - 1];
+    code = frame->closure->code;
+    constants = frame->closure->constants;
+    base = frame->frame_base;
+    ip = 0;
+    ctx = make_vm_context(*this, gc, arena, *thread, frame, registers, globals, ip, base);
+}
+
+__attribute__((always_inline)) bool Virtual_machine::op_return(
+    Instruction inst, Vm_context &ctx, Call_frame *&frame, const Instruction *&code, const Value *&constants, size_t &ip, size_t &base)
+{
+    Value *registers = ctx.registers;
+    Green_thread_data *thread = ctx.thread;
+
+    /* return R[dst] */
+    Value result = registers[base + inst.rrr.dst];
+
+    close_upvalues(thread, base);
+    thread->call_stack_count--;
+
+    if (thread->call_stack_count == 0) {
+        thread->is_completed = true;
+        return true;
+    }
+
+    size_t old_base = base;
+    // Footprint of the returning frame (frame still points at it).
+    // Only this window can hold GC references owned by the callee.
+    size_t old_footprint = (frame->closure != nullptr) ? frame->closure->register_footprint : Virtual_machine::FRAME_REGISTER_WINDOW;
+
+    frame = &thread->call_stack[thread->call_stack_count - 1];
+    code = frame->closure->code;
+    constants = frame->closure->constants;
+    ip = frame->ip;
+    base = frame->frame_base;
+
+    // CLEANUP FIRST!
+    // Wipe the returning frame's window to prevent GC ghost references.
+    // Value() is all zeros, so fill_n compiles to wide stores.
+    size_t clear_limit = old_base + old_footprint;
+    if (clear_limit > thread->value_stack_capacity) {
+        clear_limit = thread->value_stack_capacity;
+    }
+    std::fill_n(&registers[old_base], clear_limit - old_base, Value());
+
+    // 2. ASSIGN RESULT SECOND!
+    // Since base is now the caller's base, and we know the Call instruction was at ip-1.
+    Instruction caller_inst = code[ip - 1];
+    registers[base + caller_inst.rrr.dst] = result;
+
+    ctx = make_vm_context(*this, gc, arena, *thread, frame, registers, globals, ip, base);
+    return false;
+}
+
+__attribute__((always_inline)) void Virtual_machine::op_make_closure(Instruction inst, Vm_context &ctx, const Instruction *code)
+{
+    Value *registers = ctx.registers;
+    Green_thread_data *thread = ctx.thread;
+    size_t base = *ctx.frame_base;
+
+    Value prototype_val = ctx.frame->closure->constants[inst.ri.imm];
+    Closure_data *prototype = prototype_val.as_closure();
+
+    // The upvalue pointer array lives in trailing storage inside the
+    // same GC cell: one allocation, no malloc, nothing to free.
+    size_t array_bytes = prototype->upvalue_count * sizeof(Upvalue_data *);
+    Closure_data *instance = static_cast<Closure_data *>(
+        ctx.allocate_bytes(sizeof(Closure_data) + array_bytes, alignof(Closure_data), static_cast<uint8_t>(Value_tag::Closure)));
+    *instance = *prototype;
+    instance->is_prototype = false;
+    instance->upvalues = (instance->upvalue_count > 0) ? reinterpret_cast<Upvalue_data **>(instance + 1) : nullptr;
+    Value instance_val = Value::make_closure(instance, 0);
+    // Keeps the instance rooted across the allocating upvalue setup
+    // below. Closures without upvalues allocate nothing further, so
+    // skip the root push/pop on that path.
+    std::optional<Root_guard> guard;
+    if (instance->upvalue_count > 0) {
+        guard.emplace(ctx.protect(&instance_val));
+    }
+
+    for (std::size_t i = 0; i < instance->upvalue_count; ++i) {
+        Instruction route = code[(*ctx.ip)++];
+        bool is_local = (route.rrr.src_a == 1);
+        uint8_t index = route.rrr.src_b;
+
+        if (is_local) {
+            instance->upvalues[i] = capture_upvalue(thread, base + index, ctx);
+        } else {
+            instance->upvalues[i] = ctx.frame->closure->upvalues[index];
+        }
+    }
+
+    registers[base + inst.ri.dst] = instance_val;
+}
+
 template <bool Is_Tracing>
 void Virtual_machine::execute_loop(Green_thread_data *thread)
 {
@@ -448,102 +597,14 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
 
         case Opcode::Call: {
-            Value callee = registers[base + inst.rrr.src_a];
-            uint8_t arg_count = inst.rrr.src_b;
-
-            if (!callee.is_closure()) {
-                panic("Attempted to call a non-function value at IP: {}", ip - 1);
-            }
-
-            Closure_data *target_closure = callee.as_closure();
-
-            if (target_closure->native_func.has_value()) {
-                if (target_closure->is_variadic) {
-                    if (arg_count < target_closure->min_arity) {
-                        panic("Arity mismatch. Expected at least {} arguments, got {} at IP: {}", target_closure->min_arity, arg_count, ip - 1);
-                    }
-                } else if (target_closure->arity != arg_count) {
-                    panic("Arity mismatch. Expected {} arguments, got {} at IP: {}", target_closure->arity, arg_count, ip - 1);
-                }
-
-                frame->ip = ip;
-                std::span<Value> args(&registers[base + inst.rrr.src_a + 1], arg_count);
-                Value result = (*target_closure->native_func)(ctx, args);
-                registers[base + inst.rrr.dst] = result;
-                break;
-            }
-
-            if (target_closure->arity != arg_count) {
-                panic("Arity mismatch. Expected {} arguments, got {} at IP: {}", target_closure->arity, arg_count, ip - 1);
-            }
-
-            if (target_closure->upvalue_count > 0 && target_closure->upvalues == nullptr) {
-                panic(
-                    "Attempted to call closure '{}' which captured {} upvalue(s) but has no captured environment.",
-                    target_closure->name ? target_closure->name->chars : "?",
-                    target_closure->upvalue_count);
-            }
-
-            if (thread->call_stack_count >= thread->call_stack_capacity) {
-                panic("Stack overflow! Maximum call depth exceeded.");
-            }
-
-            frame->ip = ip;
-            size_t new_base = base + inst.rrr.src_a + 1;
-            if (new_base + Vm_context::FRAME_REGISTER_WINDOW > thread->value_stack_capacity) {
-                panic("Register stack overflow! Need {} slots, have {}.", new_base + Vm_context::FRAME_REGISTER_WINDOW, thread->value_stack_capacity);
-            }
-
-            thread->call_stack[thread->call_stack_count++] = Call_frame(target_closure, new_base);
-
-            frame = &thread->call_stack[thread->call_stack_count - 1];
-            code = frame->closure->code;
-            constants = frame->closure->constants;
-            base = frame->frame_base;
-            ip = 0;
-            ctx = make_vm_context(*this, gc, arena, *thread, frame, registers, globals, ip, base);
+            op_call(inst, ctx, frame, code, constants, ip, base);
             break;
         }
 
         case Opcode::Return: {
-            /* return R[dst] */
-            Value result = registers[base + inst.rrr.dst];
-
-            close_upvalues(thread, base);
-            thread->call_stack_count--;
-
-            if (thread->call_stack_count == 0) {
-                thread->is_completed = true;
+            if (op_return(inst, ctx, frame, code, constants, ip, base)) {
                 return;
             }
-
-            size_t old_base = base;
-            // Footprint of the returning frame (frame still points at it).
-            // Only this window can hold GC references owned by the callee.
-            size_t old_footprint = (frame->closure != nullptr) ? frame->closure->register_footprint
-                                                               : Virtual_machine::FRAME_REGISTER_WINDOW;
-
-            frame = &thread->call_stack[thread->call_stack_count - 1];
-            code = frame->closure->code;
-            constants = frame->closure->constants;
-            ip = frame->ip;
-            base = frame->frame_base;
-
-            // CLEANUP FIRST!
-            // Wipe the returning frame's window to prevent GC ghost references.
-            // Value() is all zeros, so fill_n compiles to wide stores.
-            size_t clear_limit = old_base + old_footprint;
-            if (clear_limit > thread->value_stack_capacity) {
-                clear_limit = thread->value_stack_capacity;
-            }
-            std::fill_n(&registers[old_base], clear_limit - old_base, Value());
-
-            // 2. ASSIGN RESULT SECOND!
-            // Since base is now the caller's base, and we know the Call instruction was at ip-1.
-            Instruction caller_inst = code[ip - 1];
-            registers[base + caller_inst.rrr.dst] = result;
-
-            ctx = make_vm_context(*this, gc, arena, *thread, frame, registers, globals, ip, base);
             break;
         }
 
@@ -584,39 +645,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
         }
 
         case Opcode::Make_closure: {
-            Value prototype_val = frame->closure->constants[inst.ri.imm];
-            Closure_data *prototype = prototype_val.as_closure();
-
-            // The upvalue pointer array lives in trailing storage inside the
-            // same GC cell: one allocation, no malloc, nothing to free.
-            size_t array_bytes = prototype->upvalue_count * sizeof(Upvalue_data *);
-            Closure_data *instance = static_cast<Closure_data *>(
-                ctx.allocate_bytes(sizeof(Closure_data) + array_bytes, alignof(Closure_data), static_cast<uint8_t>(Value_tag::Closure)));
-            *instance = *prototype;
-            instance->is_prototype = false;
-            instance->upvalues = (instance->upvalue_count > 0) ? reinterpret_cast<Upvalue_data **>(instance + 1) : nullptr;
-            Value instance_val = Value::make_closure(instance, 0);
-            // Keeps the instance rooted across the allocating upvalue setup
-            // below. Closures without upvalues allocate nothing further, so
-            // skip the root push/pop on that path.
-            std::optional<Root_guard> guard;
-            if (instance->upvalue_count > 0) {
-                guard.emplace(ctx.protect(&instance_val));
-            }
-
-            for (std::size_t i = 0; i < instance->upvalue_count; ++i) {
-                Instruction route = code[ip++];
-                bool is_local = (route.rrr.src_a == 1);
-                uint8_t index = route.rrr.src_b;
-
-                if (is_local) {
-                    instance->upvalues[i] = capture_upvalue(thread, base + index, ctx);
-                } else {
-                    instance->upvalues[i] = frame->closure->upvalues[index];
-                }
-            }
-
-            registers[base + inst.ri.dst] = instance_val;
+            op_make_closure(inst, ctx, code);
             break;
         }
 

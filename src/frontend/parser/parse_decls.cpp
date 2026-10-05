@@ -565,6 +565,7 @@ Result<ast::Stmt_id> Parser::var_declaration(ast::Var_kind kind)
             .initializers = std::move(initializers),
             .type_inferred = type_inferred,
             .loc = {first_name.line, first_name.column},
+            .resolved_symbols = {},
         }});
 }
 

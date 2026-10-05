@@ -50,6 +50,8 @@ private:
     bool error_at_eof(const err::msg &m, const std::string &text) const;
     Attempt parse_attempt(const std::string &text);
     Attempt parse_full(const std::string &text);
+    // Builds a `print(expr)` statement for echo/:type wrappers.
+    ast::Stmt_id wrap_print(ast::Expr_id expr, ast::Source_location loc);
     void submit_entry(Attempt &attempt);
     void submit_statements(std::vector<ast::Stmt_id> statements);
     void execute_closure(const Closure_data &closure);

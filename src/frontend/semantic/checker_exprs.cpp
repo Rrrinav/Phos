@@ -1047,6 +1047,8 @@ types::Type_id Semantic_checker::check_unary_expr(ast::Expr_id expr_id, std::opt
     case lex::TokenType::BitNot:
         if (!ctx.tt.is_integer_primitive(right_type)) {
             type_error(loc, "Operand for '~' must be an integer.");
+        } else if (ctx.tt.is_unsigned_integer_primitive(right_type)) {
+            type_error(loc, "Operand for '~' cannot be unsigned.");
         }
         return get_node<ast::Unary_expr>(ctx.tree, expr_id).type = right_type;
     default:

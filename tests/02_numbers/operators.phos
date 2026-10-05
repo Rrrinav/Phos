@@ -31,7 +31,7 @@ print("bool mix", (1 < 2) || (10 < 2), !(1 > 2));
 print("u16 bits", 0b1111u16 & 0b0101u16, 0b1000u16 | 0b0011u16, 0b1111u16 ^ 0b0011u16);
 // shifts on u64
 print("shifts64", 1u64 << 40u64, 1u64 << 62u64, 4294967296u64 >> 32u64);
-// bitwise not (signed only; unsigned bitnot is a known panic, see error tests)
+// bitwise not (signed only; unsigned bitnot is rejected, see error tests)
 print("bitnot", ~5);
 // xor swap style arithmetic
 let x := 5;
