@@ -1,0 +1,6 @@
+let mut parts: string[] = [];
+for i in 0..30000 {
+    parts.push("abcdefgh");
+}
+let s := parts.join("");
+print(len(s));

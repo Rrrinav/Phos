@@ -55,6 +55,7 @@ int main(int argc, char *argv[])
         return EXIT_SUCCESS;
     }
 
+    engine.release_frontend();
     engine.execute();
 
     return EXIT_SUCCESS;

@@ -24,7 +24,7 @@ public:
     };
 
     explicit Parser(std::vector<lex::Token> tokens, Compiler_context &ctx, std::string source_name = "<input>")
-        : ctx_(ctx), tokens_(std::move(tokens)), source_name_(std::move(source_name))
+        : ctx_(ctx), tokens_(std::move(tokens)), source_name_(std::move(source_name)), source_file_(ctx_.intern_source(source_name_))
     {}
 
     Parse_result parse();
@@ -33,6 +33,7 @@ private:
     Compiler_context &ctx_;
     std::vector<lex::Token> tokens_;
     std::string source_name_;
+    uint32_t source_file_;
     size_t current_ = 0;
     size_t synthetic_name_counter_ = 0;
     std::string stage_ = "parser";
@@ -95,6 +96,7 @@ private:
 
     Result<ast::Expr_id> expression();
     Result<ast::Expr_id> assignment();
+    Result<ast::Expr_id> pipe_expr();
     Result<ast::Expr_id> range_expr();
     Result<ast::Expr_id> logical_or();
     Result<ast::Expr_id> logical_and();

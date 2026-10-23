@@ -71,11 +71,6 @@ enum class TokenType : uint8_t {
     Enum,
     Bind,
 
-    //  Concurrency
-    Spawn,
-    Await,
-    Yield,
-
     //  Built-ins
     Print,
     PrintErr,
@@ -113,6 +108,7 @@ enum class TokenType : uint8_t {
     //  Bitwise
     BitAnd,
     Pipe,
+    PipeGreater, // |>  pipeline: x |> f(a) => f(x, a)
     BitXor,
     BitNot,
     BitLShift,
@@ -200,11 +196,6 @@ static const std::flat_map<std::string_view, TokenType> token_keywords = {
     {"union", TokenType::Union},
     {"enum", TokenType::Enum},
     {"bind", TokenType::Bind},
-
-    // concurrency
-    {"spawn", TokenType::Spawn},
-    {"await", TokenType::Await},
-    {"yield", TokenType::Yield},
 
     // built-ins
     {"print", TokenType::Print},

@@ -11,6 +11,7 @@
 #include <stdfloat>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 // Completely removes gc_context ambiguity!
 namespace phos::vm {
@@ -84,9 +85,7 @@ struct Array_data
 
 struct Model_data
 {
-    types::Model_type signature;
     uint32_t field_count;
-    bool fields_on_heap{false};
     struct Value *fields;
 };
 
@@ -103,8 +102,6 @@ struct Closure_data
     std::size_t arity{};
     std::size_t min_arity{};
     bool is_variadic{false};
-    types::Function_type signature{};
-
     vm::Instruction *code{nullptr};
     std::size_t code_count{0};
 
@@ -124,7 +121,7 @@ struct Closure_data
     std::uint16_t register_footprint{256};
 };
 
-struct Green_thread_data
+struct Execution_state
 {
     vm::Call_frame *call_stack;
     size_t call_stack_capacity;
@@ -132,6 +129,7 @@ struct Green_thread_data
 
     struct Value *value_stack;
     size_t value_stack_capacity;
+    size_t value_stack_initialized;
 
     bool is_completed;
 
@@ -159,7 +157,6 @@ enum class Value_tag : uint8_t {
     Union,
     Closure,
     Iterator,
-    Green_thread,
     Upvalue
 };
 
@@ -187,7 +184,6 @@ private:
         Union_data *un;
         Closure_data *closure;
         Iterator_data *iter;
-        Green_thread_data *gt;
         Upvalue_data *upvalue;
 
         Payload() : i64(0)
@@ -222,10 +218,6 @@ private:
     {
         as.iter = i;
     }
-    Value(Green_thread_data *g, uint8_t d, bool gc) : tag_(Value_tag::Green_thread), option_depth_(d), is_gc_managed_(gc)
-    {
-        as.gt = g;
-    }
     Value(Upvalue_data *u, uint8_t d, bool gc) : tag_(Value_tag::Upvalue), option_depth_(d), is_gc_managed_(gc)
     {
         as.upvalue = u;
@@ -241,6 +233,9 @@ public:
     static Value make_string_concat(Allocator &alloc, std::string_view a, std::string_view b, uint8_t depth = 0);
 
     template <typename Allocator>
+    static Value make_string_join(Allocator &alloc, std::span<const Value> parts, std::string_view separator, uint8_t depth = 0);
+
+    template <typename Allocator>
     static Value make_array(Allocator &alloc, uint32_t capacity, uint8_t depth = 0);
 
     // Same as make_array but skips the nil-prefill. Only for callers that
@@ -249,17 +244,14 @@ public:
     static Value make_array_uninit(Allocator &alloc, uint32_t capacity, uint8_t depth = 0);
 
     template <typename Allocator>
-    static Value make_model(Allocator &alloc, types::Model_type sig, uint32_t field_count, uint8_t depth = 0);
+    static Value make_model(Allocator &alloc, uint32_t field_count, uint8_t depth = 0);
 
     // Same as make_model but skips the nil-prefill (see make_array_uninit).
     template <typename Allocator>
-    static Value make_model_uninit(Allocator &alloc, types::Model_type sig, uint32_t field_count, uint8_t depth = 0);
+    static Value make_model_uninit(Allocator &alloc, uint32_t field_count, uint8_t depth = 0);
 
     template <typename Allocator>
     static Value make_union(Allocator &alloc, String_data *u_name, String_data *v_name, Value payload, uint8_t depth = 0);
-
-    template <typename Allocator>
-    static Value make_closure_native(Allocator &alloc, String_data *name, size_t arity, types::Function_type sig, Native_fn func, uint8_t depth = 0);
 
     template <typename Allocator>
     static Value make_iterator(Allocator &alloc, uint8_t depth = 0);
@@ -394,10 +386,6 @@ public:
     {
         return tag_ == Value_tag::Iterator;
     }
-    bool is_green_thread() const
-    {
-        return tag_ == Value_tag::Green_thread;
-    }
     bool is_upvalue() const
     {
         return tag_ == Value_tag::Upvalue;
@@ -461,11 +449,6 @@ public:
         return as.iter;
     }
 
-    inline Green_thread_data *as_green_thread() const
-    {
-        return as.gt;
-    }
-
     inline Upvalue_data *as_upvalue() const
     {
         return as.upvalue;
@@ -519,7 +502,6 @@ struct Iterator_data
 {
     enum class State_type : uint8_t { Empty, Singleton, Interval, Array, String };
 
-    types::Type element_type;
     State_type state_type;
     int64_t cursor;
 
@@ -529,6 +511,16 @@ struct Iterator_data
     int64_t end;
     bool inclusive;
 };
+
+// GC cells recycle raw storage without invoking payload destructors. Keep all
+// runtime heap representations POD-like; frontend containers must never leak
+// into this layer again.
+static_assert(std::is_trivially_destructible_v<Array_data>);
+static_assert(std::is_trivially_destructible_v<Model_data>);
+static_assert(std::is_trivially_destructible_v<Union_data>);
+static_assert(std::is_trivially_destructible_v<Closure_data>);
+static_assert(std::is_trivially_destructible_v<Upvalue_data>);
+static_assert(std::is_trivially_destructible_v<Iterator_data>);
 
 types::Primitive_kind numeric_type_of(const Value &literal);
 std::optional<Value> coerce_numeric_literal(const Value &literal, types::Primitive_kind target_type);

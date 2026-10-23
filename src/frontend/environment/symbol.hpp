@@ -57,6 +57,16 @@ public:
     const Symbol &get_symbol(Symbol_id id) const;
     std::optional<Symbol_id> lookup_global(String_id name) const;
     std::optional<Symbol_id> lookup_global(std::string_view name) const;
+
+    void clear()
+    {
+        symbols.clear();
+        symbols.shrink_to_fit();
+        global_index.clear();
+        global_index.rehash(0);
+        strings.clear();
+        next_global_index = 0;
+    }
 };
 
 } // namespace phos

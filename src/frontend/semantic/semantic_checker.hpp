@@ -7,6 +7,7 @@
 #include "frontend/parser/ast.hpp"
 #include "scope_tracker.hpp"
 
+#include <initializer_list>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -80,6 +81,12 @@ class Semantic_checker
 
 public:
     explicit Semantic_checker(Compiler_context &ctx);
+    err::Engine check(const std::vector<ast::Stmt_id> &statements);
+    err::Engine check_workspace();
+    void clear_session();
+
+    // Used by the REPL when displaying the type of a registry-backed symbol.
+    types::Type_id resolve_symbol(Symbol_id id);
 
     Scope_tracker variables;
 
@@ -109,16 +116,7 @@ public:
     // function-local `static` variables (each gets its own global slot).
     std::vector<std::string> function_name_stack_;
 
-    /*
-     * [check] -> diagnostics
-     * entry point for semantic analysis
-     */
-    err::Engine check(const std::vector<ast::Stmt_id> &statements);
-    err::Engine check_workspace();
     void check_module(Module_id mod_id);
-
-    // Resolves a registry symbol's concrete type (functions get a signature).
-    types::Type_id resolve_symbol(Symbol_id id);
 
     /*
      * [diagnostics]
@@ -159,12 +157,8 @@ public:
 
     std::optional<Access_path> extract_access_path(ast::Expr_id expr_id) const;
 
-    void
-    collect_nil_check_from_comparison(const ast::Binary_expr &expr, lex::TokenType target_op, std::unordered_set<Access_path, Access_path_hash> &out);
-    void collect_nil_check_from_optional_method(
-        const ast::Method_call_expr &expr, bool target_truthy_branch, std::unordered_set<Access_path, Access_path_hash> &out);
-    void collect_nil_checked_vars_for_then(ast::Expr_id expr, std::unordered_set<Access_path, Access_path_hash> &out);
-    void collect_nil_checked_vars_for_else(ast::Expr_id expr, std::unordered_set<Access_path, Access_path_hash> &out);
+    void collect_nil_checked_paths(
+        ast::Expr_id expr, bool truthy_branch, std::unordered_set<Access_path, Access_path_hash> &out);
 
     /*
      * [binders and ffi]
@@ -182,6 +176,12 @@ public:
         std::unordered_map<std::string, types::Type_id> generics;
         bool ok = false;
     };
+
+    bool bind_intrinsic_arguments(
+        std::vector<ast::Call_argument> &arguments,
+        std::initializer_list<std::string_view> parameter_names,
+        std::string_view intrinsic_name,
+        const ast::Source_location &call_loc);
 
     Bound_call_arguments bind_call_arguments(
         const std::vector<ast::Function_param> &parameters,
@@ -265,10 +265,14 @@ public:
     types::Type_id check_array_access_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
     types::Type_id check_array_assignment_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
     types::Type_id check_range_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
-    types::Type_id check_spawn_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
-    types::Type_id check_await_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
-    types::Type_id check_yield_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
     types::Type_id check_anon_model_literal_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type);
+
+    bool check_union_literal(
+        types::Type_id union_type,
+        std::vector<std::pair<std::string, ast::Expr_id>> &fields,
+        const ast::Source_location &loc,
+        std::string_view arity_error,
+        std::string_view missing_payload_error);
 };
 
 } // namespace phos

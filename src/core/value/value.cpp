@@ -60,6 +60,33 @@ Value Value::make_string_concat(Allocator &alloc, std::string_view a, std::strin
 }
 
 template <typename Allocator>
+Value Value::make_string_join(Allocator &alloc, std::span<const Value> parts, std::string_view separator, uint8_t depth)
+{
+    size_t length = parts.empty() ? 0 : separator.size() * (parts.size() - 1);
+    for (const Value &part : parts) {
+        length += part.as_string().size();
+    }
+
+    const size_t total_size = sizeof(String_data) + length + 1;
+    void *mem = alloc.allocate_bytes(total_size, alignof(String_data), static_cast<uint8_t>(Value_tag::String));
+    String_data *str = new (mem) String_data();
+    str->length = static_cast<uint32_t>(length);
+
+    char *out = str->chars;
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (i != 0) {
+            std::memcpy(out, separator.data(), separator.size());
+            out += separator.size();
+        }
+        std::string_view part = parts[i].as_string();
+        std::memcpy(out, part.data(), part.size());
+        out += part.size();
+    }
+    *out = '\0';
+    return Value(str, depth, Allocator::is_gc);
+}
+
+template <typename Allocator>
 Value Value::make_array(Allocator &alloc, uint32_t capacity, uint8_t depth)
 {
     Value v = Value::make_array_uninit(alloc, capacity, depth);
@@ -90,9 +117,9 @@ Value Value::make_array_uninit(Allocator &alloc, uint32_t capacity, uint8_t dept
 }
 
 template <typename Allocator>
-Value Value::make_model(Allocator &alloc, types::Model_type sig, uint32_t field_count, uint8_t depth)
+Value Value::make_model(Allocator &alloc, uint32_t field_count, uint8_t depth)
 {
-    Value v = Value::make_model_uninit(alloc, std::move(sig), field_count, depth);
+    Value v = Value::make_model_uninit(alloc, field_count, depth);
     Model_data *model = v.as_model();
     if (field_count > 0) {
         std::uninitialized_fill_n(model->fields, field_count, Value());
@@ -101,14 +128,12 @@ Value Value::make_model(Allocator &alloc, types::Model_type sig, uint32_t field_
 }
 
 template <typename Allocator>
-Value Value::make_model_uninit(Allocator &alloc, types::Model_type sig, uint32_t field_count, uint8_t depth)
+Value Value::make_model_uninit(Allocator &alloc, uint32_t field_count, uint8_t depth)
 {
     const size_t total_size = sizeof(Model_data) + (static_cast<size_t>(field_count) * sizeof(Value));
     void *mem = alloc.allocate_bytes(total_size, alignof(Model_data), static_cast<uint8_t>(Value_tag::Model));
     Model_data *model = new (mem) Model_data();
-    model->signature = std::move(sig);
     model->field_count = field_count;
-    model->fields_on_heap = false; // Trailing
 
     if (field_count > 0) {
         model->fields = trailing_storage<Model_data, Value>(model);
@@ -135,26 +160,6 @@ Value Value::make_union(Allocator &alloc, String_data *u_name, String_data *v_na
 }
 
 template <typename Allocator>
-Value Value::make_closure_native(Allocator &alloc, String_data *name, size_t arity, types::Function_type sig, Native_fn func, uint8_t depth)
-{
-    void *mem = alloc.allocate_bytes(sizeof(Closure_data), alignof(Closure_data), static_cast<uint8_t>(Value_tag::Closure));
-    Closure_data *closure = new (mem) Closure_data();
-    // Arena-backed closures are compiler prototypes; GC-backed ones are live instances.
-    closure->is_prototype = !Allocator::is_gc;
-
-    closure->name = name;
-    closure->arity = arity;
-    closure->min_arity = arity;
-    closure->is_variadic = false;
-    closure->signature = std::move(sig);
-    closure->native_func = func;
-    closure->upvalue_count = 0;
-    closure->upvalues = nullptr;
-
-    return Value(closure, depth, Allocator::is_gc);
-}
-
-template <typename Allocator>
 Value Value::make_iterator(Allocator &alloc, uint8_t depth)
 {
     void *mem = alloc.allocate_bytes(sizeof(Iterator_data), alignof(Iterator_data), static_cast<uint8_t>(Value_tag::Iterator));
@@ -170,23 +175,23 @@ Value Value::make_iterator(Allocator &alloc, uint8_t depth)
 // Arena Instantiations (Compile-time)
 template Value Value::make_string(mem::Arena &, std::string_view, uint8_t);
 template Value Value::make_string_concat(mem::Arena &, std::string_view, std::string_view, uint8_t);
+template Value Value::make_string_join(mem::Arena &, std::span<const Value>, std::string_view, uint8_t);
 template Value Value::make_array(mem::Arena &, uint32_t, uint8_t);
 template Value Value::make_array_uninit(mem::Arena &, uint32_t, uint8_t);
-template Value Value::make_model(mem::Arena &, types::Model_type, uint32_t, uint8_t);
-template Value Value::make_model_uninit(mem::Arena &, types::Model_type, uint32_t, uint8_t);
+template Value Value::make_model(mem::Arena &, uint32_t, uint8_t);
+template Value Value::make_model_uninit(mem::Arena &, uint32_t, uint8_t);
 template Value Value::make_union(mem::Arena &, String_data *, String_data *, Value, uint8_t);
-template Value Value::make_closure_native(mem::Arena &, String_data *, size_t, types::Function_type, Native_fn, uint8_t);
 template Value Value::make_iterator(mem::Arena &, uint8_t);
 
 // VM Context Instantiations (Runtime) - THESE FIX THE LINKER ERRORS!
 template Value Value::make_string(vm::Vm_context &, std::string_view, uint8_t);
 template Value Value::make_string_concat(vm::Vm_context &, std::string_view, std::string_view, uint8_t);
+template Value Value::make_string_join(vm::Vm_context &, std::span<const Value>, std::string_view, uint8_t);
 template Value Value::make_array(vm::Vm_context &, uint32_t, uint8_t);
 template Value Value::make_array_uninit(vm::Vm_context &, uint32_t, uint8_t);
-template Value Value::make_model(vm::Vm_context &, types::Model_type, uint32_t, uint8_t);
-template Value Value::make_model_uninit(vm::Vm_context &, types::Model_type, uint32_t, uint8_t);
+template Value Value::make_model(vm::Vm_context &, uint32_t, uint8_t);
+template Value Value::make_model_uninit(vm::Vm_context &, uint32_t, uint8_t);
 template Value Value::make_union(vm::Vm_context &, String_data *, String_data *, Value, uint8_t);
-template Value Value::make_closure_native(vm::Vm_context &, String_data *, size_t, types::Function_type, Native_fn, uint8_t);
 template Value Value::make_iterator(vm::Vm_context &, uint8_t);
 
 // Numeric Getters with Implicit Upcasting
@@ -677,7 +682,7 @@ std::string Value::to_string() const
     case Value_tag::Array:
         return std::format("<array len {}>", as.arr->count);
     case Value_tag::Model:
-        return std::format("<model {}>", as.model->signature.name);
+        return std::format("<model fields {}>", as.model->field_count);
     case Value_tag::Union:
         return std::format(
             "<{}::{}>",
@@ -687,8 +692,6 @@ std::string Value::to_string() const
         return "<closure>";
     case Value_tag::Iterator:
         return "<iterator>";
-    case Value_tag::Green_thread:
-        return "<green thread>";
     default:
         break;
     }
@@ -722,22 +725,9 @@ std::string Value::to_debug_string(bool is_nested) const
         }
         res += "]";
     } else if (tag_ == Value_tag::Model) {
-        std::string m_name = as.model->signature.name;
-
-        if (m_name.empty()) {
-            res = "{";
-        } else {
-            res = std::format("{} {{", m_name);
-        }
+        res = "{";
 
         for (uint32_t i = 0; i < as.model->field_count; ++i) {
-            if (i < as.model->signature.fields.size()) {
-                std::string f_name = as.model->signature.fields[i].first;
-                if (!f_name.empty()) {
-                    res += f_name + ": ";
-                }
-            }
-
             res += as.model->fields[i].to_debug_string(true);
 
             if (i != as.model->field_count - 1) {
@@ -821,8 +811,6 @@ bool Value::operator==(const Value &other) const
         return as.closure == other.as.closure;
     case Value_tag::Iterator:
         return as.iter == other.as.iter;
-    case Value_tag::Green_thread:
-        return as.gt == other.as.gt;
     case Value_tag::Upvalue:
         return as.upvalue == other.as.upvalue;
     }

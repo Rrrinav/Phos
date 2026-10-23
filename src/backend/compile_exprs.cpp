@@ -176,7 +176,11 @@ uint8_t Compiler::compile_expr_node(const ast::Assignment_expr &expr)
 uint8_t Compiler::compile_expr_node(const ast::Literal_expr &expr)
 {
     uint8_t target_reg = allocate_register();
-    uint16_t const_idx = add_constant(expr.value);
+    Value value = expr.value;
+    if (value.is_string()) {
+        value = Value::make_string(ctx.program_arena, value.as_string(), value.depth());
+    }
+    uint16_t const_idx = add_constant(value);
 
     emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
     return target_reg;
@@ -201,6 +205,9 @@ uint8_t Compiler::compile_expr_node(const ast::Enum_member_expr &expr)
     }
 
     uint8_t target_reg = allocate_register();
+    if (variant_val.is_string()) {
+        variant_val = Value::make_string(ctx.program_arena, variant_val.as_string(), variant_val.depth());
+    }
     uint16_t const_idx = add_constant(variant_val);
     emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
 
@@ -239,11 +246,11 @@ uint8_t Compiler::compile_expr_node(const ast::Static_path_expr &expr)
                 if (expr.member.lexeme == "line") {
                     const_idx = add_constant(Value(static_cast<int64_t>(expr.loc.l)));
                 } else if (expr.member.lexeme == "file") {
-                    const_idx = add_constant(Value::make_string(ctx.arena, expr.loc.file));
+                    const_idx = add_constant(Value::make_string(ctx.program_arena, ctx.source_name(expr.loc.file)));
                 } else if (expr.member.lexeme == "func") {
-                    const_idx = add_constant(Value::make_string(ctx.arena, current_function_name_));
+                    const_idx = add_constant(Value::make_string(ctx.program_arena, current_function_name_));
                 } else if (expr.member.lexeme == "module") {
-                    const_idx = add_constant(Value::make_string(ctx.arena, current_module_ns_));
+                    const_idx = add_constant(Value::make_string(ctx.program_arena, current_module_ns_));
                 }
 
                 emit(vm::Instruction::make_ri(vm::Opcode::Load_const, target_reg, const_idx));
@@ -303,7 +310,7 @@ uint8_t Compiler::compile_expr_node(const ast::Static_path_expr &expr)
     }
 
     if (ctx.tt.is_model(base_type)) {
-        auto &model_name = std::get<types::Model_type>(ctx.tt.get(base_type).data).name;
+        const auto &model_name = ctx.tt.get(base_type).as<types::Model_type>().name;
         if (auto static_field = ctx.type_env.get_model_static_field(model_name, expr.member.lexeme)) {
             return compile_expr(*static_field);
         }
@@ -479,12 +486,12 @@ uint8_t Compiler::compile_expr_node(const ast::Closure_expr &expr)
     }
 
     // 6. Construct Closure Object
-    Closure_data *closure = ctx.arena.allocate<Closure_data>();
+    Closure_data *closure = ctx.program_arena.allocate<Closure_data>();
     new (closure) Closure_data();
 
     std::string name = "anon";
     size_t name_size = sizeof(String_data) + name.length() + 1;
-    closure->name = static_cast<String_data *>(ctx.arena.allocate_bytes(name_size));
+    closure->name = static_cast<String_data *>(ctx.program_arena.allocate_bytes(name_size));
     closure->name->length = name.length();
     std::copy(name.begin(), name.end(), closure->name->chars);
     closure->name->chars[name.length()] = '\0';
@@ -493,13 +500,13 @@ uint8_t Compiler::compile_expr_node(const ast::Closure_expr &expr)
 
     closure->code_count = current_ctx_->block.instructions.size();
     if (closure->code_count > 0) {
-        closure->code = ctx.arena.allocate<vm::Instruction>(closure->code_count);
+        closure->code = ctx.program_arena.allocate<vm::Instruction>(closure->code_count);
         std::copy(current_ctx_->block.instructions.begin(), current_ctx_->block.instructions.end(), closure->code);
     }
 
     closure->constant_count = current_ctx_->block.constants.size();
     if (closure->constant_count > 0) {
-        closure->constants = ctx.arena.allocate<Value>(closure->constant_count);
+        closure->constants = ctx.program_arena.allocate<Value>(closure->constant_count);
         std::copy(current_ctx_->block.constants.begin(), current_ctx_->block.constants.end(), closure->constants);
     }
 
@@ -674,7 +681,7 @@ uint8_t Compiler::compile_expr_node(const ast::Call_expr &expr)
             types::Type_id arg_type = ast::get_type(ctx.tree.get(expr.arguments[0].value).node);
 
             if (ctx.tt.is_model(arg_type)) {
-                auto &model_name = std::get<types::Model_type>(ctx.tt.get(arg_type).data).name;
+                const auto &model_name = ctx.tt.get(arg_type).as<types::Model_type>().name;
 
                 uint8_t func_reg = allocate_register();
                 if (auto sym_id = ctx.registry.lookup_global(model_name + "::iter")) {
@@ -737,11 +744,11 @@ uint8_t Compiler::compile_expr_node(const ast::Model_literal_expr &expr)
         }
 
         uint8_t names_base = allocate_register();
-        uint16_t u_name_idx = add_constant(Value::make_string(ctx.arena, union_t.name));
+        uint16_t u_name_idx = add_constant(Value::make_string(ctx.program_arena, union_t.name));
         emit(vm::Instruction::make_ri(vm::Opcode::Load_const, names_base, u_name_idx));
 
         uint8_t v_name_reg = allocate_register();
-        uint16_t v_name_idx = add_constant(Value::make_string(ctx.arena, variant_name));
+        uint16_t v_name_idx = add_constant(Value::make_string(ctx.program_arena, variant_name));
         emit(vm::Instruction::make_ri(vm::Opcode::Load_const, v_name_reg, v_name_idx));
 
         uint8_t dst_reg = allocate_register();
@@ -786,11 +793,11 @@ uint8_t Compiler::compile_expr_node(const ast::Anon_model_literal_expr &expr)
         }
 
         uint8_t names_base = allocate_register();
-        uint16_t u_name_idx = add_constant(Value::make_string(ctx.arena, union_t.name));
+        uint16_t u_name_idx = add_constant(Value::make_string(ctx.program_arena, union_t.name));
         emit(vm::Instruction::make_ri(vm::Opcode::Load_const, names_base, u_name_idx));
 
         uint8_t v_name_reg = allocate_register();
-        uint16_t v_name_idx = add_constant(Value::make_string(ctx.arena, variant_name));
+        uint16_t v_name_idx = add_constant(Value::make_string(ctx.program_arena, variant_name));
         emit(vm::Instruction::make_ri(vm::Opcode::Load_const, v_name_reg, v_name_idx));
 
         uint8_t dst_reg = allocate_register();
@@ -961,7 +968,7 @@ uint8_t Compiler::compile_expr_node(const ast::Method_call_expr &expr)
         }
 
         uint8_t str_reg = allocate_register();
-        uint16_t str_idx = add_constant(Value::make_string(ctx.arena, variant_str));
+        uint16_t str_idx = add_constant(Value::make_string(ctx.program_arena, variant_str));
         emit(vm::Instruction::make_ri(vm::Opcode::Load_const, str_reg, str_idx));
 
         if (expr.method_name == "has") {
@@ -983,7 +990,7 @@ uint8_t Compiler::compile_expr_node(const ast::Method_call_expr &expr)
 
             uint8_t msg_reg = allocate_register();
             std::string err_msg = "Union variant mismatch. Expected " + variant_str;
-            uint16_t msg_idx = add_constant(Value::make_string(ctx.arena, err_msg));
+            uint16_t msg_idx = add_constant(Value::make_string(ctx.program_arena, err_msg));
             emit(vm::Instruction::make_ri(vm::Opcode::Load_const, msg_reg, msg_idx));
             emit(vm::Instruction::make_rrr(vm::Opcode::Panic, 0, msg_reg, 0));
 
@@ -995,7 +1002,7 @@ uint8_t Compiler::compile_expr_node(const ast::Method_call_expr &expr)
     }
 
     if (ctx.tt.is_model(obj_type)) {
-        auto &model_name = std::get<types::Model_type>(ctx.tt.get(obj_type).data).name;
+        const auto &model_name = ctx.tt.get(obj_type).as<types::Model_type>().name;
         auto model_data_ptr = ctx.type_env.get_model(model_name);
 
         if (model_data_ptr && model_data_ptr->methods.contains(expr.method_name)) {
@@ -1060,7 +1067,7 @@ uint8_t Compiler::compile_expr_node(const ast::Method_call_expr &expr)
             }
         }
 
-        auto &model_t = std::get<types::Model_type>(ctx.tt.get(obj_type).data);
+        const auto &model_t = ctx.tt.get(obj_type).as<types::Model_type>();
         for (size_t i = 0; i < model_t.fields.size(); ++i) {
             if (model_t.fields[i].first == expr.method_name) {
                 uint8_t obj_reg = compile_expr(expr.object);

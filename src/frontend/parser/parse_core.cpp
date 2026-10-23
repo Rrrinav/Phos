@@ -148,8 +148,8 @@ Parser::Parse_result Parser::parse()
 
 void Parser::stamp_loc(ast::Source_location &loc)
 {
-    if (loc.file.empty()) {
-        loc.file = source_name_;
+    if (loc.file == UINT32_MAX) {
+        loc.file = source_file_;
     }
 }
 
@@ -218,12 +218,6 @@ void Parser::stamp_expr(ast::Expr_id expr_id)
             } else if constexpr (std::is_same_v<T, ast::Range_expr>) {
                 stamp_expr(e.start);
                 stamp_expr(e.end);
-            } else if constexpr (std::is_same_v<T, ast::Spawn_expr>) {
-                stamp_expr(e.call);
-            } else if constexpr (std::is_same_v<T, ast::Await_expr>) {
-                stamp_expr(e.thread);
-            } else if constexpr (std::is_same_v<T, ast::Yield_expr>) {
-                stamp_expr(e.value);
             } else if constexpr (std::is_same_v<T, ast::Anon_model_literal_expr>) {
                 for (auto &[_, field_expr] : e.fields) {
                     stamp_expr(field_expr);

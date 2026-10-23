@@ -5,10 +5,12 @@
 #include "virtual_machine/garbage_collector/gc_heap.hpp"
 #include "virtual_machine/vm_context.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <format>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <ostream>
 #include <print>
@@ -38,7 +40,7 @@ private:
     // The templated inner loop.
     // The compiler will generate two versions of this function!
     template <bool Is_Tracing>
-    void execute_loop(Green_thread_data *thread);
+    void execute_loop(Execution_state *thread);
 
     // The three heaviest opcode handlers, extracted so execute_loop stays a
     // readable dispatch skeleton. Each takes the loop's cached frame state by
@@ -77,7 +79,7 @@ public:
     }
 
     // Public API: Checks the config flag exactly ONCE and routes to the correct optimized loop
-    void execute(Green_thread_data *thread)
+    void execute(Execution_state *thread)
     {
         if (cfg.trace_execution) {
             execute_loop<true>(thread);
@@ -96,17 +98,25 @@ public:
         std::vector<Call_frame> frames(call_stack_capacity);
         frames[0] = Call_frame(closure, 0);
 
-        std::vector<Value> thread_memory(call_stack_capacity * Virtual_machine::FRAME_REGISTER_WINDOW);
+        constexpr size_t value_stack_capacity = call_stack_capacity * Virtual_machine::FRAME_REGISTER_WINDOW;
+        std::allocator<Value> value_allocator;
+        Value *thread_memory = value_allocator.allocate(value_stack_capacity);
+        const size_t initial_footprint = std::max<size_t>(closure->register_footprint, 1);
+        std::uninitialized_fill_n(thread_memory, initial_footprint, Value());
 
-        Green_thread_data thread{};
+        Execution_state thread{};
         thread.call_stack = frames.data();
         thread.call_stack_count = 1;
         thread.call_stack_capacity = frames.size();
-        thread.value_stack = thread_memory.data();
-        thread.value_stack_capacity = thread_memory.size();
+        thread.value_stack = thread_memory;
+        thread.value_stack_capacity = value_stack_capacity;
+        thread.value_stack_initialized = initial_footprint;
         thread.is_completed = false;
 
         vm.execute(&thread);
+
+        std::destroy_n(thread_memory, thread.value_stack_initialized);
+        value_allocator.deallocate(thread_memory, value_stack_capacity);
     }
 
     gc::Gc_heap &gc_ref() noexcept

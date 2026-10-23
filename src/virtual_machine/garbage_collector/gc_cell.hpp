@@ -8,18 +8,13 @@ namespace phos::gc {
 // Layout in memory:  [ Gc_cell | payload (String_data / Array_data / ...) ]
 //
 // The Value struct stores only the payload pointer (same as before).
-// Use cell_of(ptr) to get back to the header for marking.
-enum class Color : uint8_t {
-    White = 0, // Not yet reached — candidate for collection
-    Gray = 1,  // Reached, children not yet traced
-    Black = 2, // Fully traced — definitely live
-};
+// Use from_payload(ptr) to get back to the header for marking.
 
 struct Gc_cell
 {
     Gc_cell *next = nullptr; // Intrusive linked list through all heap objects
     uint32_t size = 0;       // Total bytes: sizeof(Gc_cell) + payload bytes
-    Color color = Color::White;
+    bool marked = false;
     uint8_t kind = 0; // Value_tag of the payload — used by tracer.
                       // Raw_buffer_kind (below) marks plain byte buffers with
                       // no traceable children; the tracer and sweeper skip it.

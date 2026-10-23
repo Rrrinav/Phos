@@ -212,6 +212,9 @@ private:
             if (match('|')) {
                 return make(TokenType::LogicalOr, "||", start_col);
             }
+            if (match('>')) {
+                return make(TokenType::PipeGreater, "|>", start_col);
+            }
             return make(TokenType::Pipe, "|", start_col);
 
         //  strings and f-strings

@@ -50,9 +50,6 @@ std::string phos::lex::token_to_string(phos::lex::TokenType t)
     case TokenType::Union:                   return "Union";
     case TokenType::Enum:                    return "Enum";
     case TokenType::Bind:                    return "Bind";
-    case TokenType::Spawn:                   return "Spawn";
-    case TokenType::Await:                   return "Await";
-    case TokenType::Yield:                   return "Yield";
     case TokenType::Print:                   return "Print";
     case TokenType::PrintErr:                return "PrintErr";
     case TokenType::As:                      return "As";
@@ -79,6 +76,7 @@ std::string phos::lex::token_to_string(phos::lex::TokenType t)
     case TokenType::LogicalNot:              return "LogicalNot";
     case TokenType::BitAnd:                  return "BitAnd";
     case TokenType::Pipe:                    return "Pipe";
+    case TokenType::PipeGreater:             return "PipeGreater";
     case TokenType::BitXor:                  return "BitXor";
     case TokenType::BitNot:                  return "BitNot";
     case TokenType::BitLShift:               return "BitLShift";
@@ -126,7 +124,8 @@ std::string phos::lex::operator_token_to_string(phos::lex::TokenType type)
         {phos::lex::TokenType::GreaterEqual, ">="},
         {phos::lex::TokenType::LogicalAnd, "&&"},
         {phos::lex::TokenType::LogicalOr, "||"},
-        {phos::lex::TokenType::LogicalNot, "!"}
+        {phos::lex::TokenType::LogicalNot, "!"},
+        {phos::lex::TokenType::PipeGreater, "|>"}
     };
     auto it = token_names.find(type);
     return it != token_names.end() ? it->second : "unknown_operator";

@@ -32,6 +32,12 @@ public:
         return strings_[id.value];
     }
 
+    void clear()
+    {
+        map_.clear();
+        strings_.clear();
+    }
+
 private:
     std::unordered_map<std::string_view, String_id> map_;
     std::deque<std::string> strings_;

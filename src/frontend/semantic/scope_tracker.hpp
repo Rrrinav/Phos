@@ -28,6 +28,14 @@ struct Scope_symbol
 class Scope_tracker
 {
 public:
+    void clear()
+    {
+        symbols_.clear();
+        locals_.clear();
+        scope_markers_.clear();
+        current_depth_ = 0;
+    }
+
     void begin_scope()
     {
         current_depth_++;
@@ -113,6 +121,28 @@ private:
     std::vector<std::string> locals_;
     std::vector<size_t> scope_markers_;
     int current_depth_ = 0;
+};
+
+// Semantic passes have many early-return paths. Tie lexical scope teardown to
+// C++ scope so one missed end_scope() cannot leak bindings into later checks.
+class Scope_guard
+{
+public:
+    explicit Scope_guard(Scope_tracker &tracker) : tracker_(tracker)
+    {
+        tracker_.begin_scope();
+    }
+
+    ~Scope_guard()
+    {
+        tracker_.end_scope();
+    }
+
+    Scope_guard(const Scope_guard &) = delete;
+    Scope_guard &operator=(const Scope_guard &) = delete;
+
+private:
+    Scope_tracker &tracker_;
 };
 
 } // namespace phos

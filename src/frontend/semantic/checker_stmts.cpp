@@ -375,7 +375,7 @@ void Semantic_checker::check_function_stmt(ast::Stmt_id stmt_id)
 
     validate_function_defaults(fn_stmt);
 
-    variables.begin_scope();
+    Scope_guard function_scope{variables};
 
     for (const auto &p : fn_stmt.parameters) {
         declare(p.name, p.type, p.is_mut, p.loc);
@@ -389,7 +389,12 @@ void Semantic_checker::check_function_stmt(ast::Stmt_id stmt_id)
                 auto def_type = check_expr(ret.default_value, ret.type);
                 if (!is_compatible(ret.type, def_type)) {
                     auto diagnostic =
-                        err::msg::error(diagnostics_.phase(), ret.loc.l, ret.loc.c, ret.loc.file, "Default return value type mismatch.");
+                        err::msg::error(
+                            diagnostics_.phase(),
+                            ret.loc.l,
+                            ret.loc.c,
+                            std::string(ctx.source_name(ret.loc.file)),
+                            "Default return value type mismatch.");
                     diagnostic.expected_got(ctx.tt.to_string(ret.type), ctx.tt.to_string(def_type));
                     diagnostics_.push(std::move(diagnostic));
                 }
@@ -409,7 +414,6 @@ void Semantic_checker::check_function_stmt(ast::Stmt_id stmt_id)
         }
     }
 
-    variables.end_scope();
     current_return_types = saved_return_types;
     current_return_params = saved_return_params;
 
@@ -544,7 +548,8 @@ void Semantic_checker::check_var_stmt(ast::Stmt_id stmt_id)
                             ctx.tt.to_string(type)));
                 }
             } else {
-                auto diagnostic = err::msg::error(diagnostics_.phase(), loc.l, loc.c, loc.file, "Initializer type mismatch.");
+                auto diagnostic = err::msg::error(
+                    diagnostics_.phase(), loc.l, loc.c, std::string(ctx.source_name(loc.file)), "Initializer type mismatch.");
                 diagnostic.expected_got(ctx.tt.to_string(type), ctx.tt.to_string(init_type));
                 diagnostics_.push(std::move(diagnostic));
             }
@@ -886,11 +891,10 @@ void Semantic_checker::check_enum_stmt(ast::Stmt_id stmt_id)
 void Semantic_checker::check_block_stmt(ast::Stmt_id stmt_id)
 {
     auto statements = get_stmt<ast::Block_stmt>(ctx.tree, stmt_id).statements;
-    variables.begin_scope();
+    Scope_guard scope{variables};
     for (auto s : statements) {
         check_stmt(s);
     }
-    variables.end_scope();
 }
 
 void Semantic_checker::check_expr_stmt(ast::Stmt_id stmt_id)
@@ -914,35 +918,26 @@ void Semantic_checker::check_if_stmt(ast::Stmt_id stmt_id)
     }
 
     std::unordered_set<Access_path, Access_path_hash> narrowed_in_then, narrowed_in_else;
-    collect_nil_checked_vars_for_then(condition, narrowed_in_then);
-    collect_nil_checked_vars_for_else(condition, narrowed_in_else);
+    collect_nil_checked_paths(condition, true, narrowed_in_then);
+    collect_nil_checked_paths(condition, false, narrowed_in_else);
 
-    variables.begin_scope();
-    m_nil_checked_vars_stack.emplace_back();
-
-    for (const auto &path : narrowed_in_then) {
-        m_nil_checked_vars_stack.back().insert(path);
+    {
+        Scope_guard then_scope{variables};
+        m_nil_checked_vars_stack.push_back(std::move(narrowed_in_then));
+        if (!then_branch.is_null()) {
+            check_stmt(then_branch);
+        }
+        m_nil_checked_vars_stack.pop_back();
     }
 
-    if (!then_branch.is_null()) {
-        check_stmt(then_branch);
+    {
+        Scope_guard else_scope{variables};
+        m_nil_checked_vars_stack.push_back(std::move(narrowed_in_else));
+        if (!else_branch.is_null()) {
+            check_stmt(else_branch);
+        }
+        m_nil_checked_vars_stack.pop_back();
     }
-
-    m_nil_checked_vars_stack.pop_back();
-    variables.end_scope();
-
-    variables.begin_scope();
-    m_nil_checked_vars_stack.emplace_back();
-    for (const auto &path : narrowed_in_else) {
-        m_nil_checked_vars_stack.back().insert(path);
-    }
-
-    if (!else_branch.is_null()) {
-        check_stmt(else_branch);
-    }
-
-    m_nil_checked_vars_stack.pop_back();
-    variables.end_scope();
 }
 
 void Semantic_checker::check_print_stmt(ast::Stmt_id stmt_id)
@@ -1045,12 +1040,6 @@ bool Semantic_checker::expr_references_nested_function(ast::Expr_id expr_id, boo
                 return expr_references_nested_function(node.base, check_callees);
             } else if constexpr (std::is_same_v<T, ast::Range_expr>) {
                 return expr_references_nested_function(node.start, check_callees) || expr_references_nested_function(node.end, check_callees);
-            } else if constexpr (std::is_same_v<T, ast::Spawn_expr>) {
-                return expr_references_nested_function(node.call, check_callees);
-            } else if constexpr (std::is_same_v<T, ast::Await_expr>) {
-                return expr_references_nested_function(node.thread, check_callees);
-            } else if constexpr (std::is_same_v<T, ast::Yield_expr>) {
-                return expr_references_nested_function(node.value, check_callees);
             }
             return false;
         },
@@ -1312,7 +1301,7 @@ void Semantic_checker::check_for_stmt(ast::Stmt_id stmt_id)
 
     loop_label_stack_.push_back(get_stmt<ast::For_stmt>(ctx.tree, stmt_id).label);
 
-    variables.begin_scope();
+    Scope_guard scope{variables};
     if (!initializer.is_null()) {
         check_stmt(initializer);
     }
@@ -1330,7 +1319,6 @@ void Semantic_checker::check_for_stmt(ast::Stmt_id stmt_id)
     }
 
     loop_label_stack_.pop_back();
-    variables.end_scope();
 }
 
 void Semantic_checker::check_for_in_stmt(ast::Stmt_id stmt_id)
@@ -1339,9 +1327,6 @@ void Semantic_checker::check_for_in_stmt(ast::Stmt_id stmt_id)
     auto loc = get_stmt<ast::For_in_stmt>(ctx.tree, stmt_id).loc;
     auto var_name = get_stmt<ast::For_in_stmt>(ctx.tree, stmt_id).var_name;
     auto body = get_stmt<ast::For_in_stmt>(ctx.tree, stmt_id).body;
-
-    // FIX: Use ast::For_in_stmt here!
-    loop_label_stack_.push_back(get_stmt<ast::For_in_stmt>(ctx.tree, stmt_id).label);
 
     auto iterable_type = check_expr(iterable);
     if (ctx.tt.is_unknown(iterable_type) || ctx.tt.is_any(iterable_type)) {
@@ -1355,14 +1340,14 @@ void Semantic_checker::check_for_in_stmt(ast::Stmt_id stmt_id)
     }
     types::Type_id var_type = iterator_element_type(iter_type);
 
-    variables.begin_scope();
+    loop_label_stack_.push_back(get_stmt<ast::For_in_stmt>(ctx.tree, stmt_id).label);
+    Scope_guard scope{variables};
     declare(var_name, var_type, false, loc);
     if (!body.is_null()) {
         check_stmt(body);
     }
 
     loop_label_stack_.pop_back();
-    variables.end_scope();
 }
 
 void Semantic_checker::check_match_stmt(ast::Stmt_id stmt_id)
@@ -1416,7 +1401,7 @@ void Semantic_checker::check_match_stmt(ast::Stmt_id stmt_id)
             }
         }
 
-        variables.begin_scope();
+        Scope_guard scope{variables};
         if (!arm.is_wildcard) {
             if (is_union_subject
                 && (std::holds_alternative<ast::Static_path_expr>(ctx.tree.get(arm.pattern).node)
@@ -1450,7 +1435,6 @@ void Semantic_checker::check_match_stmt(ast::Stmt_id stmt_id)
             } else {
                 types::Type_id pattern_type = check_expr(arm.pattern, subject_type);
                 if (ctx.tt.is_any(pattern_type) || ctx.tt.is_unknown(pattern_type)) {
-                    variables.end_scope();
                     continue;
                 }
 
@@ -1459,7 +1443,7 @@ void Semantic_checker::check_match_stmt(ast::Stmt_id stmt_id)
 
                 bool has_custom_match = false;
                 if (ctx.tt.is_model(pattern_type)) {
-                    if (auto *model_data = ctx.type_env.get_model(std::get<types::Model_type>(ctx.tt.get(pattern_type).data).name)) {
+                    if (auto *model_data = ctx.type_env.get_model(ctx.tt.get(pattern_type).as<types::Model_type>().name)) {
                         auto method_it = model_data->methods.find("__match__");
                         if (method_it != model_data->methods.end()) {
                             auto decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(method_it->second.declaration).node);
@@ -1486,8 +1470,6 @@ void Semantic_checker::check_match_stmt(ast::Stmt_id stmt_id)
         if (!arm.body.is_null()) {
             check_stmt(arm.body);
         }
-        variables.end_scope();
-
         if (arm.is_wildcard) {
             seen_wildcard = true;
         }

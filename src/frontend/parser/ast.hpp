@@ -16,9 +16,14 @@ namespace phos::ast {
 // Strongly-Typed AST Indices
 struct Source_location
 {
-    size_t l = 0;
-    size_t c = 0;
-    std::string file{""};
+    uint32_t l = 0;
+    uint32_t c = 0;
+    uint32_t file = UINT32_MAX;
+
+    Source_location() = default;
+    Source_location(size_t line, size_t column, uint32_t source = UINT32_MAX)
+        : l(static_cast<uint32_t>(line)), c(static_cast<uint32_t>(column)), file(source)
+    {}
 };
 
 struct Function_param
@@ -196,27 +201,6 @@ struct Range_expr
     Source_location loc;
 };
 
-struct Spawn_expr
-{
-    Expr_id call;
-    types::Type_id type;
-    Source_location loc;
-};
-
-struct Await_expr
-{
-    Expr_id thread;
-    types::Type_id type;
-    Source_location loc;
-};
-
-struct Yield_expr
-{
-    Expr_id value;
-    types::Type_id type;
-    Source_location loc;
-};
-
 struct Enum_member_expr
 {
     std::string member_name;
@@ -251,9 +235,6 @@ struct Expr
         Array_access_expr,
         Static_path_expr,
         Range_expr,
-        Spawn_expr,
-        Await_expr,
-        Yield_expr,
         Enum_member_expr,
         Anon_model_literal_expr>;
 

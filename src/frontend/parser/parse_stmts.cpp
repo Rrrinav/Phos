@@ -26,7 +26,7 @@ Result<ast::Stmt_id> Parser::statement()
 
     // 1. Handle Labels and Loop Prefixes
     if (match({lex::TokenType::At})) {
-        ast::Source_location loc{previous().line, previous().column, source_name_};
+        ast::Source_location loc{static_cast<uint32_t>(previous().line), static_cast<uint32_t>(previous().column), source_file_};
         DECL_OR_RETURN(name, consume(lex::TokenType::Identifier, "Expect label or attribute name after '@'."));
 
         if (match({lex::TokenType::Colon})) {
@@ -50,7 +50,7 @@ Result<ast::Stmt_id> Parser::statement()
 
     // 2. Control Flow: Break, Continue, Goto, Defer
     if (match({lex::TokenType::Break})) {
-        ast::Source_location loc{previous().line, previous().column, source_name_};
+        ast::Source_location loc{static_cast<uint32_t>(previous().line), static_cast<uint32_t>(previous().column), source_file_};
         std::string target = "";
         if (match({lex::TokenType::At})) {
             DECL_OR_RETURN(label_name, consume(lex::TokenType::Identifier, "Expect label name after '@'."));
@@ -61,7 +61,7 @@ Result<ast::Stmt_id> Parser::statement()
     }
 
     if (match({lex::TokenType::Continue})) {
-        ast::Source_location loc{previous().line, previous().column, source_name_};
+        ast::Source_location loc{static_cast<uint32_t>(previous().line), static_cast<uint32_t>(previous().column), source_file_};
         std::string target = "";
         if (match({lex::TokenType::At})) {
             DECL_OR_RETURN(label_name, consume(lex::TokenType::Identifier, "Expect label name after '@'."));
@@ -72,7 +72,7 @@ Result<ast::Stmt_id> Parser::statement()
     }
 
     if (match({lex::TokenType::Goto})) {
-        ast::Source_location loc{previous().line, previous().column, source_name_};
+        ast::Source_location loc{static_cast<uint32_t>(previous().line), static_cast<uint32_t>(previous().column), source_file_};
         TRY_IGNORE(consume(lex::TokenType::At, "Expect '@' before goto label."));
         DECL_OR_RETURN(label_name, consume(lex::TokenType::Identifier, "Expect label name."));
         TRY_IGNORE(consume(lex::TokenType::Semicolon, "Expect ';' after goto statement."));
@@ -80,13 +80,13 @@ Result<ast::Stmt_id> Parser::statement()
     }
 
     if (match({lex::TokenType::Defer})) {
-        ast::Source_location loc{previous().line, previous().column, source_name_};
+        ast::Source_location loc{static_cast<uint32_t>(previous().line), static_cast<uint32_t>(previous().column), source_file_};
         ASSIGN_OR_RETURN(auto deferred_stmt, statement());
         return ctx_.tree.add_stmt(ast::Stmt{ast::Defer_stmt{.call = deferred_stmt, .is_function_scoped = true, .loc = loc}});
     }
 
     if (match({lex::TokenType::Defer_local})) {
-        ast::Source_location loc{previous().line, previous().column, source_name_};
+        ast::Source_location loc{static_cast<uint32_t>(previous().line), static_cast<uint32_t>(previous().column), source_file_};
         ASSIGN_OR_RETURN(auto deferred_stmt, statement());
         return ctx_.tree.add_stmt(ast::Stmt{ast::Defer_stmt{.call = deferred_stmt, .is_function_scoped = false, .loc = loc}});
     }

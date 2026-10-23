@@ -55,6 +55,29 @@ if first_active_user != nil {
 foo()();
 ```
 
+## Piping
+
+`|>` feeds the value on its left into the call on its right as the first
+argument. Chains read top-to-bottom instead of inside-out:
+
+```rust
+fn double(x: i32) -> i32 { return x * 2; }
+fn add(a: i32, b: i32) -> i32 { return a + b; }
+fn clamp(x: i32, max: i32) -> i32 {
+    if x > max { return max; }
+    return x;
+}
+
+// f(g(h(x)))  ->  x |> h |> g |> f
+let result := 5 |> double |> add(10);   // add(double(5), 10) == 20
+
+// named arguments still work
+let capped := 20 |> clamp(max = 10);    // clamp(20, max = 10)
+```
+
+Bare functions, closures and method calls are all valid targets, and the
+pipeline is ordinary call syntax after parsing, so it costs nothing at runtime.
+
 ## Build
 
 ```sh

@@ -24,6 +24,7 @@ public:
 
 private:
     mem::Arena arena;
+    mem::Arena program_arena;
     Compiler_context ctx;
     gc::Gc_heap gc_heap;
     vm::Virtual_machine vm;

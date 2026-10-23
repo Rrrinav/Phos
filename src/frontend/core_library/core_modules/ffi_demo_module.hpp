@@ -20,7 +20,7 @@ struct ffi_demo_native
         const Value &point = args[0];
         int64_t dx = args[1].as_int();
         int64_t dy = args[2].as_int();
-        const auto &point_sig = point.as_model()->signature.fields.empty() ? ffi_demo_point_sig : point.as_model()->signature;
+        const auto &point_sig = ffi_demo_point_sig;
 
         Value x = Value(ffi::require_model_field(point, point_sig, "x").as_int() + dx);
         Value y = Value(ffi::require_model_field(point, point_sig, "y").as_int() + dy);
@@ -31,7 +31,7 @@ struct ffi_demo_native
 
     static Value magnitude_sq(Ctx &, std::span<Value> args)
     {
-        const auto &point_sig = args[0].as_model()->signature.fields.empty() ? ffi_demo_structural_point_sig : args[0].as_model()->signature;
+        const auto &point_sig = ffi_demo_structural_point_sig;
         int64_t x = ffi::require_model_field(args[0], point_sig, "x").as_int();
         int64_t y = ffi::require_model_field(args[0], point_sig, "y").as_int();
         return Value((x * x) + (y * y));

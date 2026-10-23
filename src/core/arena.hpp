@@ -62,7 +62,7 @@ public:
 
     explicit Arena(std::size_t initial_size)
     {
-        add_block(initial_size);
+        add_block(initial_size == 0 ? DEF_BLOCK_SIZE : initial_size);
     }
 
     // No copying
@@ -145,6 +145,17 @@ public:
         for (auto *b : blocks_) {
             b->size = 0;
         }
+    }
+
+    // Drops grown blocks at a real lifetime boundary instead of retaining
+    // their peak capacity like reset(). The arena remains immediately usable.
+    void release()
+    {
+        for (auto *b : blocks_) {
+            delete b;
+        }
+        blocks_.clear();
+        add_block(DEF_BLOCK_SIZE);
     }
 
     template <typename T, typename... Args>

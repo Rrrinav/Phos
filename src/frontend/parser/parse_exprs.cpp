@@ -66,7 +66,7 @@ Result<ast::Expr_id> Parser::expression()
 //                  Array_access -> Array_assignment_expr
 Result<ast::Expr_id> Parser::assignment()
 {
-    DECL_OR_RETURN(expr, range_expr());
+    DECL_OR_RETURN(expr, pipe_expr());
 
     if (match({lex::TokenType::Assign})) {
         lex::Token equals = previous();
@@ -98,6 +98,52 @@ Result<ast::Expr_id> Parser::assignment()
         }
 
         return std::unexpected(create_error(equals, "Invalid assignment target"));
+    }
+    return expr;
+}
+
+// pipe_expr -> range_expr ("|>" range_expr)*
+//
+// Pure parse-time sugar for left-to-right data flow:
+//   x |> f          =>  f(x)
+//   x |> f(a, b)    =>  f(x, a, b)
+//   x |> obj.m(a)   =>  obj.m(x, a)
+//
+// This keeps the AST ordinary Call nodes, so the type checker, compiler and
+// VM need no special pipeline support.
+Result<ast::Expr_id> Parser::pipe_expr()
+{
+    DECL_OR_RETURN(expr, range_expr());
+
+    while (match({lex::TokenType::PipeGreater})) {
+        lex::Token op = previous();
+        DECL_OR_RETURN(rhs, range_expr());
+
+        ast::Call_argument piped{
+            .name = "",
+            .value = expr,
+            .loc = ast::get_loc(ctx_.tree.get(expr).node),
+        };
+
+        auto &node = ctx_.tree.get(rhs).node;
+        if (auto *call = std::get_if<ast::Call_expr>(&node)) {
+            // x |> f(a) -> f(x, a); keeps named arguments on the call intact.
+            call->arguments.insert(call->arguments.begin(), std::move(piped));
+            expr = rhs;
+        } else if (auto *method = std::get_if<ast::Method_call_expr>(&node)) {
+            method->arguments.insert(method->arguments.begin(), std::move(piped));
+            expr = rhs;
+        } else {
+            std::vector<ast::Call_argument> arguments;
+            arguments.push_back(std::move(piped));
+            expr = ctx_.tree.add_expr(
+                ast::Expr{ast::Call_expr{
+                    .callee = rhs,
+                    .arguments = std::move(arguments),
+                    .type = ctx_.tt.get_unknown(),
+                    .loc = {op.line, op.column},
+                }});
+        }
     }
     return expr;
 }
@@ -339,7 +385,6 @@ Result<ast::Expr_id> Parser::call()
 
 // primary -> INT | FLOAT | STRING | BOOL | NIL
 //          | "this" | closure | "[" array_literal "]" | FSTRING
-//          | "spawn" expr | "await" expr | "yield" expr?
 //          | IDENT ("::" IDENT | "{" model_literal "}")?
 //          | "." IDENT
 //          | "(" expr ")"
@@ -389,44 +434,6 @@ Result<ast::Expr_id> Parser::primary()
                 .member_name = member.lexeme,
                 .loc = loc,
                 .type = ctx_.tt.get_unknown(),
-            }});
-    }
-
-    // concurrency
-    if (match({lex::TokenType::Spawn})) {
-        ast::Source_location loc{previous().line, previous().column};
-        DECL_OR_RETURN(call_expr, expression());
-        return ctx_.tree.add_expr(
-            ast::Expr{ast::Spawn_expr{
-                .call = call_expr,
-                .type = ctx_.tt.get_unknown(),
-                .loc = loc,
-            }});
-    }
-
-    if (match({lex::TokenType::Await})) {
-        ast::Source_location loc{previous().line, previous().column};
-        DECL_OR_RETURN(thread, expression());
-        return ctx_.tree.add_expr(
-            ast::Expr{ast::Await_expr{
-                .thread = thread,
-                .type = ctx_.tt.get_unknown(),
-                .loc = loc,
-            }});
-    }
-
-    if (match({lex::TokenType::Yield})) {
-        ast::Source_location loc{previous().line, previous().column};
-        ast::Expr_id value = ast::Expr_id::null();
-        if (!check(lex::TokenType::Semicolon) && !check(lex::TokenType::RightBrace)) {
-            ASSIGN_OR_RETURN(value, expression());
-        }
-
-        return ctx_.tree.add_expr(
-            ast::Expr{ast::Yield_expr{
-                .value = value,
-                .type = ctx_.tt.get_unknown(),
-                .loc = loc,
             }});
     }
 

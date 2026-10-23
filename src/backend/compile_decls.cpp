@@ -17,7 +17,7 @@ void Compiler::hoist_function_placeholder(Symbol_id id)
     if (!function_locations_.contains(id)) {
         // Pre-allocate the closure memory! Any nested block can now
         // point to this safely, even if it hasn't been populated yet.
-        Closure_data *closure = ctx.arena.allocate<Closure_data>();
+        Closure_data *closure = ctx.program_arena.allocate<Closure_data>();
         new (closure) Closure_data();
         function_locations_[id] = closure;
     }
@@ -209,13 +209,13 @@ void Compiler::compile_stmt_node(const ast::Function_stmt &stmt)
     closure->code_count = current_ctx_->block.instructions.size();
 
     if (closure->code_count > 0) {
-        closure->code = ctx.arena.allocate<vm::Instruction>(closure->code_count);
+        closure->code = ctx.program_arena.allocate<vm::Instruction>(closure->code_count);
         std::copy(current_ctx_->block.instructions.begin(), current_ctx_->block.instructions.end(), closure->code);
     }
 
     closure->constant_count = current_ctx_->block.constants.size();
     if (closure->constant_count > 0) {
-        closure->constants = ctx.arena.allocate<Value>(closure->constant_count);
+        closure->constants = ctx.program_arena.allocate<Value>(closure->constant_count);
         std::copy(current_ctx_->block.constants.begin(), current_ctx_->block.constants.end(), closure->constants);
     }
 

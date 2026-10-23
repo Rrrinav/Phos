@@ -233,8 +233,8 @@ bool Semantic_checker::is_compatible(types::Type_id expected, types::Type_id act
     }
 
     if (ctx.tt.is_model(expected) && ctx.tt.is_model(actual)) {
-        auto &exp_model = std::get<types::Model_type>(ctx.tt.get(expected).data);
-        auto &act_model = std::get<types::Model_type>(ctx.tt.get(actual).data);
+        const auto &exp_model = ctx.tt.get(expected).as<types::Model_type>();
+        const auto &act_model = ctx.tt.get(actual).as<types::Model_type>();
 
         if (exp_model.fields.size() != act_model.fields.size()) {
             return false;
@@ -335,7 +335,7 @@ void Semantic_checker::report_type_mismatch(
     if (ctx.tt.is_numeric_primitive(expected) && ctx.tt.is_numeric_primitive(actual)) {
         type_error(loc, numeric_cast_error_message(expected, actual));
     } else {
-        auto diagnostic = err::msg::error(diagnostics_.phase(), loc.l, loc.c, loc.file, "{}", message);
+        auto diagnostic = err::msg::error(diagnostics_.phase(), loc.l, loc.c, std::string(ctx.source_name(loc.file)), "{}", message);
         diagnostic.expected_got(ctx.tt.to_string(expected), ctx.tt.to_string(actual));
         diagnostics_.push(std::move(diagnostic));
     }
@@ -411,12 +411,6 @@ bool Semantic_checker::default_expr_uses_forbidden_names(ast::Expr_id expr_id, c
                 return default_expr_uses_forbidden_names(node.base, forbidden_names);
             } else if constexpr (std::is_same_v<T, ast::Range_expr>) {
                 return default_expr_uses_forbidden_names(node.start, forbidden_names) || default_expr_uses_forbidden_names(node.end, forbidden_names);
-            } else if constexpr (std::is_same_v<T, ast::Spawn_expr>) {
-                return default_expr_uses_forbidden_names(node.call, forbidden_names);
-            } else if constexpr (std::is_same_v<T, ast::Await_expr>) {
-                return default_expr_uses_forbidden_names(node.thread, forbidden_names);
-            } else if constexpr (std::is_same_v<T, ast::Yield_expr>) {
-                return default_expr_uses_forbidden_names(node.value, forbidden_names);
             }
             return false;
         },
@@ -555,44 +549,8 @@ std::optional<Semantic_checker::Access_path> Semantic_checker::extract_access_pa
     return std::nullopt;
 }
 
-void Semantic_checker::collect_nil_check_from_optional_method(
-    const ast::Method_call_expr &expr, bool target_truthy_branch, std::unordered_set<Access_path, Access_path_hash> &out)
-{
-    if (!expr.arguments.empty()) {
-        return;
-    }
-    if (!ctx.tt.is_optional(ast::get_type(ctx.tree.get(expr.object).node))) {
-        return;
-    }
-
-    bool narrows_when_truthy = (expr.method_name == "has_val" || expr.method_name == "is_val");
-    bool narrows_when_falsey = (expr.method_name == "is_nil");
-    if ((target_truthy_branch && narrows_when_truthy) || (!target_truthy_branch && narrows_when_falsey)) {
-        if (auto path = extract_access_path(expr.object)) {
-            out.insert(*path);
-        }
-    }
-}
-
-void Semantic_checker::collect_nil_check_from_comparison(
-    const ast::Binary_expr &expr, lex::TokenType target_op, std::unordered_set<Access_path, Access_path_hash> &out)
-{
-    if (expr.op != target_op) {
-        return;
-    }
-
-    if (ctx.tt.is_nil(ast::get_type(ctx.tree.get(expr.right).node))) {
-        if (auto path = extract_access_path(expr.left)) {
-            out.insert(*path);
-        }
-    } else if (ctx.tt.is_nil(ast::get_type(ctx.tree.get(expr.left).node))) {
-        if (auto path = extract_access_path(expr.right)) {
-            out.insert(*path);
-        }
-    }
-}
-
-void Semantic_checker::collect_nil_checked_vars_for_then(ast::Expr_id expr_id, std::unordered_set<Access_path, Access_path_hash> &out)
+void Semantic_checker::collect_nil_checked_paths(
+    ast::Expr_id expr_id, bool truthy_branch, std::unordered_set<Access_path, Access_path_hash> &out)
 {
     if (expr_id.is_null()) {
         return;
@@ -600,55 +558,52 @@ void Semantic_checker::collect_nil_checked_vars_for_then(ast::Expr_id expr_id, s
     auto &node = ctx.tree.get(expr_id).node;
 
     if (auto *bin_expr = std::get_if<ast::Binary_expr>(&node)) {
-        if (bin_expr->op == lex::TokenType::LogicalAnd) {
-            collect_nil_checked_vars_for_then(bin_expr->left, out);
-            collect_nil_checked_vars_for_then(bin_expr->right, out);
+        const lex::TokenType composable = truthy_branch ? lex::TokenType::LogicalAnd : lex::TokenType::LogicalOr;
+        if (bin_expr->op == composable) {
+            collect_nil_checked_paths(bin_expr->left, truthy_branch, out);
+            collect_nil_checked_paths(bin_expr->right, truthy_branch, out);
             return;
         }
-        collect_nil_check_from_comparison(*bin_expr, lex::TokenType::NotEqual, out);
+
+        const lex::TokenType narrowing_comparison = truthy_branch ? lex::TokenType::NotEqual : lex::TokenType::Equal;
+        if (bin_expr->op == narrowing_comparison) {
+            if (ctx.tt.is_nil(ast::get_type(ctx.tree.get(bin_expr->right).node))) {
+                if (auto path = extract_access_path(bin_expr->left)) {
+                    out.insert(*path);
+                }
+            } else if (ctx.tt.is_nil(ast::get_type(ctx.tree.get(bin_expr->left).node))) {
+                if (auto path = extract_access_path(bin_expr->right)) {
+                    out.insert(*path);
+                }
+            }
+        }
         return;
     }
+
     if (auto *unary_expr = std::get_if<ast::Unary_expr>(&node)) {
         if (unary_expr->op == lex::TokenType::LogicalNot) {
-            collect_nil_checked_vars_for_else(unary_expr->right, out);
+            collect_nil_checked_paths(unary_expr->right, !truthy_branch, out);
             return;
         }
     }
+
     if (auto *method_expr = std::get_if<ast::Method_call_expr>(&node)) {
-        collect_nil_check_from_optional_method(*method_expr, true, out);
+        if (method_expr->arguments.empty() && ctx.tt.is_optional(ast::get_type(ctx.tree.get(method_expr->object).node))) {
+            const bool narrows = truthy_branch ? (method_expr->method_name == "has_val" || method_expr->method_name == "is_val")
+                                               : method_expr->method_name == "is_nil";
+            if (narrows) {
+                if (auto path = extract_access_path(method_expr->object)) {
+                    out.insert(*path);
+                }
+            }
+        }
         return;
     }
-    if (ctx.tt.is_optional(ast::get_type(node))) {
+
+    if (truthy_branch && ctx.tt.is_optional(ast::get_type(node))) {
         if (auto path = extract_access_path(expr_id)) {
             out.insert(*path);
         }
-    }
-}
-
-void Semantic_checker::collect_nil_checked_vars_for_else(ast::Expr_id expr_id, std::unordered_set<Access_path, Access_path_hash> &out)
-{
-    if (expr_id.is_null()) {
-        return;
-    }
-    auto &node = ctx.tree.get(expr_id).node;
-
-    if (auto *bin_expr = std::get_if<ast::Binary_expr>(&node)) {
-        if (bin_expr->op == lex::TokenType::LogicalOr) {
-            collect_nil_checked_vars_for_else(bin_expr->left, out);
-            collect_nil_checked_vars_for_else(bin_expr->right, out);
-            return;
-        }
-        collect_nil_check_from_comparison(*bin_expr, lex::TokenType::Equal, out);
-        return;
-    }
-    if (auto *unary_expr = std::get_if<ast::Unary_expr>(&node)) {
-        if (unary_expr->op == lex::TokenType::LogicalNot) {
-            collect_nil_checked_vars_for_then(unary_expr->right, out);
-            return;
-        }
-    }
-    if (auto *method_expr = std::get_if<ast::Method_call_expr>(&node)) {
-        collect_nil_check_from_optional_method(*method_expr, false, out);
     }
 }
 
@@ -854,6 +809,61 @@ bool Semantic_checker::match_ffi_type(
 
     types::Type_id concrete_expected = parse_type_string(expected_str, generics);
     return is_compatible(concrete_expected, actual_type);
+}
+
+bool Semantic_checker::bind_intrinsic_arguments(
+    std::vector<ast::Call_argument> &arguments,
+    std::initializer_list<std::string_view> parameter_names,
+    std::string_view intrinsic_name,
+    const ast::Source_location &call_loc)
+{
+    std::vector<ast::Call_argument> ordered(parameter_names.size());
+    std::vector<bool> filled(parameter_names.size(), false);
+    bool seen_named = false;
+    size_t next_positional = 0;
+
+    for (const auto &argument : arguments) {
+        size_t target = parameter_names.size();
+        if (!argument.name.empty()) {
+            seen_named = true;
+            auto parameter = std::find(parameter_names.begin(), parameter_names.end(), argument.name);
+            if (parameter == parameter_names.end()) {
+                type_error(
+                    argument.loc,
+                    std::format("Intrinsic '{}' has no parameter named '{}'.", intrinsic_name, argument.name));
+                return false;
+            }
+            target = static_cast<size_t>(std::distance(parameter_names.begin(), parameter));
+            if (filled[target]) {
+                type_error(argument.loc, std::format("Parameter '{}' was provided more than once.", argument.name));
+                return false;
+            }
+        } else {
+            if (seen_named) {
+                type_error(argument.loc, "Positional arguments cannot appear after named arguments.");
+                return false;
+            }
+            target = next_positional++;
+            if (target >= parameter_names.size()) {
+                type_error(call_loc, std::format("Too many arguments for '{}'. Expected {}.", intrinsic_name, parameter_names.size()));
+                return false;
+            }
+        }
+        ordered[target] = argument;
+        filled[target] = true;
+    }
+
+    size_t index = 0;
+    for (std::string_view parameter : parameter_names) {
+        if (!filled[index]) {
+            type_error(call_loc, std::format("Missing required argument '{}' for '{}'.", parameter, intrinsic_name));
+            return false;
+        }
+        ++index;
+    }
+
+    arguments = std::move(ordered);
+    return true;
 }
 
 Semantic_checker::Bound_call_arguments Semantic_checker::bind_call_arguments(

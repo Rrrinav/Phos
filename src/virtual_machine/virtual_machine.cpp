@@ -12,7 +12,7 @@
 namespace phos::vm {
 
 // --- VM Context Implementations ---
-phos::Green_thread_data &Vm_context::current_thread() const noexcept
+phos::Execution_state &Vm_context::current_thread() const noexcept
 {
     return *thread;
 }
@@ -117,7 +117,7 @@ static Vm_context make_vm_context(
     Virtual_machine &machine,
     gc::Gc_heap &gc,
     mem::Arena &arena,
-    Green_thread_data &thread,
+    Execution_state &thread,
     Call_frame *frame,
     Value *registers,
     std::vector<Value> &globals,
@@ -137,7 +137,7 @@ static Vm_context make_vm_context(
         .cmd_args = &machine.cmd_args};
 }
 
-static Upvalue_data *capture_upvalue(Green_thread_data *thread, size_t absolute_stack_index, Vm_context &ctx)
+static Upvalue_data *capture_upvalue(Execution_state *thread, size_t absolute_stack_index, Vm_context &ctx)
 {
     Upvalue_data *prev_upvalue = nullptr;
     Upvalue_data *upvalue = thread->open_upvalues;
@@ -168,7 +168,7 @@ static Upvalue_data *capture_upvalue(Green_thread_data *thread, size_t absolute_
     return created_upvalue;
 }
 
-static void close_upvalues(Green_thread_data *thread, size_t last_stack_index)
+static void close_upvalues(Execution_state *thread, size_t last_stack_index)
 {
     Value *limit_location = &thread->value_stack[last_stack_index];
 
@@ -187,7 +187,7 @@ __attribute__((always_inline)) void Virtual_machine::op_call(
     Instruction inst, Vm_context &ctx, Call_frame *&frame, const Instruction *&code, const Value *&constants, size_t &ip, size_t &base)
 {
     Value *registers = ctx.registers;
-    Green_thread_data *thread = ctx.thread;
+    Execution_state *thread = ctx.thread;
 
     Value callee = registers[base + inst.rrr.src_a];
     uint8_t arg_count = inst.rrr.src_b;
@@ -231,8 +231,16 @@ __attribute__((always_inline)) void Virtual_machine::op_call(
 
     frame->ip = ip;
     size_t new_base = base + inst.rrr.src_a + 1;
-    if (new_base + Vm_context::FRAME_REGISTER_WINDOW > thread->value_stack_capacity) {
-        panic("Register stack overflow! Need {} slots, have {}.", new_base + Vm_context::FRAME_REGISTER_WINDOW, thread->value_stack_capacity);
+    const size_t required_end = new_base + std::max<size_t>(target_closure->register_footprint, arg_count);
+    if (required_end > thread->value_stack_capacity) {
+        panic("Register stack overflow! Need {} slots, have {}.", required_end, thread->value_stack_capacity);
+    }
+    if (required_end > thread->value_stack_initialized) {
+        std::uninitialized_fill_n(
+            thread->value_stack + thread->value_stack_initialized,
+            required_end - thread->value_stack_initialized,
+            Value());
+        thread->value_stack_initialized = required_end;
     }
 
     thread->call_stack[thread->call_stack_count++] = Call_frame(target_closure, new_base);
@@ -249,7 +257,7 @@ __attribute__((always_inline)) bool Virtual_machine::op_return(
     Instruction inst, Vm_context &ctx, Call_frame *&frame, const Instruction *&code, const Value *&constants, size_t &ip, size_t &base)
 {
     Value *registers = ctx.registers;
-    Green_thread_data *thread = ctx.thread;
+    Execution_state *thread = ctx.thread;
 
     /* return R[dst] */
     Value result = registers[base + inst.rrr.dst];
@@ -294,7 +302,7 @@ __attribute__((always_inline)) bool Virtual_machine::op_return(
 __attribute__((always_inline)) void Virtual_machine::op_make_closure(Instruction inst, Vm_context &ctx, const Instruction *code)
 {
     Value *registers = ctx.registers;
-    Green_thread_data *thread = ctx.thread;
+    Execution_state *thread = ctx.thread;
     size_t base = *ctx.frame_base;
 
     Value prototype_val = ctx.frame->closure->constants[inst.ri.imm];
@@ -333,7 +341,7 @@ __attribute__((always_inline)) void Virtual_machine::op_make_closure(Instruction
 }
 
 template <bool Is_Tracing>
-void Virtual_machine::execute_loop(Green_thread_data *thread)
+void Virtual_machine::execute_loop(Execution_state *thread)
 {
     if (thread->call_stack_count == 0 || thread->is_completed) {
         return;
@@ -774,7 +782,7 @@ void Virtual_machine::execute_loop(Green_thread_data *thread)
 
         case Opcode::Make_model: {
             uint8_t count = inst.rrr.src_b;
-            Value model_val = Value::make_model_uninit(ctx, {}, count);
+            Value model_val = Value::make_model_uninit(ctx, count);
 
             for (uint8_t i = 0; i < count; i++) {
                 model_val.as_model()->fields[i] = registers[base + inst.rrr.src_a + i];
@@ -1025,7 +1033,7 @@ std::optional<types::Primitive_kind> Virtual_machine::cast_target_kind(Opcode op
     return std::nullopt;
 }
 
-template void Virtual_machine::execute_loop<true>(Green_thread_data *);
-template void Virtual_machine::execute_loop<false>(Green_thread_data *);
+template void Virtual_machine::execute_loop<true>(Execution_state *);
+template void Virtual_machine::execute_loop<false>(Execution_state *);
 
 } // namespace phos::vm

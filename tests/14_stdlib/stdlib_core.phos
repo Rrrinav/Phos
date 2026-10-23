@@ -7,6 +7,7 @@ print(q.get());
 print(is_same(1, 1), is_same([1], [1]), sep=" ");
 print("up", "abc".to_upper(), sep=" ");
 print("rep", "xy".repeat(2), sep=" ");
+print(["fast", "linear", "join"].join("-"));
 let mut a := [1, 2, 3];
 a.push(4);
 print(a);

@@ -116,7 +116,6 @@ class Compiler
 
 public:
     explicit Compiler(phos::Compiler_context &ctx);
-    Closure_data compile(const std::vector<ast::Stmt_id> &statements);
     Closure_data compile_workspace(Module_id main_mod);
     Closure_data compile_module_only(Module_id mod_id);
 

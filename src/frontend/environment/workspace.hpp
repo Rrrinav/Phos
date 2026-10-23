@@ -80,6 +80,16 @@ private:
     }
 
 public:
+    void clear()
+    {
+        modules.clear();
+        modules.shrink_to_fit();
+        path_to_module_.clear();
+        path_to_module_.rehash(0);
+        namespace_to_module_.clear();
+        namespace_to_module_.rehash(0);
+    }
+
     Module_id create_module(std::string logical_ns, std::filesystem::path path)
     {
         Module_id id{modules.size()};

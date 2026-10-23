@@ -391,5 +391,6 @@ void Type_environment::register_core_methods()
     define_native("Array::remove_at", params_t{"T[]", "i64"}, "T?", vm::array_methods::remove_at);
     define_native("Array::u_remove_at", params_t{"T[]", "i64"}, "T?", vm::array_methods::u_remove_at);
     define_native("Array::reverse", params_t{"T[]"}, "void", vm::array_methods::reverse);
+    define_native("Array::join", params_t{"string[]", "string"}, "string", vm::array_methods::join);
 }
 } // namespace phos

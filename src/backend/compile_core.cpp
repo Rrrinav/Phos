@@ -148,7 +148,7 @@ std::string Compiler::canonical_function_name(const ast::Function_stmt &stmt) co
 void Compiler::set_closure_name(Closure_data &closure, std::string_view name)
 {
     size_t name_size = sizeof(String_data) + name.length() + 1;
-    closure.name = static_cast<String_data *>(ctx.arena.allocate_bytes(name_size));
+    closure.name = static_cast<String_data *>(ctx.program_arena.allocate_bytes(name_size));
     closure.name->length = name.length();
     std::copy(name.begin(), name.end(), closure.name->chars);
     closure.name->chars[name.length()] = '\0';
@@ -229,7 +229,7 @@ void Compiler::bind_natives()
             continue;
         }
 
-        Closure_data *closure = ctx.arena.allocate<Closure_data>();
+        Closure_data *closure = ctx.program_arena.allocate<Closure_data>();
         new (closure) Closure_data();
 
         set_closure_name(*closure, name);
@@ -297,13 +297,13 @@ Closure_data Compiler::compile_workspace([[maybe_unused]] Module_id main_mod)
 
     data.code_count = final_block.instructions.size();
     if (data.code_count > 0) {
-        data.code = ctx.arena.allocate<vm::Instruction>(data.code_count);
+        data.code = ctx.program_arena.allocate<vm::Instruction>(data.code_count);
         std::copy(final_block.instructions.begin(), final_block.instructions.end(), data.code);
     }
 
     data.constant_count = final_block.constants.size();
     if (data.constant_count > 0) {
-        data.constants = ctx.arena.allocate<Value>(data.constant_count);
+        data.constants = ctx.program_arena.allocate<Value>(data.constant_count);
         std::copy(final_block.constants.begin(), final_block.constants.end(), data.constants);
     }
 
@@ -357,86 +357,13 @@ Closure_data Compiler::compile_module_only(Module_id mod_id)
 
     data.code_count = final_block.instructions.size();
     if (data.code_count > 0) {
-        data.code = ctx.arena.allocate<vm::Instruction>(data.code_count);
+        data.code = ctx.program_arena.allocate<vm::Instruction>(data.code_count);
         std::copy(final_block.instructions.begin(), final_block.instructions.end(), data.code);
     }
 
     data.constant_count = final_block.constants.size();
     if (data.constant_count > 0) {
-        data.constants = ctx.arena.allocate<Value>(data.constant_count);
-        std::copy(final_block.constants.begin(), final_block.constants.end(), data.constants);
-    }
-
-    // Registers are densely allocated from 0: the high-water mark is the exact live window.
-    data.register_footprint = static_cast<uint16_t>(global_ctx.current_register);
-
-    pop_context();
-    return data;
-}
-
-Closure_data Compiler::compile(const std::vector<ast::Stmt_id> &statements)
-{
-    (void)statements;
-    Function_context global_ctx;
-    global_ctx.enclosing = nullptr;
-    global_ctx.current_register = 0;
-    current_ctx_ = nullptr;
-    root_ctx_ = nullptr;
-    current_module_ns_.clear();
-    function_locations_.clear();
-    function_global_slots_.clear();
-    push_context(&global_ctx);
-
-    for (const auto &[name, sigs] : ctx.type_env.native_signatures) {
-        if (sigs.empty() || sigs[0].func == nullptr) {
-            continue;
-        }
-
-        Closure_data *closure = ctx.arena.allocate<Closure_data>();
-        new (closure) Closure_data();
-
-        set_closure_name(*closure, name);
-
-        closure->arity = sigs[0].params.size();
-        closure->native_func = sigs[0].func;
-        closure->code_count = 0;
-        closure->code = nullptr;
-        closure->constant_count = 0;
-        closure->constants = nullptr;
-
-        if (auto sym_id = ctx.registry.lookup_global(name)) {
-            function_locations_[*sym_id] = closure;
-        } else {
-            std::println(std::cerr, "Compiler Bug: Native function '{}' missing from global registry.", name);
-            std::exit(EXIT_FAILURE);
-        }
-    }
-
-    for (const auto &module : ctx.workspace.modules) {
-        hoist_module_functions(module);
-    }
-
-    for (const auto &module : ctx.workspace.modules) {
-        current_module_ns_ = module.logical_namespace;
-        for (auto stmt_id : module.ast_roots) {
-            compile_stmt(stmt_id);
-        }
-    }
-
-    emit(vm::Instruction::make_rrr(vm::Opcode::Return, 0, 0, 0));
-
-    Closure_data data{};
-    auto &final_block = current_block();
-
-    data.code_count = final_block.instructions.size();
-    if (data.code_count > 0) {
-        data.code = ctx.arena.allocate<vm::Instruction>(data.code_count);
-        std::copy(final_block.instructions.begin(), final_block.instructions.end(), data.code);
-    }
-
-    data.constant_count = final_block.constants.size();
-    if (data.constant_count > 0) {
-        data.constants = ctx.arena.allocate<Value>(data.constant_count);
+        data.constants = ctx.program_arena.allocate<Value>(data.constant_count);
         std::copy(final_block.constants.begin(), final_block.constants.end(), data.constants);
     }
 

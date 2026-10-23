@@ -1,0 +1,26 @@
+fn double(x: i32) -> i32 { return x * 2; }
+fn add(a: i32, b: i32) -> i32 { return a + b; }
+fn clamp_high(x: i32, max: i32) -> i32 {
+    if x > max {
+        return max;
+    }
+    return x;
+}
+fn is_even(x: i32) -> bool { return x % 2 == 0; }
+
+print("pipe ", 5 |> double);
+print("chain ", 5 |> double |> add(10));
+print("named ", 20 |> clamp_high(max = 10));
+print("closure ", 5 |> fn(x: i32) -> i32 { return x + 1; });
+
+let inc := fn(x: i32) -> i32 { return x + 1; };
+print("value ", 5 |> inc);
+print("bool ", 5 |> double |> is_even);
+print("precedence ", 1 + 2 |> double);
+
+model Calc { base: i32; }
+bind Calc {
+    fn add(n: i32) -> i32 { return this.base + n; }
+}
+let calc := Calc.{ base: 10 };
+print("method ", 5 |> calc.add());

@@ -150,7 +150,7 @@ err::Engine Module_resolver::resolve_imports(Module_id current_module, const std
                 diagnostics_.error(
                     import_loc.l,
                     import_loc.c,
-                    import_loc.file,
+                    std::string(ctx.source_name(import_loc.file)),
                     "Invalid module name. 'super' is a reserved keyword and cannot be used as a file or folder name.");
                 continue;
             }
@@ -284,7 +284,12 @@ err::Engine Module_resolver::resolve_imports(Module_id current_module, const std
             }
 
             if (final_file_path.empty() && !is_dir) {
-                diagnostics_.error(import_loc.l, import_loc.c, import_loc.file, "Module '{}' not found.", raw_os_path);
+                diagnostics_.error(
+                    import_loc.l,
+                    import_loc.c,
+                    std::string(ctx.source_name(import_loc.file)),
+                    "Module '{}' not found.",
+                    raw_os_path);
                 continue;
             }
 
@@ -296,7 +301,12 @@ err::Engine Module_resolver::resolve_imports(Module_id current_module, const std
 
                 std::ifstream file(file_path);
                 if (!file.is_open()) {
-                    diagnostics_.error(import_loc.l, import_loc.c, import_loc.file, "Could not open module '{}'.", file_path.string());
+                    diagnostics_.error(
+                        import_loc.l,
+                        import_loc.c,
+                        std::string(ctx.source_name(import_loc.file)),
+                        "Could not open module '{}'.",
+                        file_path.string());
                     return std::nullopt;
                 }
 
@@ -314,8 +324,7 @@ err::Engine Module_resolver::resolve_imports(Module_id current_module, const std
                 }
 
                 // Parse
-                Parser parser(std::move(lexed.tokens), ctx, file_path.string());
-                auto parsed = parser.parse();
+                auto parsed = Parser(std::move(lexed.tokens), ctx, file_path.string()).parse();
 
                 if (!parsed.diagnostics.empty()) {
                     diagnostics_.append(parsed.diagnostics);

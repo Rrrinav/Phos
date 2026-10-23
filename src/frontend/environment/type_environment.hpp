@@ -128,6 +128,18 @@ public:
     std::optional<std::string> get_native_type_str(const std::string &name) const;
 
     void register_core_methods();
+
+    void clear()
+    {
+        global_types.clear();
+        functions.clear();
+        model_data.clear();
+        union_data.clear();
+        enum_data.clear();
+        native_signatures.clear();
+        native_constants.clear();
+        native_types.clear();
+    }
 };
 
 } // namespace phos

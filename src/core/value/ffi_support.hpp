@@ -23,11 +23,6 @@ inline const Value *find_model_field(const Value &value, const types::Model_type
     return &value.as_model()->fields[index->second];
 }
 
-inline const Value *find_model_field(const Value &value, std::string_view field_name)
-{
-    return find_model_field(value, value.as_model()->signature, field_name);
-}
-
 inline Value *find_model_field_mut(Value &value, const types::Model_type &signature, std::string_view field_name)
 {
     if (!value.is_model()) {
@@ -42,11 +37,6 @@ inline Value *find_model_field_mut(Value &value, const types::Model_type &signat
     return &value.as_model()->fields[index->second];
 }
 
-inline Value *find_model_field_mut(Value &value, std::string_view field_name)
-{
-    return find_model_field_mut(value, value.as_model()->signature, field_name);
-}
-
 inline const Value &require_model_field(const Value &value, const types::Model_type &signature, std::string_view field_name)
 {
     if (const Value *field = find_model_field(value, signature, field_name)) {
@@ -56,14 +46,10 @@ inline const Value &require_model_field(const Value &value, const types::Model_t
     throw std::runtime_error(std::string("Missing model field: ") + std::string(field_name));
 }
 
-inline const Value &require_model_field(const Value &value, std::string_view field_name)
-{
-    return require_model_field(value, value.as_model()->signature, field_name);
-}
-
 inline Value make_model(vm::Vm_context &ctx, const types::Model_type &signature, std::span<const Value> fields, uint8_t depth = 0)
 {
-    Value model = Value::make_model_uninit(ctx, signature, static_cast<uint32_t>(fields.size()), depth);
+    (void)signature;
+    Value model = Value::make_model_uninit(ctx, static_cast<uint32_t>(fields.size()), depth);
     for (size_t i = 0; i < fields.size(); ++i) {
         model.as_model()->fields[i] = fields[i];
     }

@@ -577,7 +577,7 @@ Result<ast::Stmt_id> Parser::import_statement()
     // Use the location of the "import" keyword we just passed
     size_t start_line = previous().line;
     size_t start_column = previous().column;
-    ast::Source_location loc{start_line, start_column, source_name_};
+    ast::Source_location loc{static_cast<uint32_t>(start_line), static_cast<uint32_t>(start_column), source_file_};
 
     ast::Import_stmt stmt;
     stmt.loc = loc;

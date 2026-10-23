@@ -20,7 +20,7 @@ namespace phos {
 
 // Updated constructor to explicitly initialize gc_heap and pass it to vm
 Phos_engine::Phos_engine(size_t memory_size_bytes, std::ostream *out, std::ostream *err)
-    : arena(memory_size_bytes), ctx(arena), gc_heap(), vm(gc_heap, arena), out_stream(out), err_stream(err)
+    : frontend_arena(), arena(memory_size_bytes), ctx(frontend_arena, arena), gc_heap(), vm(gc_heap, arena), out_stream(out), err_stream(err)
 {}
 
 bool Phos_engine::compile_file(const std::filesystem::path &file_path)
@@ -55,8 +55,7 @@ bool Phos_engine::compile_source(const std::string &source, const std::string &l
         return false;
     }
 
-    Parser parser(std::move(lexed.tokens), ctx, logical_name);
-    auto parse_result = parser.parse();
+    auto parse_result = Parser(std::move(lexed.tokens), ctx, logical_name).parse();
     if (!parse_result.diagnostics.empty()) {
         parse_result.diagnostics.print(*err_stream);
         return false;
@@ -99,6 +98,14 @@ bool Phos_engine::compile_source(const std::string &source, const std::string &l
 void Phos_engine::execute()
 {
     vm::Virtual_machine::run_closure(vm, &main_function);
+}
+
+void Phos_engine::release_frontend()
+{
+    main_statements.clear();
+    main_statements.shrink_to_fit();
+    ctx.release_frontend();
+    frontend_arena.release();
 }
 
 std::string Phos_engine::dump_ir() const

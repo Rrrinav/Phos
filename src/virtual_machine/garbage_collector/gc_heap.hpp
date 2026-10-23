@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
+#include <array>
 #include <vector>
 
 namespace phos {
@@ -15,7 +16,7 @@ struct Model_data;
 struct Union_data;
 struct Closure_data;
 struct Iterator_data;
-struct Green_thread_data;
+struct Execution_state;
 struct Upvalue_data;
 } // namespace phos
 
@@ -33,6 +34,7 @@ public:
     // maps to it. Larger cells still use exact-size malloc directly.
     static constexpr size_t kPoolClasses[] = {32, 64, 128, 256, 512};
     static constexpr size_t kMaxPooledSize = 512;
+    static constexpr size_t kSlabBytes = 64 * 1024;
 
     Gc_heap() = default;
     ~Gc_heap()
@@ -63,7 +65,7 @@ public:
         extra_roots_.pop_back();
     }
 
-    void collect(phos::Green_thread_data &thread, std::vector<phos::Value> &globals);
+    void collect(phos::Execution_state &thread, std::vector<phos::Value> &globals);
 
     bool needs_gc() const noexcept
     {
@@ -82,12 +84,22 @@ public:
     {
         return object_count_;
     }
+    size_t collection_count() const noexcept
+    {
+        return collection_count_;
+    }
+
+    void reset()
+    {
+        destroy_all();
+    }
 
 private:
     Gc_cell *head_ = nullptr;
     size_t bytes_allocated_ = 0;
     size_t threshold_ = INITIAL_THRESHOLD;
     size_t object_count_ = 0;
+    size_t collection_count_ = 0;
 
     std::vector<Gc_cell *> gray_;
     std::vector<phos::Value *> extra_roots_;
@@ -95,6 +107,7 @@ private:
     // Recycled cells by size class index into kPoolClasses (nullptr = empty).
     // Cells in these lists are NOT on the heap list and carry no accounting.
     Gc_cell *pools_[sizeof(kPoolClasses) / sizeof(kPoolClasses[0])] = {};
+    std::array<std::vector<void *>, sizeof(kPoolClasses) / sizeof(kPoolClasses[0])> slabs_;
 
     static size_t pool_index(size_t total_bytes) noexcept
     {
@@ -106,12 +119,14 @@ private:
         return sizeof(kPoolClasses) / sizeof(kPoolClasses[0]); // too big: malloc
     }
 
+    void refill_pool(size_t pool);
+
     void mark_value(phos::Value &v);
     void mark_cell(Gc_cell *cell);
     // Marks only each frame's compiled register footprint instead of the
     // whole value stack, so dead slots above a frame's footprint are never
     // scanned (and never need wiping beyond the footprint either).
-    void mark_thread_values(phos::Green_thread_data &thread);
+    void mark_thread_values(phos::Execution_state &thread);
     void trace_gray();
 
     void trace_string(Gc_cell *cell);
@@ -120,7 +135,6 @@ private:
     void trace_union_(Gc_cell *cell);
     void trace_closure(Gc_cell *cell);
     void trace_iterator(Gc_cell *cell);
-    void trace_thread(Gc_cell *cell);
     void trace_upvalue(Gc_cell *cell);
 
     void sweep();

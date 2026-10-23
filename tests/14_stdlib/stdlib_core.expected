@@ -5,6 +5,7 @@
 true false
 up ABC
 rep xyxy
+fast-linear-join
 [1, 2, 3, 4]
 [4, 3, 2, 1]
 false

@@ -11,6 +11,23 @@ namespace phos {
 Semantic_checker::Semantic_checker(Compiler_context &ctx) : ctx(ctx)
 {}
 
+void Semantic_checker::clear_session()
+{
+    variables.clear();
+    m_nil_checked_vars_stack.clear();
+    current_return_types.reset();
+    current_return_params = nullptr;
+    current_model_type.reset();
+    diagnostics_ = err::Engine{"semantic-checking"};
+    current_module_id = Module_id::null();
+    hoisted_modules.clear();
+    checked_modules.clear();
+    loop_label_stack_.clear();
+    label_scopes_.clear();
+    nested_fn_stack_.clear();
+    function_name_stack_.clear();
+}
+
 types::Type_id Semantic_checker::resolve_symbol(Symbol_id id)
 {
     return resolve_symbol_type(ctx, id, *this);
@@ -18,12 +35,12 @@ types::Type_id Semantic_checker::resolve_symbol(Symbol_id id)
 
 void Semantic_checker::type_error(const ast::Source_location &loc, const std::string &message)
 {
-    diagnostics_.error(loc.l, loc.c, loc.file, "{}", message);
+    diagnostics_.error(loc.l, loc.c, std::string(ctx.source_name(loc.file)), "{}", message);
 }
 
 void Semantic_checker::type_warning(const ast::Source_location &loc, const std::string &message)
 {
-    diagnostics_.warning(loc.l, loc.c, loc.file, "{}", message);
+    diagnostics_.warning(loc.l, loc.c, std::string(ctx.source_name(loc.file)), "{}", message);
 }
 
 err::Engine Semantic_checker::check_workspace()
@@ -31,7 +48,6 @@ err::Engine Semantic_checker::check_workspace()
     // Each call only checks modules that were added since the last call, so
     // the report must contain only this round's diagnostics.
     diagnostics_ = err::Engine{};
-
     label_scopes_.push_back({});
     for (const auto &[name, sigs] : ctx.type_env.native_signatures) {
         if (!ctx.registry.lookup_global(name)) {
@@ -84,7 +100,7 @@ void Semantic_checker::check_module(Module_id mod_id)
     auto &module = ctx.workspace.get_module(mod_id);
     current_module_id = mod_id;
 
-    variables.begin_scope();
+    Scope_guard scope{variables};
     m_nil_checked_vars_stack.emplace_back();
 
     for (auto stmt_id : module.ast_roots) {
@@ -92,7 +108,6 @@ void Semantic_checker::check_module(Module_id mod_id)
     }
 
     m_nil_checked_vars_stack.pop_back();
-    variables.end_scope();
 
     current_module_id = Module_id::null();
 }
@@ -101,9 +116,10 @@ err::Engine Semantic_checker::check(const std::vector<ast::Stmt_id> &statements)
 {
     (void)statements;
 
-    for (const auto &[name, sigs] : ctx.type_env.native_signatures) {
+    for (const auto &[name, signatures] : ctx.type_env.native_signatures) {
+        (void)signatures;
         if (!ctx.registry.lookup_global(name)) {
-            Symbol sym{
+            ctx.registry.create_symbol(Symbol{
                 .id = Symbol_id{0},
                 .name = ctx.registry.intern(name),
                 .kind = Symbol_kind::Native_func,
@@ -114,8 +130,7 @@ err::Engine Semantic_checker::check(const std::vector<ast::Stmt_id> &statements)
                 .global_index = std::nullopt,
                 .stack_offset = std::nullopt,
                 .ffi_index = std::nullopt,
-                .declaration = ast::Stmt_id::null()};
-            ctx.registry.create_symbol(std::move(sym));
+                .declaration = ast::Stmt_id::null()});
         }
     }
 
@@ -125,15 +140,12 @@ err::Engine Semantic_checker::check(const std::vector<ast::Stmt_id> &statements)
 
     for (const auto &module : ctx.workspace.modules) {
         current_module_id = module.id;
-        variables.begin_scope();
+        Scope_guard scope{variables};
         m_nil_checked_vars_stack.emplace_back();
-
         for (auto stmt_id : module.ast_roots) {
             check_stmt(stmt_id);
         }
-
         m_nil_checked_vars_stack.pop_back();
-        variables.end_scope();
     }
 
     current_module_id = Module_id::null();
@@ -300,12 +312,6 @@ types::Type_id Semantic_checker::check_expr(ast::Expr_id expr_id, std::optional<
                 return check_array_assignment_expr(expr_id, peeled_hint);
             } else if constexpr (std::is_same_v<T, ast::Range_expr>) {
                 return check_range_expr(expr_id, peeled_hint);
-            } else if constexpr (std::is_same_v<T, ast::Spawn_expr>) {
-                return check_spawn_expr(expr_id, peeled_hint);
-            } else if constexpr (std::is_same_v<T, ast::Await_expr>) {
-                return check_await_expr(expr_id, peeled_hint);
-            } else if constexpr (std::is_same_v<T, ast::Yield_expr>) {
-                return check_yield_expr(expr_id, peeled_hint);
             }
             return ctx.tt.get_unknown();
         },

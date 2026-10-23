@@ -33,7 +33,8 @@ bool stdin_is_interactive()
 } // namespace
 
 Repl::Repl(std::ostream *out, std::ostream *err)
-    : arena(1024 * 1024 * 10), ctx(arena), gc_heap(), vm(gc_heap, arena), checker(ctx), compiler(ctx), out_(out ? out : &std::cout),
+    : arena(), program_arena(), ctx(arena, program_arena), gc_heap(), vm(gc_heap, program_arena), checker(ctx), compiler(ctx),
+      out_(out ? out : &std::cout),
       err_(err ? err : &std::cerr)
 {
     ctx.repl_force_global = true;
@@ -122,8 +123,7 @@ Repl::Attempt Repl::parse_attempt(const std::string &text)
         return result;
     }
 
-    Parser parser(std::move(lexed.tokens), ctx, "<repl>");
-    auto parse_result = parser.parse();
+    auto parse_result = Parser(std::move(lexed.tokens), ctx, "<repl>").parse();
 
     bool any_error = false;
     at_eof = true;
@@ -232,24 +232,15 @@ void Repl::execute_closure(const Closure_data &closure)
 
 void Repl::clear_session()
 {
-    ctx.workspace.modules.clear();
-
-    ctx.registry.symbols.clear();
-    ctx.registry.global_index.clear();
-    ctx.registry.next_global_index = 0;
-
-    ctx.type_env.global_types.clear();
-    ctx.type_env.functions.clear();
-    ctx.type_env.model_data.clear();
-    ctx.type_env.union_data.clear();
-    ctx.type_env.enum_data.clear();
-
-    checker.hoisted_modules.clear();
-    checker.checked_modules.clear();
-
     compiler.clear_session();
-
     vm.globals.clear();
+    gc_heap.reset();
+    checker.clear_session();
+    ctx.release_frontend();
+    arena.release();
+    program_arena.release();
+    ctx.repl_force_global = true;
+    ctx.type_env.register_core_methods();
 }
 
 void Repl::print_vars()

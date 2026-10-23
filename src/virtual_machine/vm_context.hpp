@@ -9,7 +9,7 @@
 
 namespace phos {
 struct Value;
-struct Green_thread_data;
+struct Execution_state;
 } // namespace phos
 namespace phos::mem {
 class Arena;
@@ -65,7 +65,7 @@ struct Vm_context
     Virtual_machine *machine = nullptr;
     gc::Gc_heap *heap = nullptr;
     mem::Arena *scratch = nullptr;
-    phos::Green_thread_data *thread = nullptr;
+    phos::Execution_state *thread = nullptr;
     Call_frame *frame = nullptr;
     phos::Value *registers = nullptr;
     std::vector<phos::Value> *globals = nullptr;
@@ -105,7 +105,7 @@ struct Vm_context
     }
 
     // Method Declarations (Implementations moved to .cpp to fix incomplete types)
-    [[nodiscard]] phos::Green_thread_data &current_thread() const noexcept;
+    [[nodiscard]] phos::Execution_state &current_thread() const noexcept;
     [[nodiscard]] Call_frame &current_frame() const noexcept;
     [[nodiscard]] std::vector<phos::Value> &global_values() const noexcept;
     [[nodiscard]] phos::Value &register_at(size_t slot) const noexcept;

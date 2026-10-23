@@ -42,6 +42,11 @@ Type_table::Type_table()
     this->t_nil = primitive(Primitive_kind::Nil);
 }
 
+void Type_table::reset()
+{
+    *this = Type_table{};
+}
+
 Type_id Type_table::primitive(Primitive_kind p)
 {
     auto it = prim_cache_.find(p);
@@ -163,7 +168,7 @@ Type_id Type_table::model(const std::string &name, const std::vector<std::pair<s
         m.field_indices[fields[i].first] = i;
     }
     Type_id id{(uint32_t)types_.size()};
-    types_.push_back(Type{m});
+    types_.push_back(Type{Model_type_ref{std::make_shared<Model_type>(std::move(m))}});
     if (!name.empty()) {
         model_cache_[name] = id;
     }
@@ -215,7 +220,7 @@ bool Type_table::is_function(Type_id id) const
 }
 bool Type_table::is_model(Type_id id) const
 {
-    return std::holds_alternative<Model_type>(types_[id.value].data);
+    return types_[id.value].is<Model_type>();
 }
 bool Type_table::is_union(Type_id id) const
 {
@@ -389,8 +394,8 @@ std::string Type_table::to_string(Type_id id) const
         return s;
     }
 
-    if (std::holds_alternative<Model_type>(t.data)) {
-        const auto &m = std::get<Model_type>(t.data);
+    if (t.is<Model_type>()) {
+        const auto &m = t.as<Model_type>();
         std::string s = "model " + m.name + " { ";
         for (size_t i = 0; i < m.fields.size(); ++i) {
             s += to_string(m.fields[i].second);

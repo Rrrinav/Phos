@@ -455,41 +455,6 @@ void Tree_printer::print_node(const Range_expr &node)
     });
 }
 
-void Tree_printer::print_node(const Spawn_expr &node)
-{
-    indent();
-    print_str("Spawn Thread");
-    with_child(false, [&] {
-        indent();
-        print_str("Call");
-        with_child(false, [&] { visit(node.call); });
-    });
-}
-
-void Tree_printer::print_node(const Await_expr &node)
-{
-    indent();
-    print_str("Await Thread");
-    with_child(false, [&] {
-        indent();
-        print_str("Target");
-        with_child(false, [&] { visit(node.thread); });
-    });
-}
-
-void Tree_printer::print_node(const Yield_expr &node)
-{
-    indent();
-    print_str("Yield");
-    if (!node.value.is_null()) {
-        with_child(false, [&] {
-            indent();
-            print_str("Value");
-            with_child(false, [&] { visit(node.value); });
-        });
-    }
-}
-
 void Tree_printer::print_node(const Enum_member_expr &node)
 {
     indent();
@@ -1103,21 +1068,6 @@ std::string Sexpr_printer::print_node(const Range_expr &node)
 {
     std::string op = node.inclusive ? "..=" : "..";
     return "(" + op + " " + print_expr(node.start) + " " + print_expr(node.end) + ")";
-}
-
-std::string Sexpr_printer::print_node(const Spawn_expr &node)
-{
-    return "(spawn " + print_expr(node.call) + ")";
-}
-
-std::string Sexpr_printer::print_node(const Await_expr &node)
-{
-    return "(await " + print_expr(node.thread) + ")";
-}
-
-std::string Sexpr_printer::print_node(const Yield_expr &node)
-{
-    return "(yield" + std::string(node.value.is_null() ? "" : " " + print_expr(node.value)) + ")";
 }
 
 std::string Sexpr_printer::print_node(const Enum_member_expr &node)

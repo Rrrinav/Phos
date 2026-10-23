@@ -8,6 +8,63 @@
 
 namespace phos {
 
+bool Semantic_checker::check_union_literal(
+    types::Type_id union_type,
+    std::vector<std::pair<std::string, ast::Expr_id>> &fields,
+    const ast::Source_location &loc,
+    std::string_view arity_error,
+    std::string_view missing_payload_error)
+{
+    const auto &signature = ctx.tt.get(union_type).as<types::Union_type>();
+    const auto *metadata = ctx.type_env.get_union(signature.name);
+
+    if (fields.size() != 1) {
+        type_error(loc, std::string(arity_error));
+        return false;
+    }
+
+    std::string &variant_name = fields[0].first;
+    ast::Expr_id &payload = fields[0].second;
+
+    // `{ Variant }` is parser shorthand for the payload-free variant
+    // `{ Variant: nil }`. Normalize it once for named and inferred literals.
+    if (variant_name.empty() && !payload.is_null()) {
+        if (const auto *variable = std::get_if<ast::Variable_expr>(&ctx.tree.get(payload).node)) {
+            variant_name = variable->name;
+            payload = ast::Expr_id::null();
+        }
+    }
+
+    const auto variant = std::find_if(
+        signature.variants.begin(), signature.variants.end(), [&](const auto &entry) { return entry.first == variant_name; });
+    if (variant == signature.variants.end()) {
+        type_error(loc, std::format("Union has no variant named '{}'.", variant_name));
+        return false;
+    }
+
+    const types::Type_id expected = variant->second;
+    if (payload.is_null()) {
+        if (expected == ctx.tt.get_void()) {
+            return true;
+        }
+        if (metadata && metadata->variant_defaults.contains(variant_name)) {
+            payload = metadata->variant_defaults.at(variant_name);
+        } else {
+            type_error(loc, std::string(missing_payload_error));
+            return false;
+        }
+    } else if (expected == ctx.tt.get_void()) {
+        type_error(ast::get_loc(ctx.tree.get(payload).node), "Variant does not take a payload.");
+        return false;
+    }
+
+    const types::Type_id actual = check_expr(payload, expected);
+    if (!is_compatible(expected, actual)) {
+        type_error(ast::get_loc(ctx.tree.get(payload).node), "Type mismatch for payload.");
+    }
+    return true;
+}
+
 types::Type_id Semantic_checker::check_model_literal_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
 {
     (void)context_type;
@@ -18,73 +75,29 @@ types::Type_id Semantic_checker::check_model_literal_expr(ast::Expr_id expr_id, 
     types::Type_id resolved_type = resolve_type_recursively(ctx.tt.unresolved(model_name), loc);
 
     if (ctx.tt.is_unknown(resolved_type)) {
-        return get_node<ast::Model_literal_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+        return ctx.tt.get_unknown();
     }
 
     if (ctx.tt.is_union(resolved_type)) {
-        auto &union_t = std::get<types::Union_type>(ctx.tt.get(resolved_type).data);
-        auto union_data_ptr = ctx.type_env.get_union(union_t.name);
-
-        if (fields.size() != 1) {
-            type_error(loc, "Union literals must be initialized with exactly one variant field.");
-            return get_node<ast::Model_literal_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+        if (check_union_literal(
+                resolved_type,
+                fields,
+                loc,
+                "Union literals must be initialized with exactly one variant field.",
+                "Variant requires a payload or default.")) {
+            get_node<ast::Model_literal_expr>(ctx.tree, expr_id).fields = std::move(fields);
+            return resolved_type;
         }
-
-        std::string variant_name = fields[0].first;
-        ast::Expr_id payload_expr = fields[0].second;
-
-        if (variant_name.empty()) {
-            if (!payload_expr.is_null()) {
-                if (std::holds_alternative<ast::Variable_expr>(ctx.tree.get(payload_expr).node)) {
-                    variant_name = get_node<ast::Variable_expr>(ctx.tree, payload_expr).name;
-                    payload_expr = ast::Expr_id::null();
-                    fields[0].first = variant_name;
-                    fields[0].second = ast::Expr_id::null();
-                }
-            }
-        }
-
-        auto it = std::find_if(union_t.variants.begin(), union_t.variants.end(), [&](const auto &v) { return v.first == variant_name; });
-        if (it == union_t.variants.end()) {
-            type_error(loc, std::format("Union has no variant named '{}'.", variant_name));
-            return get_node<ast::Model_literal_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
-        }
-
-        auto expected_payload_type = it->second;
-
-        if (payload_expr.is_null()) {
-            if (expected_payload_type == ctx.tt.get_void()) {
-                get_node<ast::Model_literal_expr>(ctx.tree, expr_id).fields = std::move(fields);
-                return get_node<ast::Model_literal_expr>(ctx.tree, expr_id).type = resolved_type;
-            }
-
-            if (union_data_ptr && union_data_ptr->variant_defaults.contains(variant_name)) {
-                payload_expr = fields[0].second = union_data_ptr->variant_defaults.at(variant_name);
-            } else {
-                type_error(loc, "Variant requires a payload or default.");
-                return get_node<ast::Model_literal_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
-            }
-        } else if (expected_payload_type == ctx.tt.get_void()) {
-            type_error(ast::get_loc(ctx.tree.get(payload_expr).node), "Variant does not take a payload.");
-            return get_node<ast::Model_literal_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
-        }
-
-        auto actual_payload_type = check_expr(payload_expr, expected_payload_type);
-        if (!is_compatible(expected_payload_type, actual_payload_type)) {
-            type_error(ast::get_loc(ctx.tree.get(payload_expr).node), "Type mismatch for payload.");
-        }
-
-        get_node<ast::Model_literal_expr>(ctx.tree, expr_id).fields = std::move(fields);
-        return get_node<ast::Model_literal_expr>(ctx.tree, expr_id).type = resolved_type;
+        return ctx.tt.get_unknown();
     }
 
     if (ctx.tt.is_model(resolved_type)) {
-        auto &model_type = std::get<types::Model_type>(ctx.tt.get(resolved_type).data);
+        const auto &model_type = ctx.tt.get(resolved_type).as<types::Model_type>();
         auto model_data_ptr = ctx.type_env.get_model(model_type.name);
 
         if (fields.size() > model_type.fields.size()) {
             type_error(loc, "Too many fields provided for model.");
-            return get_node<ast::Model_literal_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+            return ctx.tt.get_unknown();
         }
 
         for (size_t i = 0; i < fields.size(); ++i) {
@@ -127,11 +140,11 @@ types::Type_id Semantic_checker::check_model_literal_expr(ast::Expr_id expr_id, 
         }
 
         get_node<ast::Model_literal_expr>(ctx.tree, expr_id).fields = std::move(fields);
-        return get_node<ast::Model_literal_expr>(ctx.tree, expr_id).type = resolved_type;
+        return resolved_type;
     }
 
     type_error(loc, std::format("'{}' is not a model or a union.", model_name));
-    return get_node<ast::Model_literal_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+    return ctx.tt.get_unknown();
 }
 
 types::Type_id Semantic_checker::check_anon_model_literal_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
@@ -141,75 +154,31 @@ types::Type_id Semantic_checker::check_anon_model_literal_expr(ast::Expr_id expr
 
     if (!context_type) {
         type_error(loc, "Cannot infer type of anonymous literal. Context missing.");
-        return get_node<ast::Anon_model_literal_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+        return ctx.tt.get_unknown();
     }
 
     types::Type_id expected_type = *context_type;
 
     if (ctx.tt.is_union(expected_type)) {
-        auto &expected_union = std::get<types::Union_type>(ctx.tt.get(expected_type).data);
-        auto union_data_ptr = ctx.type_env.get_union(expected_union.name);
-
-        if (fields.size() != 1) {
-            type_error(loc, "Anonymous union literals must have exactly one variant field.");
-            return get_node<ast::Anon_model_literal_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+        if (check_union_literal(
+                expected_type,
+                fields,
+                loc,
+                "Anonymous union literals must have exactly one variant field.",
+                "Variant requires a value.")) {
+            get_node<ast::Anon_model_literal_expr>(ctx.tree, expr_id).fields = std::move(fields);
+            return expected_type;
         }
-
-        std::string variant_name = fields[0].first;
-        ast::Expr_id payload_expr = fields[0].second;
-
-        if (variant_name.empty()) {
-            if (!payload_expr.is_null()) {
-                if (std::holds_alternative<ast::Variable_expr>(ctx.tree.get(payload_expr).node)) {
-                    variant_name = get_node<ast::Variable_expr>(ctx.tree, payload_expr).name;
-                    payload_expr = ast::Expr_id::null();
-                    fields[0].first = variant_name;
-                    fields[0].second = ast::Expr_id::null();
-                }
-            }
-        }
-
-        auto it =
-            std::find_if(expected_union.variants.begin(), expected_union.variants.end(), [&](const auto &v) { return v.first == variant_name; });
-        if (it == expected_union.variants.end()) {
-            type_error(loc, std::format("Union has no variant named '{}'.", variant_name));
-            return get_node<ast::Anon_model_literal_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
-        }
-
-        auto expected_payload_type = it->second;
-        if (payload_expr.is_null()) {
-            if (expected_payload_type == ctx.tt.get_void()) {
-                get_node<ast::Anon_model_literal_expr>(ctx.tree, expr_id).fields = std::move(fields);
-                return get_node<ast::Anon_model_literal_expr>(ctx.tree, expr_id).type = expected_type;
-            }
-
-            if (union_data_ptr && union_data_ptr->variant_defaults.contains(variant_name)) {
-                payload_expr = fields[0].second = union_data_ptr->variant_defaults.at(variant_name);
-            } else {
-                type_error(loc, "Variant requires a value.");
-                return get_node<ast::Anon_model_literal_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
-            }
-        } else if (expected_payload_type == ctx.tt.get_void()) {
-            type_error(ast::get_loc(ctx.tree.get(payload_expr).node), "Variant does not take a payload.");
-            return get_node<ast::Anon_model_literal_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
-        }
-
-        auto actual_res = check_expr(payload_expr, expected_payload_type);
-        if (!is_compatible(expected_payload_type, actual_res)) {
-            type_error(ast::get_loc(ctx.tree.get(payload_expr).node), "Type mismatch for payload.");
-        }
-
-        get_node<ast::Anon_model_literal_expr>(ctx.tree, expr_id).fields = std::move(fields);
-        return get_node<ast::Anon_model_literal_expr>(ctx.tree, expr_id).type = expected_type;
+        return ctx.tt.get_unknown();
     }
 
     if (ctx.tt.is_model(expected_type)) {
-        auto &expected_model = std::get<types::Model_type>(ctx.tt.get(expected_type).data);
+        const auto &expected_model = ctx.tt.get(expected_type).as<types::Model_type>();
         auto model_data_ptr = ctx.type_env.get_model(expected_model.name);
 
         if (fields.size() > expected_model.fields.size()) {
             type_error(loc, "Too many fields for anonymous model.");
-            return get_node<ast::Anon_model_literal_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+            return ctx.tt.get_unknown();
         }
 
         bool has_named = std::any_of(fields.begin(), fields.end(), [](const auto &f) { return !f.first.empty(); });
@@ -217,7 +186,7 @@ types::Type_id Semantic_checker::check_anon_model_literal_expr(ast::Expr_id expr
             bool has_pos = std::any_of(fields.begin(), fields.end(), [](const auto &f) { return f.first.empty(); });
             if (has_pos) {
                 type_error(loc, "Cannot mix positional and named fields.");
-                return get_node<ast::Anon_model_literal_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+                return ctx.tt.get_unknown();
             }
         } else {
             for (size_t i = 0; i < fields.size(); ++i) {
@@ -254,11 +223,11 @@ types::Type_id Semantic_checker::check_anon_model_literal_expr(ast::Expr_id expr
         }
 
         get_node<ast::Anon_model_literal_expr>(ctx.tree, expr_id).fields = std::move(ordered);
-        return get_node<ast::Anon_model_literal_expr>(ctx.tree, expr_id).type = expected_type;
+        return expected_type;
     }
 
     type_error(loc, "Context for anonymous literal is neither a model nor a union.");
-    return get_node<ast::Anon_model_literal_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+    return ctx.tt.get_unknown();
 }
 
 types::Type_id Semantic_checker::check_assignment_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
@@ -270,7 +239,7 @@ types::Type_id Semantic_checker::check_assignment_expr(ast::Expr_id expr_id, std
 
     auto var_info_res = lookup(name, loc);
     if (!var_info_res) {
-        return get_node<ast::Assignment_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+        return ctx.tt.get_unknown();
     }
 
     if (!var_info_res->id.is_null()) {
@@ -278,20 +247,20 @@ types::Type_id Semantic_checker::check_assignment_expr(ast::Expr_id expr_id, std
 
         if (sym.kind == Symbol_kind::Phos_const || sym.kind == Symbol_kind::Native_const) {
             type_error(loc, "Cannot mutate a constant.");
-            return get_node<ast::Assignment_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+            return ctx.tt.get_unknown();
         }
 
         if (sym.kind == Symbol_kind::Global_var) {
             if (!ctx.repl_force_global && sym.owner_module != current_module_id) {
                 type_error(loc, std::format("Cannot mutate foreign static variable '{}'. It is read-only outside its module.", ctx.registry.resolve(sym.name)));
-                return get_node<ast::Assignment_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+                return ctx.tt.get_unknown();
             }
         }
     }
 
     if (!var_info_res->is_mut) {
         type_error(loc, "Cannot assign to an immutable variable. Use 'mut'.");
-        return get_node<ast::Assignment_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+        return ctx.tt.get_unknown();
     }
 
     if (!var_info_res->id.is_null()) {
@@ -307,11 +276,12 @@ types::Type_id Semantic_checker::check_assignment_expr(ast::Expr_id expr_id, std
     }
 
     if (!is_compatible(var_type, val_type_res)) {
-        auto diagnostic = err::msg::error(diagnostics_.phase(), loc.l, loc.c, loc.file, "Assignment type mismatch.");
+        auto diagnostic = err::msg::error(
+            diagnostics_.phase(), loc.l, loc.c, std::string(ctx.source_name(loc.file)), "Assignment type mismatch.");
         diagnostic.expected_got(ctx.tt.to_string(var_type), ctx.tt.to_string(val_type_res));
         diagnostics_.push(std::move(diagnostic));
     }
-    return get_node<ast::Assignment_expr>(ctx.tree, expr_id).type = var_type;
+    return var_type;
 }
 
 types::Type_id Semantic_checker::check_variable_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
@@ -491,7 +461,7 @@ types::Type_id Semantic_checker::check_binary_expr(ast::Expr_id expr_id, std::op
         break;
     }
 
-    return get_node<ast::Binary_expr>(ctx.tree, expr_id).type = result;
+    return result;
 }
 
 types::Type_id Semantic_checker::check_cast_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
@@ -647,7 +617,7 @@ types::Type_id Semantic_checker::check_closure_expr(ast::Expr_id expr_id, std::o
     current_return_types = return_types;
     current_return_params = &closure.returns;
 
-    variables.begin_scope();
+    Scope_guard closure_scope{variables};
 
     for (const auto &p : closure.parameters) {
         declare(p.name, p.type, p.is_mut, p.loc);
@@ -661,7 +631,12 @@ types::Type_id Semantic_checker::check_closure_expr(ast::Expr_id expr_id, std::o
                 auto def_type = check_expr(ret.default_value, ret.type);
                 if (!is_compatible(ret.type, def_type)) {
                     auto diagnostic =
-                        err::msg::error(diagnostics_.phase(), ret.loc.l, ret.loc.c, ret.loc.file, "Default return value type mismatch.");
+                        err::msg::error(
+                            diagnostics_.phase(),
+                            ret.loc.l,
+                            ret.loc.c,
+                            std::string(ctx.source_name(ret.loc.file)),
+                            "Default return value type mismatch.");
                     diagnostic.expected_got(ctx.tt.to_string(ret.type), ctx.tt.to_string(def_type));
                     diagnostics_.push(std::move(diagnostic));
                 }
@@ -673,7 +648,6 @@ types::Type_id Semantic_checker::check_closure_expr(ast::Expr_id expr_id, std::o
         check_stmt(closure.body);
     }
 
-    variables.end_scope();
     current_return_types = saved_return_types;
     current_return_params = saved_return_params;
 
@@ -691,14 +665,14 @@ types::Type_id Semantic_checker::check_field_access_expr(ast::Expr_id expr_id, s
 
     if (ctx.tt.is_optional(obj_type)) {
         type_error(loc, "Cannot access field on an optional type.");
-        return get_node<ast::Field_access_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+        return ctx.tt.get_unknown();
     }
 
     if (ctx.tt.is_union(obj_type)) {
         auto &union_t = std::get<types::Union_type>(ctx.tt.get(obj_type).data);
         if (!contains_key(union_t.variants, field_name)) {
             type_error(loc, std::format("Union has no variant named '{}'", field_name));
-            return get_node<ast::Field_access_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+            return ctx.tt.get_unknown();
         }
         auto ret = find_by_key(union_t.variants, field_name)->second;
         get_node<ast::Field_access_expr>(ctx.tree, expr_id).type = ret;
@@ -706,7 +680,7 @@ types::Type_id Semantic_checker::check_field_access_expr(ast::Expr_id expr_id, s
     }
 
     if (ctx.tt.is_model(obj_type)) {
-        auto &model_t = std::get<types::Model_type>(ctx.tt.get(obj_type).data);
+        const auto &model_t = ctx.tt.get(obj_type).as<types::Model_type>();
         if (contains_key(model_t.fields, field_name)) {
             auto ret = find_by_key(model_t.fields, field_name)->second;
             get_node<ast::Field_access_expr>(ctx.tree, expr_id).type = ret;
@@ -723,7 +697,7 @@ types::Type_id Semantic_checker::check_field_access_expr(ast::Expr_id expr_id, s
         type_error(loc, "Can only access fields on model instances");
     }
 
-    return get_node<ast::Field_access_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+    return ctx.tt.get_unknown();
 }
 
 types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
@@ -810,7 +784,7 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
                     var_base->name,
                     var_base->name,
                     member_lexeme));
-            return get_node<ast::Static_path_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+            return ctx.tt.get_unknown();
         }
     } else if (auto *path_base = std::get_if<ast::Static_path_expr>(&ctx.tree.get(base_id).node)) {
         check_expr(base_id);
@@ -855,27 +829,27 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
     }
 
     if (ctx.tt.is_unknown(base_type)) {
-        return get_node<ast::Static_path_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+        return ctx.tt.get_unknown();
     }
 
     if (ctx.tt.is_union(base_type)) {
         auto &union_t = std::get<types::Union_type>(ctx.tt.get(base_type).data);
         if (!contains_key(union_t.variants, member_lexeme)) {
             type_error(loc, std::format("Union has no variant '{}'.", member_lexeme));
-            return get_node<ast::Static_path_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+            return ctx.tt.get_unknown();
         }
         auto variant_type = find_by_key(union_t.variants, member_lexeme)->second;
         if (variant_type != ctx.tt.get_void()) {
             type_error(loc, "Union payload variants are not first-class constructors.");
-            return get_node<ast::Static_path_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+            return ctx.tt.get_unknown();
         }
-        return get_node<ast::Static_path_expr>(ctx.tree, expr_id).type = base_type;
+        return base_type;
     } else if (ctx.tt.is_model(base_type)) {
-        auto &model_t = std::get<types::Model_type>(ctx.tt.get(base_type).data);
+        const auto &model_t = ctx.tt.get(base_type).as<types::Model_type>();
         if (const auto *model_data = ctx.type_env.get_model(model_t.name)) {
             if (model_data->static_field_types.contains(member_lexeme)) {
                 auto field_type = model_data->static_field_types.at(member_lexeme);
-                return get_node<ast::Static_path_expr>(ctx.tree, expr_id).type = field_type;
+                return field_type;
             }
             if (model_data->static_methods.contains(member_lexeme)) {
                 auto method_decl_id = model_data->static_methods.at(member_lexeme).declaration;
@@ -920,18 +894,18 @@ types::Type_id Semantic_checker::check_static_path_expr(ast::Expr_id expr_id, st
             return ret;
         }
         type_error(loc, std::format("Model has no static member or method '{}'.", member_lexeme));
-        return get_node<ast::Static_path_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+        return ctx.tt.get_unknown();
     } else if (ctx.tt.is_enum(base_type)) {
         auto enum_data_ptr = ctx.type_env.get_enum(std::get<types::Enum_type>(ctx.tt.get(base_type).data).name);
         if (!enum_data_ptr->variants.contains(member_lexeme)) {
             type_error(loc, "Enum has no variant '" + member_lexeme + "'.");
-            return get_node<ast::Static_path_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+            return ctx.tt.get_unknown();
         }
-        return get_node<ast::Static_path_expr>(ctx.tree, expr_id).type = base_type;
+        return base_type;
     }
 
     type_error(loc, "Scope resolution operator '::' is only supported for union, model, and enum.");
-    return get_node<ast::Static_path_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+    return ctx.tt.get_unknown();
 }
 
 types::Type_id Semantic_checker::check_enum_member_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
@@ -941,7 +915,7 @@ types::Type_id Semantic_checker::check_enum_member_expr(ast::Expr_id expr_id, st
 
     if (!context_type) {
         type_error(loc, std::format("Cannot infer enum type for '{}.'. Context is missing.", member_name));
-        return get_node<ast::Enum_member_expr>(ctx.tree, expr_id).type = ctx.type_env.tt.get_unknown();
+        return ctx.type_env.tt.get_unknown();
     }
 
     types::Type_id expected_type = *context_type;
@@ -951,16 +925,16 @@ types::Type_id Semantic_checker::check_enum_member_expr(ast::Expr_id expr_id, st
 
     if (!ctx.tt.is_enum(expected_type)) {
         type_error(loc, "Context is not an enum.");
-        return get_node<ast::Enum_member_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+        return ctx.tt.get_unknown();
     }
 
     auto enum_data_ptr = ctx.type_env.get_enum(std::get<types::Enum_type>(ctx.tt.get(expected_type).data).name);
     if (!enum_data_ptr->variants.contains(member_name)) {
         type_error(loc, std::format("Enum has no variant '{}'.", member_name));
-        return get_node<ast::Enum_member_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+        return ctx.tt.get_unknown();
     }
 
-    return get_node<ast::Enum_member_expr>(ctx.tree, expr_id).type = *context_type;
+    return *context_type;
 }
 
 types::Type_id Semantic_checker::check_field_assignment_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
@@ -979,7 +953,7 @@ types::Type_id Semantic_checker::check_field_assignment_expr(ast::Expr_id expr_i
     } else if (ctx.tt.is_union(obj_type)) {
         type_error(loc, "Cannot assign directly to union variant payload via field access.");
     } else if (ctx.tt.is_model(obj_type)) {
-        auto &model_t = std::get<types::Model_type>(ctx.tt.get(obj_type).data);
+        const auto &model_t = ctx.tt.get(obj_type).as<types::Model_type>();
         if (contains_key(model_t.fields, field_name)) {
             field_type = find_by_key(model_t.fields, field_name)->second;
         } else {
@@ -990,14 +964,14 @@ types::Type_id Semantic_checker::check_field_assignment_expr(ast::Expr_id expr_i
     }
 
     if (ctx.tt.is_unknown(field_type)) {
-        return get_node<ast::Field_assignment_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+        return ctx.tt.get_unknown();
     }
 
     auto val_type = check_expr(value_id, field_type);
     if (!is_compatible(field_type, val_type)) {
         type_error(loc, "Assignment type mismatch for field");
     }
-    return get_node<ast::Field_assignment_expr>(ctx.tree, expr_id).type = field_type;
+    return field_type;
 }
 
 types::Type_id Semantic_checker::check_literal_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
@@ -1015,7 +989,7 @@ types::Type_id Semantic_checker::check_literal_expr(ast::Expr_id expr_id, std::o
             auto coerced = coerce_numeric_literal(val, target_kind);
             if (coerced) {
                 get_node<ast::Literal_expr>(ctx.tree, expr_id).value = coerced.value();
-                return get_node<ast::Literal_expr>(ctx.tree, expr_id).type = *context_type;
+                return *context_type;
             }
         }
     }
@@ -1038,22 +1012,22 @@ types::Type_id Semantic_checker::check_unary_expr(ast::Expr_id expr_id, std::opt
         } else if (ctx.tt.is_unsigned_integer_primitive(right_type)) {
             type_error(loc, "Operand for unary '-' cannot be unsigned.");
         }
-        return get_node<ast::Unary_expr>(ctx.tree, expr_id).type = right_type;
+        return right_type;
     case lex::TokenType::LogicalNot:
         if (!ctx.tt.is_bool(right_type)) {
             type_error(loc, "Operand for '!' must be a boolean");
         }
-        return get_node<ast::Unary_expr>(ctx.tree, expr_id).type = ctx.tt.get_bool();
+        return ctx.tt.get_bool();
     case lex::TokenType::BitNot:
         if (!ctx.tt.is_integer_primitive(right_type)) {
             type_error(loc, "Operand for '~' must be an integer.");
         } else if (ctx.tt.is_unsigned_integer_primitive(right_type)) {
             type_error(loc, "Operand for '~' cannot be unsigned.");
         }
-        return get_node<ast::Unary_expr>(ctx.tree, expr_id).type = right_type;
+        return right_type;
     default:
         type_error(loc, "Unsupported unary operator");
-        return get_node<ast::Unary_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+        return ctx.tt.get_unknown();
     }
 }
 
@@ -1064,10 +1038,10 @@ types::Type_id Semantic_checker::check_array_literal_expr(ast::Expr_id expr_id, 
 
     if (elements.empty()) {
         if (context_type && ctx.tt.is_array(*context_type)) {
-            return get_node<ast::Array_literal_expr>(ctx.tree, expr_id).type = *context_type;
+            return *context_type;
         }
         type_error(loc, "Cannot infer the element type of an empty array.");
-        return get_node<ast::Array_literal_expr>(ctx.tree, expr_id).type = ctx.tt.array(ctx.tt.get_unknown());
+        return ctx.tt.array(ctx.tt.get_unknown());
     }
 
     types::Type_id common_type = ctx.tt.get_nil();
@@ -1125,7 +1099,7 @@ types::Type_id Semantic_checker::check_array_literal_expr(ast::Expr_id expr_id, 
         } else {
             if (!is_compatible(common_type, base) && !is_compatible(base, common_type)) {
                 type_error(ast::get_loc(ctx.tree.get(elem_expr).node), "Array elements must have a consistent type.");
-                return get_node<ast::Array_literal_expr>(ctx.tree, expr_id).type = ctx.tt.array(ctx.tt.get_unknown());
+                return ctx.tt.array(ctx.tt.get_unknown());
             }
         }
     }
@@ -1141,7 +1115,7 @@ types::Type_id Semantic_checker::check_array_literal_expr(ast::Expr_id expr_id, 
 
     if (ctx.tt.is_nil(common_type)) {
         type_error(loc, "Cannot infer the element type of an all-nil array.");
-        return get_node<ast::Array_literal_expr>(ctx.tree, expr_id).type = ctx.tt.array(ctx.tt.get_unknown());
+        return ctx.tt.array(ctx.tt.get_unknown());
     }
 
     for (auto elem_id : elements) {
@@ -1171,7 +1145,7 @@ types::Type_id Semantic_checker::check_array_literal_expr(ast::Expr_id expr_id, 
         common_type = ctx.tt.optional(common_type);
     }
 
-    return get_node<ast::Array_literal_expr>(ctx.tree, expr_id).type = ctx.tt.array(common_type);
+    return ctx.tt.array(common_type);
 }
 
 types::Type_id Semantic_checker::check_array_access_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
@@ -1189,12 +1163,12 @@ types::Type_id Semantic_checker::check_array_access_expr(ast::Expr_id expr_id, s
     }
 
     if (ctx.tt.is_array(collection_type)) {
-        return get_node<ast::Array_access_expr>(ctx.tree, expr_id).type = ctx.tt.get_array_elem(collection_type);
+        return ctx.tt.get_array_elem(collection_type);
     } else if (ctx.tt.is_string(collection_type)) {
-        return get_node<ast::Array_access_expr>(ctx.tree, expr_id).type = ctx.tt.get_string();
+        return ctx.tt.get_string();
     } else {
         type_error(loc, "Subscript operator '[]' can only be used on arrays and strings.");
-        return get_node<ast::Array_access_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+        return ctx.tt.get_unknown();
     }
 }
 
@@ -1210,10 +1184,10 @@ types::Type_id Semantic_checker::check_array_assignment_expr(ast::Expr_id expr_i
     if (!ctx.tt.is_array(array_type)) {
         if (ctx.tt.is_string(array_type)) {
             type_error(loc, "Strings are immutable and you can't use '[]' on them.");
-            return get_node<ast::Array_assignment_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+            return ctx.tt.get_unknown();
         }
         type_error(loc, "Subscript operator '[]' can only be used on arrays.");
-        return get_node<ast::Array_assignment_expr>(ctx.tree, expr_id).type = ctx.tt.get_unknown();
+        return ctx.tt.get_unknown();
     }
 
     auto index_type = check_expr(index_id);
@@ -1228,7 +1202,7 @@ types::Type_id Semantic_checker::check_array_assignment_expr(ast::Expr_id expr_i
         type_error(ast::get_loc(ctx.tree.get(value_id).node), "Type mismatch for array assignment.");
     }
 
-    return get_node<ast::Array_assignment_expr>(ctx.tree, expr_id).type = value_type;
+    return value_type;
 }
 
 types::Type_id Semantic_checker::check_range_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
@@ -1257,41 +1231,7 @@ types::Type_id Semantic_checker::check_range_expr(ast::Expr_id expr_id, std::opt
         }
     }
 
-    return get_node<ast::Range_expr>(ctx.tree, expr_id).type = ctx.tt.iterator(element_type);
-}
-
-types::Type_id Semantic_checker::check_spawn_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
-{
-    (void)context_type;
-    auto call_id = get_node<ast::Spawn_expr>(ctx.tree, expr_id).call;
-
-    if (!call_id.is_null()) {
-        std::ignore = check_expr(call_id);
-    }
-    return get_node<ast::Spawn_expr>(ctx.tree, expr_id).type = ctx.tt.get_any();
-}
-
-types::Type_id Semantic_checker::check_await_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
-{
-    (void)context_type;
-    auto thread_id = get_node<ast::Await_expr>(ctx.tree, expr_id).thread;
-
-    if (!thread_id.is_null()) {
-        std::ignore = check_expr(thread_id);
-    }
-    return get_node<ast::Await_expr>(ctx.tree, expr_id).type = ctx.tt.get_any();
-}
-
-types::Type_id Semantic_checker::check_yield_expr(ast::Expr_id expr_id, std::optional<types::Type_id> context_type)
-{
-    (void)context_type;
-    auto value_id = get_node<ast::Yield_expr>(ctx.tree, expr_id).value;
-
-    if (!value_id.is_null()) {
-        auto ret = check_expr(value_id);
-        return get_node<ast::Yield_expr>(ctx.tree, expr_id).type = ret;
-    }
-    return get_node<ast::Yield_expr>(ctx.tree, expr_id).type = ctx.tt.get_void();
+    return ctx.tt.iterator(element_type);
 }
 
 } // namespace phos

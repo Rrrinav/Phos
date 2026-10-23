@@ -75,9 +75,6 @@ struct core
         case phos::Value_tag::Iterator:
             return phos::Value(a.as_iterator() == b.as_iterator());
 
-        case phos::Value_tag::Green_thread:
-            return phos::Value(a.as_green_thread() == b.as_green_thread());
-
         case phos::Value_tag::Upvalue:
             return phos::Value(a.as_upvalue() == b.as_upvalue());
 
@@ -314,6 +311,11 @@ struct string_methods
 
 struct array_methods
 {
+    static phos::Value join(Ctx &ctx, std::span<phos::Value> args)
+    {
+        return phos::Value::make_string_join(ctx, args[0].as_array_elements(), args[1].as_string());
+    }
+
     // Ensures room for one more element, growing exponentially. The element
     // buffer always ends up as a GC raw-buffer cell (traced via the array
     // cell, freed by the sweeper); the previous buffer, if any, is simply

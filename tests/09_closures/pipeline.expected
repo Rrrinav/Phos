@@ -1,0 +1,8 @@
+pipe 10
+chain 20
+named 10
+closure 6
+value 6
+bool true
+precedence 6
+method 15

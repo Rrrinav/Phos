@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <variant>
 #include <vector>
@@ -104,21 +106,34 @@ struct Unresolved_type
     std::string name;
 };
 
+struct Model_type_ref
+{
+    std::shared_ptr<Model_type> value;
+};
+
 struct Type
 {
     using Variant =
-        std::variant<Primitive_kind, Function_type, Model_type, Array_type, Optional_type, Union_type, Iterator_type, Enum_type, Unresolved_type>;
+        std::variant<Primitive_kind, Function_type, Model_type_ref, Array_type, Optional_type, Union_type, Iterator_type, Enum_type, Unresolved_type>;
     Variant data;
 
     template <typename T>
     bool is() const
     {
-        return std::holds_alternative<T>(data);
+        if constexpr (std::is_same_v<T, Model_type>) {
+            return std::holds_alternative<Model_type_ref>(data);
+        } else {
+            return std::holds_alternative<T>(data);
+        }
     }
     template <typename T>
     const T &as() const
     {
-        return std::get<T>(data);
+        if constexpr (std::is_same_v<T, Model_type>) {
+            return *std::get<Model_type_ref>(data).value;
+        } else {
+            return std::get<T>(data);
+        }
     }
 };
 
@@ -126,6 +141,7 @@ class Type_table
 {
 public:
     Type_table();
+    void reset();
 
     // Pre-interned Primitives
     Type_id t_i8, t_i16, t_i32, t_i64;

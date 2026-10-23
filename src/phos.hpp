@@ -16,6 +16,7 @@ namespace phos {
 class Phos_engine
 {
 public:
+    mem::Arena frontend_arena;
     mem::Arena arena;
     Compiler_context ctx;
 
@@ -30,13 +31,13 @@ public:
     Closure_data main_function{};
     std::vector<ast::Stmt_id> main_statements;
 
-    Phos_engine(size_t memory_size_bytes = 1024 * 1024 * 10, std::ostream *out = &std::cout, std::ostream *err = &std::cerr);
+    Phos_engine(size_t memory_size_bytes = 0, std::ostream *out = &std::cout, std::ostream *err = &std::cerr);
     ~Phos_engine() = default;
 
     bool compile_file(const std::filesystem::path &file_path);
     bool compile_source(const std::string &source, const std::string &logical_name, const std::filesystem::path &root_dir);
-    void set_program_args(const std::vector<std::string> &args);
     void execute();
+    void release_frontend();
 
     std::string dump_ir() const;
     std::string dump_ast(bool use_unicode = false) const;

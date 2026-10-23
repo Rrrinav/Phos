@@ -150,7 +150,7 @@ void Compiler::compile_stmt_node(const ast::Print_stmt &stmt)
 
     if (has_sep) {
         sep_reg = allocate_register();
-        uint16_t sep_idx = add_constant(Value::make_string(ctx.arena, stmt.sep));
+        uint16_t sep_idx = add_constant(Value::make_string(ctx.program_arena, stmt.sep));
         emit(vm::Instruction::make_ri(vm::Opcode::Load_const, sep_reg, sep_idx));
     }
 
@@ -165,7 +165,7 @@ void Compiler::compile_stmt_node(const ast::Print_stmt &stmt)
 
     if (!stmt.end.empty()) {
         uint8_t end_reg = allocate_register();
-        uint16_t end_idx = add_constant(Value::make_string(ctx.arena, stmt.end));
+        uint16_t end_idx = add_constant(Value::make_string(ctx.program_arena, stmt.end));
         emit(vm::Instruction::make_ri(vm::Opcode::Load_const, end_reg, end_idx));
         emit(vm::Instruction::make_rrr(vm::Opcode::Print, end_reg, stream_flag, 0));
     }
@@ -461,7 +461,7 @@ void Compiler::compile_stmt_node(const ast::For_in_stmt &stmt)
 
     // Custom Model Iterators
     if (is_custom_model) {
-        auto &model_name = std::get<types::Model_type>(ctx.tt.get(iterable_type).data).name;
+        const auto &model_name = ctx.tt.get(iterable_type).as<types::Model_type>().name;
         auto model_data_ptr = ctx.type_env.get_model(model_name);
 
         uint8_t iter_reg = allocate_register();
@@ -483,7 +483,7 @@ void Compiler::compile_stmt_node(const ast::For_in_stmt &stmt)
                 auto iter_decl = std::get_if<ast::Function_stmt>(&ctx.tree.get(iter_decl_id).node);
 
                 auto iter_return_type = effective_return_type(iter_decl->returns, ctx.tt);
-                iter_model_name = std::get<types::Model_type>(ctx.tt.get(iter_return_type).data).name;
+                iter_model_name = ctx.tt.get(iter_return_type).as<types::Model_type>().name;
             }
         } else {
             emit(vm::Instruction::make_rrr(vm::Opcode::Move, iter_reg, iterable_reg, 0));
@@ -696,7 +696,7 @@ void Compiler::compile_stmt_node(const ast::Match_stmt &stmt)
                 }
 
                 uint8_t str_reg = allocate_register();
-                uint16_t str_idx = add_constant(Value::make_string(ctx.arena, variant_str));
+                uint16_t str_idx = add_constant(Value::make_string(ctx.program_arena, variant_str));
                 emit(vm::Instruction::make_ri(vm::Opcode::Load_const, str_reg, str_idx));
                 emit(vm::Instruction::make_rrr(vm::Opcode::Test_union, test_reg, subject_reg, str_reg));
             } else {
@@ -736,7 +736,7 @@ void Compiler::compile_stmt_node(const ast::Match_stmt &stmt)
             uint8_t pattern_reg = compile_expr(arm.pattern);
 
             if (ctx.tt.is_model(pattern_type)) {
-                auto &model_name = std::get<types::Model_type>(ctx.tt.get(pattern_type).data).name;
+                const auto &model_name = ctx.tt.get(pattern_type).as<types::Model_type>().name;
                 uint8_t func_reg = allocate_register();
                 if (auto sym_id = ctx.registry.lookup_global(model_name + "::__match__")) {
                     func_reg = load_function_instance(*sym_id, function_locations_.at(*sym_id));
